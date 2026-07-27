@@ -34,6 +34,10 @@ or valid output is scored.
 Exit criterion: all metrics run offline without a model or web server and are
 fully covered by repeatable tests.
 
+Implemented so far: per-sample scorers, strict response JSON contracts, parser
+error categories, and token-level transliteration scoring. Challenge-level metric
+aggregation remains before Phase 1 is complete.
+
 ## Phase 2: dataset and challenge layer
 
 - Stream JSONL instead of loading the 176 MB file into request handlers.
