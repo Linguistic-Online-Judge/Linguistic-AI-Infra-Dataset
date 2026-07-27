@@ -55,6 +55,15 @@ class ExactMatchScore:
     exact_match: bool
 
 
+@dataclass(frozen=True)
+class TransliterationScore:
+    token_accuracy: float
+    correct_tokens: int
+    total_tokens: int
+    sentence_exact_match: bool
+    valid_length: bool
+
+
 def _validate_tokens(tokens: Sequence[str], name: str) -> None:
     for index, token in enumerate(tokens):
         if not isinstance(token, str):
@@ -221,3 +230,43 @@ def score_exact_match(gold: str, predicted: str) -> ExactMatchScore:
         raise TypeError("gold and predicted values must be strings")
     exact_match = unicodedata.normalize("NFC", gold) == unicodedata.normalize("NFC", predicted)
     return ExactMatchScore(score=float(exact_match), exact_match=exact_match)
+
+
+def score_transliteration(
+    gold_transliterations: Sequence[str], predicted_transliterations: Sequence[str]
+) -> TransliterationScore:
+    """Score aligned token transliterations and full-sentence correctness.
+
+    The platform supplies source tokenization for this task. A missing or extra
+    transliteration is malformed and receives zero. Comparison performs Unicode
+    NFC normalization without case folding or punctuation replacement.
+    """
+
+    _validate_tokens(gold_transliterations, "gold_transliterations")
+    _validate_tokens(predicted_transliterations, "predicted_transliterations")
+    valid_length = len(gold_transliterations) == len(predicted_transliterations)
+    if not valid_length:
+        return TransliterationScore(
+            token_accuracy=0.0,
+            correct_tokens=0,
+            total_tokens=len(gold_transliterations),
+            sentence_exact_match=False,
+            valid_length=False,
+        )
+
+    matches = [
+        unicodedata.normalize("NFC", gold) == unicodedata.normalize("NFC", predicted)
+        for gold, predicted in zip(gold_transliterations, predicted_transliterations, strict=True)
+    ]
+    correct = sum(matches)
+    accuracy = _safe_ratio(correct, len(gold_transliterations))
+    if not gold_transliterations:
+        accuracy = 1.0
+
+    return TransliterationScore(
+        token_accuracy=accuracy,
+        correct_tokens=correct,
+        total_tokens=len(gold_transliterations),
+        sentence_exact_match=all(matches),
+        valid_length=True,
+    )

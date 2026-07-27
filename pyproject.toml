@@ -7,7 +7,9 @@ name = "linguistic-online-judge"
 version = "0.1.0"
 description = "Deterministic evaluation core for the Linguistic Online Judge"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pydantic>=2.10,<3",
+]
 
 [project.optional-dependencies]
 dev = [

@@ -8,6 +8,7 @@
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- [`docs/RESPONSE_CONTRACTS.md`](docs/RESPONSE_CONTRACTS.md)
 
 ## 本地开发
 
