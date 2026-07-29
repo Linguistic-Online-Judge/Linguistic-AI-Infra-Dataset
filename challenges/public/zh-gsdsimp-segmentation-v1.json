@@ -1,0 +1,12 @@
+{
+  "challenge_id": "zh-gsdsimp-segmentation-v1",
+  "language": "Chinese",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "secondary_metrics": [],
+  "task": "segmentation",
+  "title": "Chinese GSDSimp segmentation challenge",
+  "treebank": "GSDSimp",
+  "version": "v1"
+}

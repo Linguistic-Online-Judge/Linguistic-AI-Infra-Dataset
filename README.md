@@ -7,6 +7,7 @@
 平台 MVP 的架构、安全边界和开发阶段见：
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/CHALLENGES.md`](docs/CHALLENGES.md)
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - [`docs/RESPONSE_CONTRACTS.md`](docs/RESPONSE_CONTRACTS.md)
 

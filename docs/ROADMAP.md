@@ -49,6 +49,10 @@ aggregation remains before Phase 1 is complete.
 Exit criterion: a command can build one challenge and prove that its public
 payload contains no gold fields.
 
+Implemented so far: streaming JSONL filtering, deterministic reservoir sampling,
+versioned public challenge metadata, private manifests, integrity hashes, and the
+first 50-sample Chinese GSDSimp segmentation challenge.
+
 ## Phase 3: fixed model runner
 
 - Define a provider-independent model adapter.
