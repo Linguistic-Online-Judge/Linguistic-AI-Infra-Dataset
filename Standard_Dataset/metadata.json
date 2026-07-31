@@ -1,6 +1,8 @@
 {
-  "generated_at": "2026-07-13T07:31:31.428478+00:00",
+  "generated_at": "2026-07-31T08:03:25.141161+00:00",
   "input_dir": "Target_Conllus",
+  "treebank_name_map": "config/treebank_names.json",
+  "treebank_name_map_sha256": "7d5e8eefd241faa3a2e57f48014e0047bd47e0c9758a464d75571ba949f0293d",
   "total_samples": 135180,
   "total_languages": 18,
   "by_language": {

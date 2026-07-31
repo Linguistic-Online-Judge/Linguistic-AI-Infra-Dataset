@@ -8,6 +8,7 @@ import json
 import random
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -48,6 +49,14 @@ TASK_METRICS = {
 }
 
 
+class ChallengeSecurityLevel(StrEnum):
+    PUBLIC_REPRODUCIBLE = "public_reproducible"
+
+
+class ChallengeStatus(StrEnum):
+    DRAFT = "draft"
+
+
 class PublicChallenge(BaseModel):
     """Safe metadata that may be returned to students or committed to Git."""
 
@@ -63,6 +72,10 @@ class PublicChallenge(BaseModel):
     primary_metric: str
     secondary_metrics: list[str]
     response_schema_version: str
+    dataset_sha256: str
+    selection_sha256: str
+    security_level: str
+    status: str
 
 
 class PrivateChallengeManifest(BaseModel):
@@ -90,6 +103,10 @@ class InsufficientSamplesError(ValueError):
 
 class DuplicateSampleIdError(ValueError):
     """Raised when the filtered source contains a duplicate sample ID."""
+
+
+class ChallengeExistsError(FileExistsError):
+    """Raised when an existing challenge ID has different immutable content."""
 
 
 def _slugify(value: str) -> str:
@@ -191,6 +208,8 @@ def build_challenge(
     sample_ids = [sample.id for sample in selected]
     challenge_id = make_challenge_id(language, treebank, task_type, version)
     primary_metric, secondary_metrics = TASK_METRICS[task_type]
+    dataset_sha256 = sha256_file(dataset_path)
+    selection_sha256 = _selection_hash(sample_ids)
 
     public = PublicChallenge(
         challenge_id=challenge_id,
@@ -203,27 +222,55 @@ def build_challenge(
         primary_metric=primary_metric,
         secondary_metrics=secondary_metrics,
         response_schema_version=f"{task_type.value}-v1",
+        dataset_sha256=dataset_sha256,
+        selection_sha256=selection_sha256,
+        security_level=ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value,
+        status=ChallengeStatus.DRAFT.value,
     )
     private = PrivateChallengeManifest(
         challenge_id=challenge_id,
         version=version,
-        dataset_sha256=sha256_file(dataset_path),
-        selection_sha256=_selection_hash(sample_ids),
+        dataset_sha256=dataset_sha256,
+        selection_sha256=selection_sha256,
         selection_seed=seed,
         sample_ids=sample_ids,
     )
     return ChallengeArtifacts(public=public, private=private)
 
 
-def _write_json(path: Path, model: BaseModel) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _serialize_json(model: BaseModel) -> str:
     payload = json.dumps(
         model.model_dump(mode="json"),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
     )
-    path.write_text(f"{payload}\n", encoding="utf-8")
+    return f"{payload}\n"
+
+
+def _ensure_compatible_existing_file(path: Path, payload: str) -> None:
+    if not path.exists():
+        return
+
+    try:
+        existing_content = json.loads(path.read_text(encoding="utf-8"))
+        new_content = json.loads(payload)
+    except json.JSONDecodeError:
+        existing_content = None
+        new_content = object()
+
+    if existing_content != new_content:
+        raise ChallengeExistsError(
+            f"Challenge file already exists with different content: {path}. "
+            "Create a new challenge version instead of overwriting it."
+        )
+
+
+def _write_new_file(path: Path, payload: str) -> None:
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8")
 
 
 def write_challenge(
@@ -234,8 +281,14 @@ def write_challenge(
 ) -> tuple[Path, Path]:
     public_path = public_dir / f"{artifacts.public.challenge_id}.json"
     private_path = private_dir / f"{artifacts.private.challenge_id}.json"
-    _write_json(public_path, artifacts.public)
-    _write_json(private_path, artifacts.private)
+    public_payload = _serialize_json(artifacts.public)
+    private_payload = _serialize_json(artifacts.private)
+
+    # Check both outputs before writing either one to avoid a partially updated pair.
+    _ensure_compatible_existing_file(public_path, public_payload)
+    _ensure_compatible_existing_file(private_path, private_payload)
+    _write_new_file(public_path, public_payload)
+    _write_new_file(private_path, private_payload)
     return public_path, private_path
 
 
