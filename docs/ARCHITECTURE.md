@@ -4,7 +4,7 @@
 
 The platform evaluates prompt quality, not model choice. Every submission for a
 given competition uses the same pinned model, inference runtime, parameters,
-task instructions, and hidden evaluation sample set. A deterministic code
+task instructions, and versioned server-side sample set. A deterministic code
 evaluator compares parsed model output with UD gold annotations. An LLM is never
 used as the judge.
 
@@ -30,7 +30,7 @@ For the MVP, the smallest safe approach is:
 2. Keep public examples in a separate `samples/` directory without hidden test
    answers.
 3. Mount or import the full gold dataset only in the backend and worker.
-4. Never include `answers`, model credentials, or hidden sample IDs in browser
+4. Never include `answers`, model credentials, or server-side sample IDs in browser
    responses, logs returned to students, or client bundles.
 5. Use newly annotated, unpublished sentences for challenges that require hard
    answer secrecy; do not describe public UD test labels as cryptographically
@@ -62,7 +62,7 @@ Redis job queue ---- Python evaluation worker
   deterministic scorers, and persists aggregate results.
 - **Model provider**: one adapter interface. Start with a mock adapter in tests,
   then add one fixed self-hosted model adapter.
-- **Gold data service**: loads hidden samples by server-side challenge manifest.
+- **Gold data service**: loads samples by server-side challenge manifest.
   It must never expose the `answers` field to the client.
 - **Database**: users, competitions, problems, model configurations, submissions,
   per-sample outcomes, and leaderboard aggregates.
@@ -75,12 +75,13 @@ target once multiple evaluations can run concurrently.
 1. A student chooses a language and task and submits one prompt.
 2. The API stores an immutable submission with the active model configuration
    and challenge version.
-3. The worker loads the fixed hidden sample IDs for that challenge.
+3. The worker loads the fixed server-side sample IDs for that challenge.
 4. For each sample, the worker combines the student's prompt with the platform's
    fixed task envelope and requests strict JSON output from the model.
 5. The response parser validates the schema. Malformed output receives a
    deterministic zero for that sample; no LLM repair judge is used.
-6. The scorer computes segmentation F1, tag accuracy, UAS/LAS, or exact match.
+6. The scorer computes segmentation F1, tag accuracy, UAS/LAS, or token-level
+   transliteration accuracy with sentence exact match.
 7. The worker stores aggregate metrics and safe error categories, then marks the
    submission complete.
 8. The leaderboard reads persisted scores; it does not rerun evaluations.
@@ -91,7 +92,8 @@ target once multiple evaluations can run concurrently.
 - Pin the inference runtime and prompt envelope version.
 - Use fixed parameters, initially `temperature=0`, fixed maximum output tokens,
   and a fixed seed when the runtime supports it.
-- Use the same hidden challenge manifest for all students in one competition.
+- Use the same challenge manifest for all students in one competition. Only
+  unpublished-data challenges should be described as hidden.
 - Record model version, runtime version, parameters, challenge version, and
   scorer version on every submission.
 - Do not use a rotating cloud "free model" alias for official ranking because
@@ -99,18 +101,19 @@ target once multiple evaluations can run concurrently.
   although compute is not free.
 
 GPU inference can still have small nondeterministic effects even at temperature
-zero. Official evaluations should use one controlled worker environment, not
-students' machines.
+zero. Development can use local Ollama and a mock provider. The teacher has
+confirmed server deployment and can provide a development server; exact GPU
+specifications and the final production worker topology are still pending.
 
 ## Dataset usage
 
-`standard_dataset.jsonl` is about 176 MB, so request handlers must not scan it for
-every submission. The dataset layer should create indexed challenge manifests or
+`standard_dataset.jsonl` is about 176 MiB (185 MB), so request handlers must not
+scan it for every submission. The dataset layer should create indexed challenge manifests or
 import required fields into PostgreSQL. Each competition should use a bounded,
 versioned sample set rather than all 135,180 sentences on every submission.
 
-A practical MVP challenge can start with 50-100 hidden samples for one language
-and one task. Scale only after model latency and cost are measured.
+A practical MVP challenge can start with 50-100 server-side samples for one
+language and one task. Scale only after model latency and cost are measured.
 
 ## Repository strategy
 

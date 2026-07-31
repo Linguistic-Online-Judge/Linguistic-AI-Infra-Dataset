@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from linguistic_oj.challenge import (
+    ChallengeExistsError,
     DuplicateSampleIdError,
     InsufficientSamplesError,
     build_challenge,
@@ -86,6 +87,8 @@ def test_challenge_filters_pool_and_has_unique_ids(tmp_path: Path) -> None:
     artifacts = _build(dataset_path, count=10)
 
     assert artifacts.public.challenge_id == "zh-gsdsimp-segmentation-v1"
+    assert artifacts.public.security_level == "public_reproducible"
+    assert artifacts.public.status == "draft"
     assert len(artifacts.private.sample_ids) == 10
     assert len(set(artifacts.private.sample_ids)) == 10
     assert all(sample_id.startswith("sample-0") for sample_id in artifacts.private.sample_ids)
@@ -107,6 +110,8 @@ def test_public_output_does_not_leak_private_fields_or_answers(tmp_path: Path) -
     assert "answers" not in public_payload
     assert "sample_ids" not in public_payload
     assert "selection_seed" not in public_payload
+    assert public_payload["dataset_sha256"] == private_payload["dataset_sha256"]
+    assert public_payload["selection_sha256"] == private_payload["selection_sha256"]
     assert len(private_payload["sample_ids"]) == 5
     assert private_payload["selection_seed"] == 2026
 
@@ -122,6 +127,81 @@ def test_dataset_hash_changes_when_source_changes(tmp_path: Path) -> None:
     changed = _build(dataset_path)
 
     assert original.private.dataset_sha256 != changed.private.dataset_sha256
+
+
+def test_identical_challenge_can_be_written_again(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample(index) for index in range(10)])
+    artifacts = _build(dataset_path)
+    public_dir = tmp_path / "public"
+    private_dir = tmp_path / "private"
+
+    first_paths = write_challenge(
+        artifacts,
+        public_dir=public_dir,
+        private_dir=private_dir,
+    )
+    second_paths = write_challenge(
+        artifacts,
+        public_dir=public_dir,
+        private_dir=private_dir,
+    )
+
+    assert first_paths == second_paths
+
+
+def test_semantically_identical_json_formatting_is_allowed(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample(index) for index in range(10)])
+    artifacts = _build(dataset_path)
+    public_dir = tmp_path / "public"
+    private_dir = tmp_path / "private"
+    public_path, _ = write_challenge(
+        artifacts,
+        public_dir=public_dir,
+        private_dir=private_dir,
+    )
+    public_path.write_text(
+        json.dumps(artifacts.public.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    write_challenge(
+        artifacts,
+        public_dir=public_dir,
+        private_dir=private_dir,
+    )
+
+
+def test_conflicting_challenge_version_cannot_be_overwritten(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample(index) for index in range(20)])
+    original = _build(dataset_path, seed=1)
+    conflicting = _build(dataset_path, seed=2)
+    public_dir = tmp_path / "public"
+    private_dir = tmp_path / "private"
+    write_challenge(original, public_dir=public_dir, private_dir=private_dir)
+
+    with pytest.raises(ChallengeExistsError, match="Create a new challenge version"):
+        write_challenge(conflicting, public_dir=public_dir, private_dir=private_dir)
+
+
+def test_public_only_clone_still_rejects_different_selection(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample(index) for index in range(20)])
+    original = _build(dataset_path, seed=1)
+    conflicting = _build(dataset_path, seed=2)
+    public_dir = tmp_path / "public"
+    private_dir = tmp_path / "private"
+    _, private_path = write_challenge(
+        original,
+        public_dir=public_dir,
+        private_dir=private_dir,
+    )
+    private_path.unlink()
+
+    with pytest.raises(ChallengeExistsError, match="Create a new challenge version"):
+        write_challenge(conflicting, public_dir=public_dir, private_dir=private_dir)
 
 
 def test_insufficient_matching_samples_is_reported(tmp_path: Path) -> None:

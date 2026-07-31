@@ -13,9 +13,12 @@
 
 ## 本地开发
 
-项目的确定性评分核心使用 Python 3.11 或更高版本：
+大型 JSONL 已由 Git LFS 管理。干净克隆后先获取 LFS 内容，再安装 Python
+3.11 或更高版本的开发环境：
 
 ```powershell
+git lfs install
+git lfs pull
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\.venv\Scripts\python.exe -m pytest
@@ -33,7 +36,8 @@ python -m venv .venv
 - 为大模型提供统一格式的多语言语言学评测样本。
 - 支持分词、词性标注、依存句法分析、转写等任务的自动评测。
 - 保留样本来源、语言、树库、文件名和句子 ID，方便追踪数据来源。
-- 将标准答案与待评测输入分离，便于后续构建在线评测服务。
+- 在未来评测运行时由后端从标准样本构造不含答案的输入 DTO；当前 JSONL
+  为构建和评分方便，仍在同一条记录中保存 `text` 与 `answers`。
 - 为项目后续演进留下清晰的数据版本和构建逻辑。
 
 ## 建立初衷
@@ -44,9 +48,9 @@ python -m venv .venv
 
 - 抽取题目：只向模型提供句子文本和任务要求。
 - 收集回答：让模型输出分词、词性、依存关系等预测结果。
-- 自动评分：由后端使用隐藏的 `answers` 字段进行对比和统计。
+- 自动评分：未来由后端读取服务器侧 `answers` 字段进行对比和统计。
 
-这个设计可以避免把标准答案直接暴露给模型，也能让数据服务、评测逻辑和前端展示逐步独立演进。
+当前公开仓库和 UD 上游都能访问这些答案，因此现阶段不能称为隐藏答案。正式服务必须增加安全输入 DTO 和私有数据存储，确保浏览器与学生提交的 Prompt 不接触 `answers`。
 
 ## 当前标准数据库
 
@@ -126,6 +130,14 @@ Target_Conllus/
 Standard_Dataset/
 ```
 
+`config/treebank_names.json` 固定记录当前 97 个来源文件的官方 Treebank
+名称。构建脚本默认强制读取该映射，因此不依赖未跟踪的 `TreeBanks/` 也能
+稳定生成 `GSDSimp`、`GUMReddit` 等名称和样本 ID。`TreeBanks/` 仅作为新增
+或尚未映射来源的可选辅助目录。
+
+当前数据尚未记录统一的上游 UD release 编号和逐 Treebank 许可证清单；下一次
+数据更新或对外发布前必须补齐来源版本和许可证元数据。
+
 构建规则：
 
 - 一个 UD 句子转换为一个标准 JSONL 样本。
@@ -135,15 +147,29 @@ Standard_Dataset/
 - `xpos` 和 `transliteration` 采用整句可用策略。
 - 依存关系同时保留 token ID、token form、head ID、head form 和 deprel。
 
+## 当前代码模块
+
+```text
+src/linguistic_oj/evaluation.py  单样本确定性评分
+src/linguistic_oj/responses.py   严格模型输出协议与解析
+src/linguistic_oj/dataset.py     流式 JSONL 读取和筛选
+src/linguistic_oj/challenge.py   版本化挑战集生成
+challenges/public/               可公开的挑战描述
+tests/                           自动化测试
+```
+
+当前已完成标准数据构建、单样本评分、Response 协议和挑战集选择。挑战级
+Micro-F1 等汇总、Mock/真实模型 Runner、API、数据库、前端和排行榜仍未实现。
+
 ## 项目演进记录
 
-当前版本是标准数据库的第一版可用形态，重点完成从 UD CoNLL-U test files 到统一 JSONL 数据集的转换。后续项目演进可以围绕以下方向继续记录：
+当前版本已经从单纯的数据转换扩展到评测核心和挑战集基础设施。后续演进包括：
 
 - 数据版本更新：目标语言、树库来源、样本数量变化。
-- Schema 更新：新增字段、任务或评分格式。
-- 评测服务更新：抽题逻辑、模型回答格式、自动评分方式。
+- Schema 更新：新增字段、任务或 Response 格式。
+- 评测服务更新：挑战级汇总、Mock/真实模型调用、API 和排行榜。
 - 数据质量检查：异常样本、树库差异、语言特定处理策略。
-- 发布方式更新：Git LFS、数据下载、API 或数据库服务。
+- 发布方式更新：当前 JSONL 已使用 Git LFS，后续增加 API、数据库或私有对象存储。
 
 
 ## About ConLL-U (.conllu)

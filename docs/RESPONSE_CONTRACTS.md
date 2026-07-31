@@ -4,11 +4,14 @@
 
 Every model response must be one JSON object and nothing else. Markdown code
 fences, explanations, reasoning text, comments, missing fields, extra fields, and
-automatic type coercion are rejected. A malformed response receives zero for the
-sample without using another LLM to repair it.
+automatic type coercion are rejected. The parser returns a deterministic error
+category without using another LLM to repair the response. The upcoming
+evaluation runner will count a malformed sample as zero.
 
-The platform can obtain each contract as JSON Schema through
-`response_json_schema()` and include it in the fixed task envelope.
+The platform can obtain the structural portion of each contract as JSON Schema
+through `response_json_schema()` and include it in the fixed task envelope.
+Contextual checks remain in `parse_model_response()`: fixed token count, the 17
+UPOS tags, dependency token IDs, and valid dependency head IDs.
 
 ## Segmentation
 
@@ -79,7 +82,7 @@ source text and fixed tokenization:
 
 ```json
 {
-  "text":"然而，这样的处理也衍生了一些问题。",
+  "text":"然而，这样的处理",
   "tokens":["然而","，","这样","的","处理"]
 }
 ```

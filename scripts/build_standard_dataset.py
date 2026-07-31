@@ -8,6 +8,7 @@ such as Chinese_中文/. Output defaults to Standard_Dataset/.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from collections import Counter, defaultdict
@@ -15,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 MISSING = "_"
+DEFAULT_TREEBANK_MAP = Path("config/treebank_names.json")
 
 
 def parse_kv_field(value: str) -> dict[str, str]:
@@ -111,6 +113,29 @@ def infer_treebank_from_filename(path: Path) -> str:
     return raw.upper() if len(raw) <= 4 else raw
 
 
+def load_treebank_name_map(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Treebank name map not found: {path}")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not all(
+        isinstance(filename, str) and isinstance(treebank, str) and treebank
+        for filename, treebank in payload.items()
+    ):
+        raise ValueError(f"Invalid treebank name map: {path}")
+    return payload
+
+
+def treebank_name_map_sha256(configured_names: dict[str, str]) -> str:
+    canonical_payload = json.dumps(
+        configured_names,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(canonical_payload).hexdigest()
+
+
 def build_treebank_lookup(
     treebanks_dir: Path | None,
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
@@ -138,9 +163,14 @@ def build_treebank_lookup(
 def resolve_treebank_name(
     language: str,
     conllu_path: Path,
+    configured_names: dict[str, str],
     treebank_by_filename: dict[tuple[str, str], str],
     treebank_by_slug: dict[tuple[str, str], str],
 ) -> str:
+    configured_match = configured_names.get(conllu_path.name)
+    if configured_match:
+        return configured_match
+
     filename_match = treebank_by_filename.get((language, conllu_path.name))
     if filename_match:
         return filename_match
@@ -234,7 +264,12 @@ def write_jsonl(path: Path, samples: list[dict]) -> None:
             f.write("\n")
 
 
-def build_dataset(input_dir: Path, output_dir: Path, treebanks_dir: Path | None) -> None:
+def build_dataset(
+    input_dir: Path,
+    output_dir: Path,
+    treebanks_dir: Path | None,
+    treebank_map_path: Path,
+) -> None:
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
 
@@ -242,6 +277,7 @@ def build_dataset(input_dir: Path, output_dir: Path, treebanks_dir: Path | None)
     by_language_dir = output_dir / "by_language"
     by_language_dir.mkdir(parents=True, exist_ok=True)
 
+    configured_names = load_treebank_name_map(treebank_map_path)
     treebank_by_filename, treebank_by_slug = build_treebank_lookup(treebanks_dir)
     all_samples: list[dict] = []
     samples_by_language: dict[str, list[dict]] = defaultdict(list)
@@ -250,7 +286,11 @@ def build_dataset(input_dir: Path, output_dir: Path, treebanks_dir: Path | None)
         language = language_from_dir(language_dir)
         for conllu_path in sorted(language_dir.glob("*.conllu")):
             treebank = resolve_treebank_name(
-                language, conllu_path, treebank_by_filename, treebank_by_slug
+                language,
+                conllu_path,
+                configured_names,
+                treebank_by_filename,
+                treebank_by_slug,
             )
             for sentence in parse_conllu(conllu_path):
                 sample = make_sample(sentence, conllu_path, language, treebank)
@@ -270,6 +310,8 @@ def build_dataset(input_dir: Path, output_dir: Path, treebanks_dir: Path | None)
     metadata = {
         "generated_at": datetime.now(UTC).isoformat(),
         "input_dir": str(input_dir),
+        "treebank_name_map": treebank_map_path.as_posix(),
+        "treebank_name_map_sha256": treebank_name_map_sha256(configured_names),
         "total_samples": len(all_samples),
         "total_languages": len(samples_by_language),
         "by_language": by_language_counts,
@@ -310,13 +352,19 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional original TreeBanks directory for official treebank-name casing.",
     )
+    parser.add_argument(
+        "--treebank-map",
+        default=DEFAULT_TREEBANK_MAP,
+        type=Path,
+        help="Tracked source-filename to official treebank-name mapping.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     treebanks_dir = args.treebanks if args.treebanks.exists() else None
-    build_dataset(args.input, args.output, treebanks_dir)
+    build_dataset(args.input, args.output, treebanks_dir, args.treebank_map)
 
 
 if __name__ == "__main__":

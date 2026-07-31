@@ -3,9 +3,10 @@
 ## Definition of the MVP
 
 One student can choose one language and one task, submit a prompt, have the same
-pinned model run against a versioned hidden sample set, receive a deterministic
-score, inspect safe aggregate feedback, and appear on a leaderboard. No gold
-answer is sent to the browser.
+pinned model run against a versioned server-side sample set, receive a
+deterministic score, inspect safe aggregate feedback, and appear on a leaderboard.
+Public UD development challenges are reproducible rather than secret; strict
+assessments use unpublished data. No gold answer is sent to the browser.
 
 ## Gate 0: security and specification
 
@@ -15,8 +16,9 @@ answer is sent to the browser.
 - Decide which UD treebanks and licenses are allowed in the first challenge.
 - Freeze response JSON schemas for segmentation, UPOS, dependency, and
   transliteration.
-- Choose one initial language/task pair and a bounded hidden challenge set.
-- Select the deployment machine before choosing the self-hosted model size.
+- Choose one initial language/task pair and a bounded server-side challenge set.
+- Obtain the school GPU server specifications before choosing the self-hosted
+  model size. The teacher has confirmed that a development server can be provided.
 
 Exit criterion: the team can state exactly what a student sees, what stays
 server-side, what source-data leakage remains possible, and how every malformed
@@ -27,7 +29,8 @@ or valid output is scored.
 - Implement token-span segmentation precision, recall, and F1.
 - Implement strict UPOS/XPOS positional accuracy.
 - Implement dependency UAS and LAS keyed by token ID.
-- Implement Unicode-normalized exact transliteration match.
+- Implement Unicode-normalized token transliteration accuracy and sentence exact
+  match.
 - Add response schema parsing and malformed-output categories.
 - Add unit tests for perfect, partial, malformed, missing, and extra output.
 
@@ -40,8 +43,9 @@ aggregation remains before Phase 1 is complete.
 
 ## Phase 2: dataset and challenge layer
 
-- Stream JSONL instead of loading the 176 MB file into request handlers.
-- Generate versioned challenge manifests containing hidden sample IDs.
+- Stream JSONL instead of loading the approximately 176 MiB (185 MB) file into
+  request handlers.
+- Generate versioned server-side challenge manifests containing sample IDs.
 - Return only safe problem input DTOs without `answers`.
 - Add deterministic sample selection and integrity hashes.
 - Add dataset validation and source/license metadata.
@@ -51,13 +55,18 @@ payload contains no gold fields.
 
 Implemented so far: streaming JSONL filtering, deterministic reservoir sampling,
 versioned public challenge metadata, private manifests, integrity hashes, and the
-first 50-sample Chinese GSDSimp segmentation challenge.
+first 50-sample Chinese GSDSimp segmentation challenge. The current challenge is
+marked `draft` and `public_reproducible`; conflicting content cannot overwrite an
+existing challenge version, even when a clean clone has no private manifest.
+Public SHA-256 fingerprints bind its source and selection. A tracked name map
+makes Treebank casing reproducible.
 
 ## Phase 3: fixed model runner
 
 - Define a provider-independent model adapter.
 - Implement a mock provider for tests.
-- Evaluate candidate self-hosted models on the deployment hardware.
+- Evaluate candidate self-hosted models locally through Ollama, then on the school
+  GPU development server.
 - Pin one model artifact, runtime, generation parameters, and prompt envelope.
 - Store raw responses privately and enforce time/output limits.
 
@@ -106,8 +115,8 @@ other developer.
 
 ## Immediate sequence
 
-1. Finish Phase 1 scorers and tests.
-2. Define strict response JSON schemas.
-3. Build a 50-sample Chinese segmentation challenge without exposing answers.
-4. Run the challenge with a mock model.
-5. Benchmark candidate fixed models on the intended server.
+1. Implement challenge-level metric aggregation and malformed-response zeroing.
+2. Build safe model-input DTOs that cannot contain `answers`.
+3. Implement a provider-independent interface and deterministic mock provider.
+4. Run the 50-sample challenge end to end with the mock provider.
+5. Collect the school GPU server specifications and benchmark a pinned model.
