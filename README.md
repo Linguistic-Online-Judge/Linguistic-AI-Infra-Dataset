@@ -7,6 +7,7 @@
 平台 MVP 的架构、安全边界和开发阶段见：
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/AGGREGATION.md`](docs/AGGREGATION.md)
 - [`docs/CHALLENGES.md`](docs/CHALLENGES.md)
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - [`docs/RESPONSE_CONTRACTS.md`](docs/RESPONSE_CONTRACTS.md)
@@ -151,6 +152,8 @@ Standard_Dataset/
 
 ```text
 src/linguistic_oj/evaluation.py  单样本确定性评分
+src/linguistic_oj/aggregation.py 挑战级 Micro 指标汇总
+src/linguistic_oj/contracts.py   评分、汇总和响应协议版本
 src/linguistic_oj/responses.py   严格模型输出协议与解析
 src/linguistic_oj/dataset.py     流式 JSONL 读取和筛选
 src/linguistic_oj/challenge.py   版本化挑战集生成
@@ -158,8 +161,8 @@ challenges/public/               可公开的挑战描述
 tests/                           自动化测试
 ```
 
-当前已完成标准数据构建、单样本评分、Response 协议和挑战集选择。挑战级
-Micro-F1 等汇总、Mock/真实模型 Runner、API、数据库、前端和排行榜仍未实现。
+当前已完成标准数据构建、单样本评分、挑战级汇总、Response 协议和挑战集
+选择。Safe Model Input、Mock/真实模型 Runner、API、数据库、前端和排行榜仍未实现。
 
 ## 项目演进记录
 

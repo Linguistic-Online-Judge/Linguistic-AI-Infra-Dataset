@@ -1,0 +1,21 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "zh-gsdsimp-segmentation-v2",
+  "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+  "language": "Chinese",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Chinese GSDSimp segmentation challenge",
+  "treebank": "GSDSimp",
+  "version": "v2"
+}

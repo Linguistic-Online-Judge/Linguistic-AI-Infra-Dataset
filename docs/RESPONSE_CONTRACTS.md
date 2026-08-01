@@ -6,7 +6,8 @@ Every model response must be one JSON object and nothing else. Markdown code
 fences, explanations, reasoning text, comments, missing fields, extra fields, and
 automatic type coercion are rejected. The parser returns a deterministic error
 category without using another LLM to repair the response. The upcoming
-evaluation runner will count a malformed sample as zero.
+evaluation runner will convert it into a malformed sample outcome; the aggregation
+layer then counts that sample as zero while retaining its gold denominator.
 
 The platform can obtain the structural portion of each contract as JSON Schema
 through `response_json_schema()` and include it in the fixed task envelope.
@@ -122,3 +123,7 @@ The parser returns one deterministic category for malformed output:
 | `LENGTH_MISMATCH` | Output item count differs from fixed input tokens |
 | `TOKEN_ID_MISMATCH` | Dependency IDs differ from fixed input IDs |
 | `INVALID_HEAD_ID` | Dependency head does not reference ROOT or an input token |
+
+`UNKNOWN_TASK` indicates a platform configuration error. The runner must abort
+the evaluation instead of converting it into a student's malformed zero. The
+remaining codes describe model-response failures that may be aggregated.

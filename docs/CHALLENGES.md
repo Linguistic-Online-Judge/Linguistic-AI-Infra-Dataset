@@ -18,14 +18,17 @@ runtime/private/challenges/<challenge-id>.json
 ```
 
 The public description contains only safe metadata such as language, task,
-sample count, metric, and SHA-256 fingerprints. The fingerprints bind the public
-artifact to one source file and one sample selection without exposing sample IDs.
-It may be committed to Git and returned by an API.
+sample count, metric, scorer and aggregation versions, and SHA-256 fingerprints.
+The fingerprints bind the public artifact to one source file and one sample
+selection without exposing sample IDs. It may be committed to Git and returned
+by an API.
 
-The server-side manifest contains sample IDs, the selection seed, and integrity
-hashes. `runtime/` is ignored by Git and must only be readable by the backend and
-evaluation worker. The manifest does not duplicate gold answers; the backend
-uses its sample IDs to load answers from its configured standard dataset.
+The server-side manifest contains immutable sample ID/gold-item-count pairs, the
+selection seed, task/scorer/aggregation versions, and integrity hashes. The gold
+counts are denominators, not answers, and are included in `selection_sha256`.
+`runtime/` is ignored by Git and must only be readable by the backend and
+evaluation worker. The backend uses the IDs to load answers from its configured
+standard dataset.
 
 This separation prevents an API from directly returning the selection. It does
 not make the current selection secret: the UD data, builder, filters, count, and
@@ -47,13 +50,15 @@ output is stable.
 The initial development challenge is:
 
 ```text
-ID: zh-gsdsimp-segmentation-v1
+ID: zh-gsdsimp-segmentation-v2
 Language: Chinese
 Treebank: GSDSimp
 Task: segmentation
 Samples: 50
 Seed: 2026
 Primary metric: micro_f1
+Scorer version: 1.0
+Aggregation version: 1.0
 Security level: public_reproducible
 Status: draft
 ```
@@ -61,9 +66,10 @@ Status: draft
 The current builder only emits `public_reproducible` and `draft`; private-data
 security validation and challenge activation are future backend workflows.
 
-`micro_f1` declares the metric this challenge will use, but challenge-level
-aggregation and model orchestration are not implemented yet. The current file is
-a reproducible selection artifact, not an active scored competition.
+`micro_f1` declares the metric this challenge uses, and the deterministic
+aggregation layer now implements it. Model orchestration and submission
+persistence are not implemented yet, so the current file remains a reproducible
+selection artifact rather than an active competition.
 
 Build it from the smaller per-language file:
 
@@ -75,13 +81,23 @@ Build it from the smaller per-language file:
   --task segmentation `
   --count 50 `
   --seed 2026 `
-  --version v1
+  --version v2
 ```
 
 Changing any sample selection or scoring rule requires a new challenge version.
 The builder enforces this rule: an identical rerun is allowed, while different
 public or private content under the same ID raises `ChallengeExistsError` before
 either file is changed.
+
+The original `v1` public file remains unchanged as a historical draft. Adding
+explicit scorer/aggregation contracts and trusted manifest denominators changed
+the challenge contract, so the current development artifact is `v2` rather than
+an in-place edit of `v1`. Catalog code can parse the legacy public metadata, but
+it cannot be loaded as evaluation-ready `ChallengeArtifacts`.
+
+Evaluation workers must use `load_challenge_artifacts()` with the configured
+dataset path. Loading recomputes the dataset SHA-256 and rejects a wrong or
+modified source file before any score can be aggregated.
 
 ## Security limitation
 

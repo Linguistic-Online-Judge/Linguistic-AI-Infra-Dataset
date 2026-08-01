@@ -75,7 +75,8 @@ target once multiple evaluations can run concurrently.
 1. A student chooses a language and task and submits one prompt.
 2. The API stores an immutable submission with the active model configuration
    and challenge version.
-3. The worker loads the fixed server-side sample IDs for that challenge.
+3. The worker validates the paired public/private artifacts, then loads the fixed
+   server-side sample IDs and trusted gold denominators for that challenge.
 4. For each sample, the worker combines the student's prompt with the platform's
    fixed task envelope and requests strict JSON output from the model.
 5. The response parser validates the schema. Malformed output receives a

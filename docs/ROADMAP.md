@@ -38,14 +38,16 @@ Exit criterion: all metrics run offline without a model or web server and are
 fully covered by repeatable tests.
 
 Implemented so far: per-sample scorers, strict response JSON contracts, parser
-error categories, and token-level transliteration scoring. Challenge-level metric
-aggregation remains before Phase 1 is complete.
+error categories, token-level transliteration scoring, and versioned
+challenge-level aggregation for all supported tasks. The offline parser-to-scorer
+orchestration remains before Phase 1 is complete.
 
 ## Phase 2: dataset and challenge layer
 
 - Stream JSONL instead of loading the approximately 176 MiB (185 MB) file into
   request handlers.
-- Generate versioned server-side challenge manifests containing sample IDs.
+- Generate versioned server-side challenge manifests containing immutable sample
+  IDs and trusted gold denominators.
 - Return only safe problem input DTOs without `answers`.
 - Add deterministic sample selection and integrity hashes.
 - Add dataset validation and source/license metadata.
@@ -55,11 +57,11 @@ payload contains no gold fields.
 
 Implemented so far: streaming JSONL filtering, deterministic reservoir sampling,
 versioned public challenge metadata, private manifests, integrity hashes, and the
-first 50-sample Chinese GSDSimp segmentation challenge. The current challenge is
+first 50-sample Chinese GSDSimp segmentation challenge (`v2`). The current challenge is
 marked `draft` and `public_reproducible`; conflicting content cannot overwrite an
 existing challenge version, even when a clean clone has no private manifest.
-Public SHA-256 fingerprints bind its source and selection. A tracked name map
-makes Treebank casing reproducible.
+Public SHA-256 fingerprints bind its source, selection, and per-sample
+denominators. A tracked name map makes Treebank casing reproducible.
 
 ## Phase 3: fixed model runner
 
@@ -115,8 +117,8 @@ other developer.
 
 ## Immediate sequence
 
-1. Implement challenge-level metric aggregation and malformed-response zeroing.
-2. Build safe model-input DTOs that cannot contain `answers`.
-3. Implement a provider-independent interface and deterministic mock provider.
+1. Build safe model-input DTOs that cannot contain `answers`.
+2. Implement a provider-independent interface and deterministic mock provider.
+3. Connect parsing, per-sample scoring, and aggregation in an offline runner.
 4. Run the 50-sample challenge end to end with the mock provider.
 5. Collect the school GPU server specifications and benchmark a pinned model.
