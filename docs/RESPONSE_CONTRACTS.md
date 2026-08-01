@@ -5,8 +5,8 @@
 Every model response must be one JSON object and nothing else. Markdown code
 fences, explanations, reasoning text, comments, missing fields, extra fields, and
 automatic type coercion are rejected. The parser returns a deterministic error
-category without using another LLM to repair the response. The upcoming
-evaluation runner will convert it into a malformed sample outcome; the aggregation
+category without using another LLM to repair the response. The offline evaluation
+runner converts it into a malformed sample outcome; the aggregation
 layer then counts that sample as zero while retaining its gold denominator.
 
 The platform can obtain the structural portion of each contract as JSON Schema
@@ -21,6 +21,11 @@ Input shown to the model:
 ```json
 {"text":"然而，这样的处理也衍生了一些问题。"}
 ```
+
+The runner constructs this as a canonical boundary-free surface by concatenating
+the validated token forms. Gold token boundaries are not included. This also
+prevents source-text whitespace from making segmentation trivial or conflicting
+with the scorer surface.
 
 Required response:
 

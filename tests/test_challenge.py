@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from linguistic_oj import AGGREGATION_VERSION, SCORER_VERSION
+from linguistic_oj import AGGREGATION_VERSION, SCORER_VERSION, TaskType
 from linguistic_oj.challenge import (
     ChallengeArtifacts,
     ChallengeExistsError,
@@ -13,6 +13,7 @@ from linguistic_oj.challenge import (
     PublicChallenge,
     build_challenge,
     load_challenge_artifacts,
+    make_challenge_id,
     write_challenge,
 )
 
@@ -340,6 +341,25 @@ def test_dependency_gold_forms_must_align_with_tokens(tmp_path: Path) -> None:
         )
 
 
+def test_segmentation_challenge_accepts_whitespace_in_source_text(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    sample = _sample(1, tasks=["segmentation"])
+    sample["text"] = "测试 句子1"
+    _write_jsonl(dataset_path, [sample])
+
+    artifacts = build_challenge(
+        dataset_path,
+        language="Chinese",
+        treebank="GSDSimp",
+        task="segmentation",
+        count=1,
+        seed=2026,
+        version="v1",
+    )
+
+    assert artifacts.private.samples[0].gold_items == 2
+
+
 def test_legacy_public_challenge_remains_catalog_readable() -> None:
     path = (
         Path(__file__).parents[1]
@@ -353,6 +373,44 @@ def test_legacy_public_challenge_remains_catalog_readable() -> None:
     assert legacy.challenge_id == "zh-gsdsimp-segmentation-v1"
     assert legacy.scorer_version is None
     assert legacy.aggregation_version is None
+
+
+def test_current_public_v2_matches_runtime_contracts() -> None:
+    path = (
+        Path(__file__).parents[1]
+        / "challenges"
+        / "public"
+        / "zh-gsdsimp-segmentation-v2.json"
+    )
+
+    current = PublicChallenge.model_validate_json(path.read_text(encoding="utf-8"))
+
+    assert current.challenge_id == "zh-gsdsimp-segmentation-v2"
+    assert current.title == "Chinese GSDSimp segmentation challenge"
+    assert current.version == "v2"
+    assert current.challenge_id == make_challenge_id(
+        current.language,
+        current.treebank,
+        TaskType(current.task),
+        current.version,
+    )
+    assert current.language == "Chinese"
+    assert current.treebank == "GSDSimp"
+    assert current.task == "segmentation"
+    assert current.sample_count == 50
+    assert current.primary_metric == "micro_f1"
+    assert current.secondary_metrics == ("micro_precision", "micro_recall")
+    assert current.response_schema_version == "segmentation-v1"
+    assert current.scorer_version == SCORER_VERSION
+    assert current.aggregation_version == AGGREGATION_VERSION
+    assert current.dataset_sha256 == (
+        "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff"
+    )
+    assert current.selection_sha256 == (
+        "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d"
+    )
+    assert current.security_level == "public_reproducible"
+    assert current.status == "draft"
 
 
 def test_insufficient_matching_samples_is_reported(tmp_path: Path) -> None:

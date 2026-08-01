@@ -88,5 +88,6 @@ whole run. They must never be converted into a student's zero-scored sample.
 }
 ```
 
-The upcoming offline runner will create these outcomes by connecting safe model
-inputs, a provider, response parsing, and the existing per-sample scorers.
+The offline runner now creates these outcomes by connecting gold-free model
+inputs, a provider, response parsing, and the existing per-sample scorers. See
+[`OFFLINE_RUNNER.md`](OFFLINE_RUNNER.md).

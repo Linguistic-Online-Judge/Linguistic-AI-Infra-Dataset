@@ -5,8 +5,10 @@ import pytest
 
 from linguistic_oj.dataset import (
     DatasetFormatError,
+    SelectedSampleSetError,
     iter_dataset_samples,
     iter_matching_samples,
+    load_dataset_samples_by_id,
 )
 
 
@@ -74,3 +76,30 @@ def test_invalid_json_reports_source_line(tmp_path: Path) -> None:
 def test_missing_dataset_file_is_reported(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="Dataset file not found"):
         list(iter_dataset_samples(tmp_path / "missing.jsonl"))
+
+
+def test_selected_samples_are_loaded_in_manifest_order(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample("first"), _sample("second"), _sample("unused")])
+
+    selected = load_dataset_samples_by_id(dataset_path, ["second", "first"])
+
+    assert [sample.id for sample in selected] == ["second", "first"]
+
+
+def test_selected_sample_loader_rejects_invalid_manifest_ids(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample("first")])
+
+    with pytest.raises(SelectedSampleSetError, match="duplicate values"):
+        load_dataset_samples_by_id(dataset_path, ["first", "first"])
+    with pytest.raises(SelectedSampleSetError, match="missing selected"):
+        load_dataset_samples_by_id(dataset_path, ["missing"])
+
+
+def test_selected_sample_loader_scans_for_duplicate_dataset_ids(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample("selected"), _sample("other"), _sample("selected")])
+
+    with pytest.raises(SelectedSampleSetError, match="duplicate selected"):
+        load_dataset_samples_by_id(dataset_path, ["selected"])

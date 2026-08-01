@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,10 @@ class DatasetSample(BaseModel):
 
 class DatasetFormatError(ValueError):
     """Raised when a JSONL line is invalid or does not match the dataset schema."""
+
+
+class SelectedSampleSetError(ValueError):
+    """Raised when manifest-selected samples cannot be loaded exactly once."""
 
 
 def iter_dataset_samples(path: Path) -> Iterator[DatasetSample]:
@@ -62,3 +66,33 @@ def iter_matching_samples(
             and task in sample.tasks_available
         ):
             yield sample
+
+
+def load_dataset_samples_by_id(
+    path: Path,
+    sample_ids: Sequence[str],
+) -> tuple[DatasetSample, ...]:
+    """Load a bounded sample set in manifest order while streaming the dataset."""
+
+    if isinstance(sample_ids, (str, bytes)) or not sample_ids:
+        raise SelectedSampleSetError("sample_ids must be a non-empty sequence")
+    if any(not isinstance(sample_id, str) or not sample_id for sample_id in sample_ids):
+        raise SelectedSampleSetError("sample_ids must contain non-empty strings")
+    if len(sample_ids) != len(set(sample_ids)):
+        raise SelectedSampleSetError("sample_ids contains duplicate values")
+
+    expected_ids = set(sample_ids)
+    selected: dict[str, DatasetSample] = {}
+    for sample in iter_dataset_samples(path):
+        if sample.id not in expected_ids:
+            continue
+        if sample.id in selected:
+            raise SelectedSampleSetError(
+                f"Dataset contains duplicate selected sample ID: {sample.id}"
+            )
+        selected[sample.id] = sample
+
+    missing_ids = sorted(expected_ids - selected.keys())
+    if missing_ids:
+        raise SelectedSampleSetError(f"Dataset is missing selected sample IDs: {missing_ids}")
+    return tuple(selected[sample_id] for sample_id in sample_ids)
