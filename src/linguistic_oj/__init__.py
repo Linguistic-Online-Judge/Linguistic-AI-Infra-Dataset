@@ -1,5 +1,7 @@
 """Core services for the Linguistic Online Judge."""
 
+from .aggregation import ChallengeAggregateResult, SampleEvaluationOutcome, aggregate_challenge
+from .contracts import AGGREGATION_VERSION, SCORER_VERSION
 from .evaluation import (
     DependencyArc,
     DependencyScore,
@@ -28,6 +30,8 @@ from .responses import (
 )
 
 __all__ = [
+    "AGGREGATION_VERSION",
+    "ChallengeAggregateResult",
     "DependencyArc",
     "DependencyScore",
     "ExactMatchScore",
@@ -36,6 +40,8 @@ __all__ = [
     "ParseErrorCode",
     "ResponseParseError",
     "ResponseParseResult",
+    "SCORER_VERSION",
+    "SampleEvaluationOutcome",
     "SegmentationScore",
     "SegmentationResponse",
     "TaggingScore",
@@ -43,6 +49,7 @@ __all__ = [
     "TaskType",
     "TransliterationResponse",
     "TransliterationScore",
+    "aggregate_challenge",
     "parse_model_response",
     "response_json_schema",
     "score_dependencies",

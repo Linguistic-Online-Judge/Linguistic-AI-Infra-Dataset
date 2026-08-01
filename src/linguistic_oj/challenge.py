@@ -11,10 +11,16 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from .contracts import (
+    AGGREGATION_VERSION,
+    RESPONSE_SCHEMA_VERSIONS,
+    SCORER_VERSION,
+    TASK_METRICS,
+)
 from .dataset import DatasetSample, iter_matching_samples
-from .responses import TaskType
+from .responses import UD_UPOS_TAGS, TaskType
 
 LANGUAGE_CODES = {
     "Arabic": "ar",
@@ -35,17 +41,6 @@ LANGUAGE_CODES = {
     "Spanish": "es",
     "Swedish": "sv",
     "Thai": "th",
-}
-
-TASK_METRICS = {
-    TaskType.SEGMENTATION: ("micro_f1", []),
-    TaskType.UPOS: ("micro_accuracy", []),
-    TaskType.XPOS: ("micro_accuracy", []),
-    TaskType.DEPENDENCY: ("las", ["uas"]),
-    TaskType.TRANSLITERATION: (
-        "token_accuracy",
-        ["sentence_exact_match_rate"],
-    ),
 }
 
 
@@ -70,12 +65,23 @@ class PublicChallenge(BaseModel):
     task: str
     sample_count: int
     primary_metric: str
-    secondary_metrics: list[str]
+    secondary_metrics: tuple[str, ...]
     response_schema_version: str
+    scorer_version: str | None = None
+    aggregation_version: str | None = None
     dataset_sha256: str
     selection_sha256: str
     security_level: str
     status: str
+
+
+class ManifestSample(BaseModel):
+    """Immutable sample identity and trusted gold denominator."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    sample_id: str
+    gold_items: int = Field(gt=0)
 
 
 class PrivateChallengeManifest(BaseModel):
@@ -85,16 +91,31 @@ class PrivateChallengeManifest(BaseModel):
 
     challenge_id: str
     version: str
+    task: str
+    scorer_version: str
+    aggregation_version: str
     dataset_sha256: str
     selection_sha256: str
     selection_seed: int
-    sample_ids: list[str]
+    samples: tuple[ManifestSample, ...]
+
+    @property
+    def sample_ids(self) -> tuple[str, ...]:
+        return tuple(sample.sample_id for sample in self.samples)
+
+    @property
+    def gold_items_by_sample_id(self) -> dict[str, int]:
+        return {sample.sample_id: sample.gold_items for sample in self.samples}
 
 
 @dataclass(frozen=True, slots=True)
 class ChallengeArtifacts:
     public: PublicChallenge
     private: PrivateChallengeManifest
+    dataset_path: Path
+
+    def __post_init__(self) -> None:
+        validate_challenge_artifacts(self)
 
 
 class InsufficientSamplesError(ValueError):
@@ -107,6 +128,10 @@ class DuplicateSampleIdError(ValueError):
 
 class ChallengeExistsError(FileExistsError):
     """Raised when an existing challenge ID has different immutable content."""
+
+
+class InvalidGoldAnswerError(ValueError):
+    """Raised when a selected sample lacks valid gold data for its task."""
 
 
 def _slugify(value: str) -> str:
@@ -134,9 +159,153 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _selection_hash(sample_ids: list[str]) -> str:
-    payload = "\n".join(sample_ids).encode()
+def selection_sha256(samples: tuple[ManifestSample, ...]) -> str:
+    payload = json.dumps(
+        [sample.model_dump(mode="json") for sample in samples],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+def _gold_item_count(sample: DatasetSample, task: TaskType) -> int:
+    tokens = sample.answers.get(TaskType.SEGMENTATION.value)
+    if not isinstance(tokens, list) or not tokens or any(
+        not isinstance(token, str) or not token for token in tokens
+    ):
+        raise InvalidGoldAnswerError(
+            f"Sample {sample.id} must have a non-empty segmentation gold list"
+        )
+    if task is TaskType.SEGMENTATION:
+        return len(tokens)
+
+    answer = sample.answers.get(task.value)
+    if not isinstance(answer, list) or not answer:
+        raise InvalidGoldAnswerError(
+            f"Sample {sample.id} must have a non-empty {task.value} gold list"
+        )
+    if len(answer) != len(tokens):
+        raise InvalidGoldAnswerError(
+            f"Sample {sample.id} {task.value} gold count must match segmentation"
+        )
+
+    if task is TaskType.DEPENDENCY:
+        token_ids: set[int] = set()
+        for index, arc in enumerate(answer):
+            if not isinstance(arc, list) or len(arc) != 5:
+                raise InvalidGoldAnswerError(
+                    f"Sample {sample.id} dependency[{index}] must contain five fields"
+                )
+            token_id, token_form, head_id, head_form, deprel = arc
+            if (
+                type(token_id) is not int
+                or not 0 < token_id <= len(answer)
+                or token_id in token_ids
+            ):
+                raise InvalidGoldAnswerError(
+                    f"Sample {sample.id} dependency[{index}] has an invalid token ID"
+                )
+            if type(head_id) is not int or not 0 <= head_id <= len(answer):
+                raise InvalidGoldAnswerError(
+                    f"Sample {sample.id} dependency[{index}] has an invalid head ID"
+                )
+            text_fields = (token_form, head_form, deprel)
+            if any(not isinstance(value, str) or not value for value in text_fields):
+                raise InvalidGoldAnswerError(
+                    f"Sample {sample.id} dependency[{index}] has an invalid text field"
+                )
+            if token_form != tokens[token_id - 1]:
+                raise InvalidGoldAnswerError(
+                    f"Sample {sample.id} dependency[{index}] token form is misaligned"
+                )
+            expected_head_form = "ROOT" if head_id == 0 else tokens[head_id - 1]
+            if head_form != expected_head_form:
+                raise InvalidGoldAnswerError(
+                    f"Sample {sample.id} dependency[{index}] head form is misaligned"
+                )
+            token_ids.add(token_id)
+        if token_ids != set(range(1, len(answer) + 1)):
+            raise InvalidGoldAnswerError(
+                f"Sample {sample.id} dependency token IDs must be contiguous"
+            )
+    elif any(not isinstance(item, str) or not item for item in answer):
+        raise InvalidGoldAnswerError(
+            f"Sample {sample.id} has invalid {task.value} gold items"
+        )
+    elif task is TaskType.UPOS and any(tag not in UD_UPOS_TAGS for tag in answer):
+        raise InvalidGoldAnswerError(f"Sample {sample.id} has an invalid UPOS gold tag")
+
+    return len(answer)
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
+    """Validate the complete public/private challenge identity and manifest."""
+
+    public = artifacts.public
+    private = artifacts.private
+    if not isinstance(public, PublicChallenge) or not isinstance(
+        private, PrivateChallengeManifest
+    ):
+        raise TypeError("artifacts must contain PublicChallenge and PrivateChallengeManifest")
+
+    task = TaskType(public.task)
+    expected_primary, expected_secondary = TASK_METRICS[task]
+    if public.primary_metric != expected_primary or public.secondary_metrics != expected_secondary:
+        raise ValueError("public metrics do not match the task contract")
+    if public.response_schema_version != RESPONSE_SCHEMA_VERSIONS[task]:
+        raise ValueError("response schema version does not match the task contract")
+    if public.scorer_version != SCORER_VERSION or private.scorer_version != SCORER_VERSION:
+        raise ValueError("challenge scorer version does not match the runtime")
+    if (
+        public.aggregation_version != AGGREGATION_VERSION
+        or private.aggregation_version != AGGREGATION_VERSION
+    ):
+        raise ValueError("challenge aggregation version does not match the runtime")
+    if public.security_level != ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value:
+        raise ValueError("unsupported challenge security level")
+    if public.status != ChallengeStatus.DRAFT.value:
+        raise ValueError("unsupported challenge status")
+
+    matching_fields = (
+        "challenge_id",
+        "version",
+        "task",
+        "scorer_version",
+        "aggregation_version",
+        "dataset_sha256",
+        "selection_sha256",
+    )
+    if any(getattr(public, field) != getattr(private, field) for field in matching_fields):
+        raise ValueError("public challenge and private manifest do not match")
+    if public.challenge_id != make_challenge_id(
+        public.language, public.treebank, task, public.version
+    ):
+        raise ValueError("challenge_id does not match challenge metadata")
+    if not _is_sha256(public.dataset_sha256) or not _is_sha256(public.selection_sha256):
+        raise ValueError("challenge fingerprints must be lowercase SHA-256 values")
+
+    sample_ids = private.sample_ids
+    if (
+        not sample_ids
+        or any(not sample_id for sample_id in sample_ids)
+        or len(sample_ids) != len(set(sample_ids))
+    ):
+        raise ValueError("private manifest must contain unique samples")
+    if sample_ids != tuple(sorted(sample_ids)):
+        raise ValueError("private manifest samples must be sorted by sample_id")
+    if public.sample_count != len(private.samples):
+        raise ValueError("public sample_count does not match the private manifest")
+    if selection_sha256(private.samples) != private.selection_sha256:
+        raise ValueError("private manifest does not match selection_sha256")
+    if not isinstance(artifacts.dataset_path, Path):
+        raise TypeError("dataset_path must be a Path")
+    if sha256_file(artifacts.dataset_path) != public.dataset_sha256:
+        raise ValueError("configured dataset does not match dataset_sha256")
 
 
 def _select_samples(
@@ -205,11 +374,14 @@ def build_challenge(
         count=count,
         seed=seed,
     )
-    sample_ids = [sample.id for sample in selected]
+    manifest_samples = tuple(
+        ManifestSample(sample_id=sample.id, gold_items=_gold_item_count(sample, task_type))
+        for sample in selected
+    )
     challenge_id = make_challenge_id(language, treebank, task_type, version)
     primary_metric, secondary_metrics = TASK_METRICS[task_type]
     dataset_sha256 = sha256_file(dataset_path)
-    selection_sha256 = _selection_hash(sample_ids)
+    selection_hash = selection_sha256(manifest_samples)
 
     public = PublicChallenge(
         challenge_id=challenge_id,
@@ -221,21 +393,26 @@ def build_challenge(
         sample_count=count,
         primary_metric=primary_metric,
         secondary_metrics=secondary_metrics,
-        response_schema_version=f"{task_type.value}-v1",
+        response_schema_version=RESPONSE_SCHEMA_VERSIONS[task_type],
+        scorer_version=SCORER_VERSION,
+        aggregation_version=AGGREGATION_VERSION,
         dataset_sha256=dataset_sha256,
-        selection_sha256=selection_sha256,
+        selection_sha256=selection_hash,
         security_level=ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value,
         status=ChallengeStatus.DRAFT.value,
     )
     private = PrivateChallengeManifest(
         challenge_id=challenge_id,
         version=version,
+        task=task_type.value,
+        scorer_version=SCORER_VERSION,
+        aggregation_version=AGGREGATION_VERSION,
         dataset_sha256=dataset_sha256,
-        selection_sha256=selection_sha256,
+        selection_sha256=selection_hash,
         selection_seed=seed,
-        sample_ids=sample_ids,
+        samples=manifest_samples,
     )
-    return ChallengeArtifacts(public=public, private=private)
+    return ChallengeArtifacts(public=public, private=private, dataset_path=dataset_path)
 
 
 def _serialize_json(model: BaseModel) -> str:
@@ -246,6 +423,21 @@ def _serialize_json(model: BaseModel) -> str:
         sort_keys=True,
     )
     return f"{payload}\n"
+
+
+def load_challenge_artifacts(
+    public_path: Path,
+    private_path: Path,
+    *,
+    dataset_path: Path,
+) -> ChallengeArtifacts:
+    """Load and verify an evaluation-ready challenge against its dataset file."""
+
+    public = PublicChallenge.model_validate_json(public_path.read_text(encoding="utf-8"))
+    private = PrivateChallengeManifest.model_validate_json(
+        private_path.read_text(encoding="utf-8")
+    )
+    return ChallengeArtifacts(public=public, private=private, dataset_path=dataset_path)
 
 
 def _ensure_compatible_existing_file(path: Path, payload: str) -> None:
@@ -279,6 +471,7 @@ def write_challenge(
     public_dir: Path,
     private_dir: Path,
 ) -> tuple[Path, Path]:
+    validate_challenge_artifacts(artifacts)
     public_path = public_dir / f"{artifacts.public.challenge_id}.json"
     private_path = private_dir / f"{artifacts.private.challenge_id}.json"
     public_payload = _serialize_json(artifacts.public)
@@ -304,7 +497,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", required=True, choices=[task.value for task in TaskType])
     parser.add_argument("--count", type=int, default=50)
     parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument("--version", default="v1")
+    parser.add_argument("--version", required=True)
     parser.add_argument("--public-dir", type=Path, default=Path("challenges/public"))
     parser.add_argument(
         "--private-dir",
