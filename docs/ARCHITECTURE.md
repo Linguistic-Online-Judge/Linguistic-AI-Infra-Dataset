@@ -62,6 +62,8 @@ Redis job queue ---- Python evaluation worker
   deterministic scorers, and persists aggregate results.
 - **Model provider**: one adapter interface. Start with a mock adapter in tests,
   then add one fixed self-hosted model adapter.
+- **Safe model input**: immutable task-specific DTOs constructed field by field.
+  Providers never receive `DatasetSample`, sample IDs, or `answers`.
 - **Gold data service**: loads samples by server-side challenge manifest.
   It must never expose the `answers` field to the client.
 - **Database**: users, competitions, problems, model configurations, submissions,
@@ -86,6 +88,11 @@ target once multiple evaluations can run concurrently.
 7. The worker stores aggregate metrics and safe error categories, then marks the
    submission complete.
 8. The leaderboard reads persisted scores; it does not rerun evaluations.
+
+The current offline runner implements artifact/sample loading, the safe provider
+boundary, mock generation, response parsing, scoring, and in-memory aggregation.
+The fixed platform prompt envelope, API submission storage, background jobs, and
+persistence remain future work.
 
 ## Fairness and reproducibility
 

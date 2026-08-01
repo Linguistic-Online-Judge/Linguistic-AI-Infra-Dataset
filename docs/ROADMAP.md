@@ -39,8 +39,8 @@ fully covered by repeatable tests.
 
 Implemented so far: per-sample scorers, strict response JSON contracts, parser
 error categories, token-level transliteration scoring, and versioned
-challenge-level aggregation for all supported tasks. The offline parser-to-scorer
-orchestration remains before Phase 1 is complete.
+challenge-level aggregation for all supported tasks. A deterministic offline
+runner now connects safe inputs, mock generation, parsing, scoring, and aggregation.
 
 ## Phase 2: dataset and challenge layer
 
@@ -62,6 +62,7 @@ marked `draft` and `public_reproducible`; conflicting content cannot overwrite a
 existing challenge version, even when a clean clone has no private manifest.
 Public SHA-256 fingerprints bind its source, selection, and per-sample
 denominators. A tracked name map makes Treebank casing reproducible.
+Task-specific immutable model input DTOs now enforce the gold-data boundary.
 
 ## Phase 3: fixed model runner
 
@@ -74,6 +75,10 @@ denominators. A tracked name map makes Treebank casing reproducible.
 
 Exit criterion: the same local evaluation command can switch from mock to the
 pinned model without changing scoring code.
+
+Implemented so far: the provider-neutral request/result contract, deterministic
+mock provider, complete preflight, and synchronous offline runner. A real pinned
+provider and production inference controls remain.
 
 ## Phase 4: backend service and jobs
 
@@ -117,8 +122,8 @@ other developer.
 
 ## Immediate sequence
 
-1. Build safe model-input DTOs that cannot contain `answers`.
-2. Implement a provider-independent interface and deterministic mock provider.
-3. Connect parsing, per-sample scoring, and aggregation in an offline runner.
-4. Run the 50-sample challenge end to end with the mock provider.
-5. Collect the school GPU server specifications and benchmark a pinned model.
+1. Collect the school GPU server specifications and choose candidate models.
+2. Define and version the fixed platform prompt envelope and generation settings.
+3. Implement one local/self-hosted model provider without changing scoring code.
+4. Benchmark latency, memory use, output validity, and repeatability on the server.
+5. Design submission persistence and background evaluation jobs after the model is pinned.

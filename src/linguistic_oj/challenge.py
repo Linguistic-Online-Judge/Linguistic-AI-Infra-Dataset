@@ -169,7 +169,7 @@ def selection_sha256(samples: tuple[ManifestSample, ...]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _gold_item_count(sample: DatasetSample, task: TaskType) -> int:
+def validated_gold_item_count(sample: DatasetSample, task: TaskType) -> int:
     tokens = sample.answers.get(TaskType.SEGMENTATION.value)
     if not isinstance(tokens, list) or not tokens or any(
         not isinstance(token, str) or not token for token in tokens
@@ -375,7 +375,10 @@ def build_challenge(
         seed=seed,
     )
     manifest_samples = tuple(
-        ManifestSample(sample_id=sample.id, gold_items=_gold_item_count(sample, task_type))
+        ManifestSample(
+            sample_id=sample.id,
+            gold_items=validated_gold_item_count(sample, task_type),
+        )
         for sample in selected
     )
     challenge_id = make_challenge_id(language, treebank, task_type, version)

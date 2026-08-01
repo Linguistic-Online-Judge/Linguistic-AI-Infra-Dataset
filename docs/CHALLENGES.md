@@ -67,9 +67,9 @@ The current builder only emits `public_reproducible` and `draft`; private-data
 security validation and challenge activation are future backend workflows.
 
 `micro_f1` declares the metric this challenge uses, and the deterministic
-aggregation layer now implements it. Model orchestration and submission
-persistence are not implemented yet, so the current file remains a reproducible
-selection artifact rather than an active competition.
+aggregation and offline runner implement it. Submission persistence is not
+implemented yet, so the current file remains a reproducible development artifact
+rather than an active competition.
 
 Build it from the smaller per-language file:
 
