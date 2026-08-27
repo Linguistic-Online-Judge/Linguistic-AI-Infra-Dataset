@@ -1,0 +1,35 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "zh-gsdsimp-segmentation-v2",
+  "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+  "errors": {
+    "EMPTY_VALUE": 1
+  },
+  "generation_settings": {
+    "enable_thinking": false,
+    "max_tokens": 1024,
+    "seed": 2026,
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "metrics": {
+    "micro_f1": 0.6263516219463356,
+    "micro_precision": 0.6123727486296007,
+    "micro_recall": 0.6409836065573771
+  },
+  "model_identity": {
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129"
+  },
+  "primary_metric": "micro_f1",
+  "prompt_envelope_version": "1.0",
+  "samples_invalid": 1,
+  "samples_total": 50,
+  "samples_valid": 49,
+  "score": 0.6263516219463356,
+  "scorer_version": "1.0",
+  "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+  "task": "segmentation"
+}

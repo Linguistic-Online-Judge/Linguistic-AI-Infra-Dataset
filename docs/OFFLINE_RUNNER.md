@@ -109,8 +109,37 @@ raw responses, model inputs, sample IDs, or gold data. Failure output reports on
 the exception category without a traceback or private values. The CLI writes no
 result files.
 
+## Self-hosted OpenAI-compatible model
+
+The runner can call a localhost vLLM server through its OpenAI-compatible API.
+Every request uses prompt envelope `1.0`, a pinned model commit and runtime
+version, fixed generation settings, and thinking disabled. The adapter does not
+enable JSON-constrained decoding because malformed JSON must remain observable
+and receive the parser's deterministic error category.
+
+```powershell
+ssh -L 8000:127.0.0.1:8000 75
+
+.\.venv\Scripts\python.exe -m linguistic_oj.runner `
+  --public "challenges\public\zh-gsdsimp-segmentation-v2.json" `
+  --private "runtime\private\challenges\zh-gsdsimp-segmentation-v2.json" `
+  --dataset "Standard_Dataset\by_language\Chinese_中文.jsonl" `
+  --provider openai `
+  --base-url "http://127.0.0.1:8000/v1" `
+  --model "Qwen/Qwen3.5-4B" `
+  --model-revision "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a" `
+  --runtime-version "0.27.1+cu129" `
+  --prompt-file "runtime\private\prompts\segmentation.txt"
+```
+
+The aggregate JSON includes the model identity, runtime version, generation
+settings, and prompt-envelope version. It still excludes prompts, raw responses,
+model inputs, sample IDs, and gold data.
+
+The verified Qwen3.5 deployment procedure and first real-model result are in
+[`MODEL_RUNTIME.md`](MODEL_RUNTIME.md).
+
 ## Deferred production work
 
-The runner is synchronous and mock-only. Real model adapters, prompt-envelope
-versioning, model/runtime/parameter pinning, timeouts, retries, persistence,
-background jobs, API endpoints, and concurrency remain separate later phases.
+The runner remains synchronous. Retries, persistence, background jobs, API
+endpoints, concurrency, and production secret management remain later phases.

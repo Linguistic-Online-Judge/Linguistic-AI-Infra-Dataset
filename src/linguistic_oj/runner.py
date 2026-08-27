@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,10 +33,14 @@ from .model_inputs import (
     response_expectations,
 )
 from .providers import (
+    PROMPT_ENVELOPE_VERSION,
     DeterministicMockProvider,
+    GenerationSettings,
     ModelGeneration,
+    ModelIdentity,
     ModelProvider,
     ModelRequest,
+    OpenAICompatibleProvider,
     ProviderContractError,
 )
 from .responses import (
@@ -249,8 +254,49 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--private", type=Path, required=True)
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--prompt-file", type=Path, required=True)
-    parser.add_argument("--provider", choices=["mock"], default="mock")
+    parser.add_argument("--provider", choices=["mock", "openai"], default="mock")
+    parser.add_argument("--base-url")
+    parser.add_argument("--model")
+    parser.add_argument("--model-revision")
+    parser.add_argument("--runtime-version")
+    parser.add_argument("--api-key-env")
+    parser.add_argument("--timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--max-tokens", type=int, default=1024)
     return parser.parse_args()
+
+
+def _provider_from_args(args: argparse.Namespace) -> ModelProvider:
+    if args.provider == "mock":
+        return DeterministicMockProvider()
+
+    required = {
+        "base_url": args.base_url,
+        "model": args.model,
+        "model_revision": args.model_revision,
+        "runtime_version": args.runtime_version,
+    }
+    missing = sorted(name.replace("_", "-") for name, value in required.items() if not value)
+    if missing:
+        raise ValueError(f"openai provider requires: {', '.join(missing)}")
+
+    api_key = None
+    if args.api_key_env:
+        api_key = os.environ.get(args.api_key_env)
+        if not api_key:
+            raise ValueError("configured API key environment variable is empty")
+
+    return OpenAICompatibleProvider(
+        base_url=args.base_url,
+        identity=ModelIdentity(
+            model=args.model,
+            revision=args.model_revision,
+            runtime="vllm",
+            runtime_version=args.runtime_version,
+        ),
+        settings=GenerationSettings(max_tokens=args.max_tokens),
+        timeout_seconds=args.timeout_seconds,
+        api_key=api_key,
+    )
 
 
 def main() -> None:
@@ -262,14 +308,20 @@ def main() -> None:
             args.private,
             dataset_path=args.dataset,
         )
+        provider = _provider_from_args(args)
         result = run_challenge(
             artifacts,
-            DeterministicMockProvider(),
+            provider,
             student_prompt=student_prompt,
         )
+        report = result.to_dict()
+        if isinstance(provider, OpenAICompatibleProvider):
+            report["model_identity"] = provider.identity.to_dict()
+            report["generation_settings"] = provider.settings.to_dict()
+            report["prompt_envelope_version"] = PROMPT_ENVELOPE_VERSION
         print(
             json.dumps(
-                result.to_dict(),
+                report,
                 allow_nan=False,
                 ensure_ascii=False,
                 indent=2,

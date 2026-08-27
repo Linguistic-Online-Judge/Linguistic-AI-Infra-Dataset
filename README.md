@@ -5,8 +5,8 @@
 项目把 Universal Dependencies（UD）的多语言标注数据整理成统一 JSONL，
 并提供从“构造安全题目”到“解析模型回答、自动评分、汇总结果”的完整离线流程。
 
-一句话说明当前进度：**现在可以在本地用 Mock Provider 跑完一次完整评测，
-但真实模型、后端 API、数据库、前端和排行榜还没有实现。**
+一句话说明当前进度：**现在可以用 Mock Provider 或 OpenAI-compatible
+自托管模型跑完整评测，但后端 API、数据库、前端和排行榜还没有实现。**
 
 ## 当前能做什么
 
@@ -18,7 +18,8 @@
 | 可复现、带版本的挑战集 | 已完成 |
 | 不含标准答案的安全模型输入 | 已完成 |
 | Mock Provider 离线端到端评测 | 已完成 |
-| 真实自托管模型 | 未开始 |
+| OpenAI-compatible 自托管模型 Provider | 已完成 |
+| GPU 模型部署与 4B/9B 真实基准 | 已完成 |
 | API、数据库、任务队列、前端、排行榜 | 未开始 |
 
 当前评测流程：
@@ -205,7 +206,7 @@ src/linguistic_oj/dataset.py      流式读取和筛选 JSONL
 src/linguistic_oj/challenge.py    创建和验证版本化挑战
 src/linguistic_oj/contracts.py    统一保存指标和协议版本
 src/linguistic_oj/model_inputs.py 构造不含答案的模型输入
-src/linguistic_oj/providers.py    Provider 协议和 Mock Provider
+src/linguistic_oj/providers.py    Provider 协议、Mock 和 OpenAI-compatible Provider
 src/linguistic_oj/responses.py    严格解析模型 JSON 回答
 src/linguistic_oj/evaluation.py   单样本确定性评分
 src/linguistic_oj/aggregation.py  挑战级指标汇总
@@ -215,16 +216,13 @@ tests/                            自动化测试
 
 ## 下一步
 
-下一阶段先接通一个固定的真实模型，不急着开发网页。
+当前阶段先验证固定真实模型，不急着开发网页。
 
-1. 获取学校服务器的 GPU 型号、显存、CPU、内存、磁盘、系统和 Docker 权限。
-2. 选择 2 至 3 个候选开源模型。
-3. 定义统一的测试 Prompt Envelope，也就是平台固定的任务指令、输入位置和
-   输出约束；所有候选模型使用相同生成参数进行比较。
-4. 实现一个本地或自托管 Model Provider，保持现有评分代码不变。
-5. 在服务器比较速度、显存占用、JSON 有效率、任务得分和重复运行稳定性。
-6. 根据测试结果选择并固定最终模型、模型版本、推理运行时和生成参数。
-7. 模型确定后，再设计超时、并发、数据库、后台任务队列、API 和前端。
+1. 已用一张 RTX 3090、vLLM 和 Qwen3.5-4B/9B 跑通可复现的真实模型基准。
+2. 9B 在当前中文分词挑战上从 4B 的 0.404 Micro-F1 提升到 0.626，暂定为优先候选。
+3. 为其他任务建立版本化挑战和 Prompt，避免只根据中文分词选择模型。
+4. 用多任务结果确认最终模型后，固定模型版本、推理运行时和生成参数。
+5. 模型确定后，再设计超时、并发、数据库、后台任务队列、API 和前端。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
 服务器部署方式。先做 API 或前端，之后很可能因为模型限制而返工。
@@ -236,5 +234,6 @@ tests/                            自动化测试
 - [模型回答 JSON 协议](docs/RESPONSE_CONTRACTS.md)
 - [挑战级汇总规则](docs/AGGREGATION.md)
 - [离线 Runner](docs/OFFLINE_RUNNER.md)
+- [Qwen3.5 模型部署与首个基准](docs/MODEL_RUNTIME.md)
 - [MVP 路线图](docs/ROADMAP.md)
 - [CoNLL-U 官方格式说明](https://universaldependencies.org/format.html)
