@@ -1,0 +1,18 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "zh-gsdsimp-upos-v1",
+  "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+  "language": "Chinese",
+  "primary_metric": "micro_accuracy",
+  "response_schema_version": "upos-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [],
+  "security_level": "public_reproducible",
+  "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+  "status": "draft",
+  "task": "upos",
+  "title": "Chinese GSDSimp upos challenge",
+  "treebank": "GSDSimp",
+  "version": "v1"
+}

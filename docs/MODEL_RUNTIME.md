@@ -138,3 +138,7 @@ The recorded aggregates are
 `benchmarks/qwen3.5-4b-zh-gsdsimp-segmentation-v2.json` and
 `benchmarks/qwen3.5-9b-zh-gsdsimp-segmentation-v2.json`. They contain no prompts,
 model inputs, sample IDs, raw responses, or gold answers.
+
+The later two-language UPOS comparison observed a higher 9B peak of about
+22.5 GiB during long generations. See [`UPOS_BENCHMARK.md`](UPOS_BENCHMARK.md)
+for its accuracy, validity, completion-reason, and latency results.
