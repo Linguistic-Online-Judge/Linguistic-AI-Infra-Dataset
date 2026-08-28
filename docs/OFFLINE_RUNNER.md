@@ -133,8 +133,9 @@ ssh -L 8000:127.0.0.1:8000 75
 ```
 
 The aggregate JSON includes the model identity, runtime version, generation
-settings, and prompt-envelope version. It still excludes prompts, raw responses,
-model inputs, sample IDs, and gold data.
+settings, prompt-envelope version, and SHA-256 identity of the exact student
+prompt. It still excludes prompt text, raw responses, model inputs, sample IDs,
+and gold data.
 
 The verified Qwen3.5 deployment procedure and first real-model result are in
 [`MODEL_RUNTIME.md`](MODEL_RUNTIME.md).

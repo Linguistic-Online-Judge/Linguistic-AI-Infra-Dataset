@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -315,6 +316,9 @@ def main() -> None:
             student_prompt=student_prompt,
         )
         report = result.to_dict()
+        report["student_prompt_sha256"] = hashlib.sha256(
+            student_prompt.encode("utf-8")
+        ).hexdigest()
         if isinstance(provider, OpenAICompatibleProvider):
             report["model_identity"] = provider.identity.to_dict()
             report["generation_settings"] = provider.settings.to_dict()

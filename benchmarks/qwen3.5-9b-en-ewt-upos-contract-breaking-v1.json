@@ -3,9 +3,7 @@
   "challenge_id": "en-ewt-upos-v1",
   "dataset_sha256": "4d8e3bfd67a477f123cf3ee3969d3fe3705f5165d420e4d1abd0488d96b2f954",
   "errors": {
-    "EMPTY_VALUE": 1,
-    "INVALID_JSON": 6,
-    "LENGTH_MISMATCH": 21
+    "INVALID_JSON": 50
   },
   "generation_settings": {
     "enable_thinking": false,
@@ -15,22 +13,22 @@
     "top_p": 1.0
   },
   "metrics": {
-    "micro_accuracy": 0.14162348877374784
+    "micro_accuracy": 0.0
   },
   "model_identity": {
-    "model": "Qwen/Qwen3.5-4B",
-    "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
     "runtime": "vllm",
     "runtime_version": "0.27.1+cu129"
   },
   "primary_metric": "micro_accuracy",
   "prompt_envelope_version": "1.0",
-  "samples_invalid": 28,
+  "samples_invalid": 50,
   "samples_total": 50,
-  "samples_valid": 22,
-  "score": 0.14162348877374784,
+  "samples_valid": 0,
+  "score": 0.0,
   "scorer_version": "1.0",
   "selection_sha256": "01ab9ded16d8b5a817be93516ab2088353ab595f358a3f5ddd93bc95a036397b",
-  "student_prompt_sha256": "e19f8507e18d3274ba4a9247e273312ce5a2b3f59be6c49ecb64097aafa48e92",
+  "student_prompt_sha256": "242dcefa1f79064d42acd5919682b24462cf5aad92c8b2b1562736b2948dff45",
   "task": "upos"
 }

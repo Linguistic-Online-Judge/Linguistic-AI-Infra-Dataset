@@ -17,7 +17,7 @@ The English challenge adds a separate EWT sample. Both use response schema
 
 ## Fixed prompt
 
-Both languages and both models used this exact platform-side prompt:
+Both languages and both models used this exact baseline student prompt:
 
 ```text
 Assign exactly one Universal Dependencies UPOS tag to each input token. Preserve the input token order and return the same number of tags as tokens. Use only these tags: ADJ, ADP, ADV, AUX, CCONJ, DET, INTJ, NOUN, NUM, PART, PRON, PROPN, PUNCT, SCONJ, SYM, VERB, X. Do not merge, split, reorder, omit, or add tokens. Return only the JSON object required by the platform schema.
@@ -85,3 +85,6 @@ rather than being replaced after prompt tuning.
 
 The four aggregate artifacts under `benchmarks/` contain no sample IDs, model
 inputs, raw responses, gold answers, or private manifests.
+
+The follow-up [`PROMPT_CALIBRATION.md`](PROMPT_CALIBRATION.md) comparison keeps
+Qwen3.5-9B fixed and varies only the student prompt.
