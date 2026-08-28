@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -313,3 +314,43 @@ def test_cli_sanitizes_private_failure_details(
     assert "sample-secret" not in captured.err
     assert "Traceback" not in captured.err
     assert captured.out == ""
+
+
+def test_cli_reports_prompt_identity_without_prompt_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifacts = _artifacts(tmp_path, "segmentation")
+    public_path, private_path = write_challenge(
+        artifacts,
+        public_dir=tmp_path / "public",
+        private_dir=tmp_path / "private",
+    )
+    prompt_text = "Private calibration prompt."
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text(prompt_text, encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "runner",
+            "--public",
+            str(public_path),
+            "--private",
+            str(private_path),
+            "--dataset",
+            str(artifacts.dataset_path),
+            "--prompt-file",
+            str(prompt_path),
+        ],
+    )
+
+    runner_main()
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["student_prompt_sha256"] == hashlib.sha256(
+        prompt_text.encode("utf-8")
+    ).hexdigest()
+    assert prompt_text not in captured.out
+    assert captured.err == ""

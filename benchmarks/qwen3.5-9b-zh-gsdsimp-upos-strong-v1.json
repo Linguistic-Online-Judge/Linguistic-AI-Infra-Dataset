@@ -1,8 +1,12 @@
 {
   "aggregation_version": "1.0",
-  "challenge_id": "zh-gsdsimp-segmentation-v2",
+  "challenge_id": "zh-gsdsimp-upos-v1",
   "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
-  "errors": {},
+  "errors": {
+    "INVALID_JSON": 7,
+    "INVALID_TAG": 1,
+    "LENGTH_MISMATCH": 28
+  },
   "generation_settings": {
     "enable_thinking": false,
     "max_tokens": 1024,
@@ -11,24 +15,22 @@
     "top_p": 1.0
   },
   "metrics": {
-    "micro_f1": 0.40374123148869834,
-    "micro_precision": 0.3848439821693908,
-    "micro_recall": 0.4245901639344262
+    "micro_accuracy": 0.0942622950819672
   },
   "model_identity": {
-    "model": "Qwen/Qwen3.5-4B",
-    "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
     "runtime": "vllm",
     "runtime_version": "0.27.1+cu129"
   },
-  "primary_metric": "micro_f1",
+  "primary_metric": "micro_accuracy",
   "prompt_envelope_version": "1.0",
-  "samples_invalid": 0,
+  "samples_invalid": 36,
   "samples_total": 50,
-  "samples_valid": 50,
-  "score": 0.40374123148869834,
+  "samples_valid": 14,
+  "score": 0.0942622950819672,
   "scorer_version": "1.0",
   "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
-  "student_prompt_sha256": "ae41a89a3ea646dae8a15c05493240e8405bb4e6737c206a75f70d3cde1ae84b",
-  "task": "segmentation"
+  "student_prompt_sha256": "54eedf985d91df70b5c2255d1516440b58c40d8895299bc1df1ecba867ccb7dd",
+  "task": "upos"
 }

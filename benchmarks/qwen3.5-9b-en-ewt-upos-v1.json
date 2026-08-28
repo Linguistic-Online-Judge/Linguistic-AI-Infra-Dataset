@@ -30,5 +30,6 @@
   "score": 0.34024179620034545,
   "scorer_version": "1.0",
   "selection_sha256": "01ab9ded16d8b5a817be93516ab2088353ab595f358a3f5ddd93bc95a036397b",
+  "student_prompt_sha256": "e19f8507e18d3274ba4a9247e273312ce5a2b3f59be6c49ecb64097aafa48e92",
   "task": "upos"
 }
