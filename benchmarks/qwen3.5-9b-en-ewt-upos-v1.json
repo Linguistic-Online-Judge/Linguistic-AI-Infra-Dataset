@@ -1,0 +1,34 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "en-ewt-upos-v1",
+  "dataset_sha256": "4d8e3bfd67a477f123cf3ee3969d3fe3705f5165d420e4d1abd0488d96b2f954",
+  "errors": {
+    "INVALID_TAG": 1,
+    "LENGTH_MISMATCH": 14
+  },
+  "generation_settings": {
+    "enable_thinking": false,
+    "max_tokens": 1024,
+    "seed": 2026,
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "metrics": {
+    "micro_accuracy": 0.34024179620034545
+  },
+  "model_identity": {
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129"
+  },
+  "primary_metric": "micro_accuracy",
+  "prompt_envelope_version": "1.0",
+  "samples_invalid": 15,
+  "samples_total": 50,
+  "samples_valid": 35,
+  "score": 0.34024179620034545,
+  "scorer_version": "1.0",
+  "selection_sha256": "01ab9ded16d8b5a817be93516ab2088353ab595f358a3f5ddd93bc95a036397b",
+  "task": "upos"
+}

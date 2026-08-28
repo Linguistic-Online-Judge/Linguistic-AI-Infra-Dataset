@@ -218,9 +218,9 @@ tests/                            自动化测试
 
 当前阶段先验证固定真实模型，不急着开发网页。
 
-1. 已用一张 RTX 3090、vLLM 和 Qwen3.5-4B/9B 跑通可复现的真实模型基准。
-2. 9B 在当前中文分词挑战上从 4B 的 0.404 Micro-F1 提升到 0.626，暂定为优先候选。
-3. 为其他任务建立版本化挑战和 Prompt，避免只根据中文分词选择模型。
+1. 已用一张 RTX 3090、vLLM 和 Qwen3.5-4B/9B 跑通可复现的分词和中英文 UPOS 基准。
+2. 9B 在已测任务上均优于 4B，暂定为优先候选，但 UPOS 输出合法率仍不够稳定。
+3. 建立版本化 UPOS Prompt 实验，并继续测试依存分析等任务，避免根据单一任务选型。
 4. 用多任务结果确认最终模型后，固定模型版本、推理运行时和生成参数。
 5. 模型确定后，再设计超时、并发、数据库、后台任务队列、API 和前端。
 
@@ -235,5 +235,6 @@ tests/                            自动化测试
 - [挑战级汇总规则](docs/AGGREGATION.md)
 - [离线 Runner](docs/OFFLINE_RUNNER.md)
 - [Qwen3.5 模型部署与首个基准](docs/MODEL_RUNTIME.md)
+- [Qwen3.5 中英文 UPOS 基准](docs/UPOS_BENCHMARK.md)
 - [MVP 路线图](docs/ROADMAP.md)
 - [CoNLL-U 官方格式说明](https://universaldependencies.org/format.html)
