@@ -211,6 +211,10 @@ src/linguistic_oj/responses.py    严格解析模型 JSON 回答
 src/linguistic_oj/evaluation.py   单样本确定性评分
 src/linguistic_oj/aggregation.py  挑战级指标汇总
 src/linguistic_oj/runner.py       离线端到端评测流程
+src/linguistic_oj/mvp_contract.py 读取和验证冻结评测合同
+src/linguistic_oj/submission_store.py SQLite 提交、outbox、结果和排行榜
+src/linguistic_oj/submission_jobs.py 进程内队列、outbox dispatcher 和 Mock Worker
+src/linguistic_oj/api.py          FastAPI 提交、状态、结果和排行榜接口
 tests/                            自动化测试
 ```
 
@@ -222,7 +226,9 @@ tests/                            自动化测试
 2. 9B 在已测任务上均优于 4B，暂定为优先候选，但 UPOS 输出合法率仍不够稳定。
 3. 已完成 UPOS Prompt 校准和中英文留出 Treebank 检查，固定 Prompt 排序在两组数据上保持一致。
 4. 已完成 AI 辅助创作与审阅的独立 Prompt、未公开合成数据盲测，确认存在跨语言排名反转。
-5. 已冻结 English EWT UPOS 教学型 MVP 合同；下一步实现 FastAPI Mock 提交、后台任务和持久化纵向切片。
+5. 已冻结 English EWT UPOS 教学型 MVP 合同，并完成 FastAPI + SQLite + Mock Worker
+   的异步提交纵向切片。
+6. 下一步替换进程内测试队列、接入固定 tokenizer 和真实 GPU Worker，再实现网页流程。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
 服务器部署方式。先做 API 或前端，之后很可能因为模型限制而返工。

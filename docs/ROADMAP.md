@@ -89,7 +89,8 @@ fixed Prompt Envelope `1.0`, and OpenAI-compatible adapter for the pinned
 self-hosted Qwen3.5-9B/vLLM runtime. Prompt calibration covers public, held-out
 Treebank, and unpublished synthetic data. ADR 0001 now freezes the first MVP
 model/challenge contract and inference limits. Pinned-tokenizer prompt/context
-preflight, persistence, queue execution, and safe production logging remain.
+preflight and safe production logging remain. The development Mock path has its
+own deterministic code-point preflight and cannot write to the Qwen partition.
 
 ## Phase 4: backend service and jobs
 
@@ -100,6 +101,14 @@ preflight, persistence, queue execution, and safe production logging remain.
 - Add rate limits, retry policy, idempotency, and safe logs.
 
 Exit criterion: an API integration test completes a mock submission end to end.
+
+Implemented so far: FastAPI app factory, SQLite schema migration, authenticated
+owner-scoped submission/status/result routes, transactional idempotency and
+outbox, an identity-routed in-memory queue, explicit fenced Mock Worker execution,
+aggregate-only results, safe failure DTOs, and version-isolated leaderboards. The
+integration suite covers `202 queued`, replay/conflict behavior, cross-owner
+`404`, preflight rejection, duplicate delivery, queue restart recovery, safe
+platform failure, and Mock/Qwen identity separation.
 
 ## Phase 5: web application
 
@@ -133,12 +142,13 @@ other developer.
 
 ## Immediate sequence
 
-1. Implement a FastAPI Mock submission vertical slice against ADR 0001.
-2. Add SQLite persistence, migrations, an idempotent queue interface, and the
-   `queued/running/rejected/succeeded/failed` state machine.
-3. Pass an API integration test from submission through aggregate result and
-   leaderboard without blocking on model inference.
-4. Replace the in-memory test queue with Redis and run the fixed contract in a
-   single-concurrency GPU worker.
+1. Replace the in-memory test queue with Redis delivery leases and implement the
+   contract's bounded whole-job retry policy.
+2. Add pinned Qwen tokenizer/chat-template preflight, provider response bounds,
+   request cancellation, deadline enforcement, and runtime attestation.
+3. Run the fixed contract in a single-concurrency GPU worker without permitting
+   Mock scores in the Qwen partition.
+4. Move deployment persistence to PostgreSQL and add production authentication,
+   migrations, rate-limit operations, and structured safe logging.
 5. Build the web flow only after submission persistence and background jobs are
-   stable.
+   stable under concurrency and restart tests.

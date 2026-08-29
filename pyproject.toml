@@ -8,11 +8,17 @@ version = "0.1.0"
 description = "Deterministic evaluation core for the Linguistic Online Judge"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.141,<0.142",
     "pydantic>=2.10,<3",
+    "starlette>=1.6,<1.7",
 ]
 
 [project.optional-dependencies]
+api = [
+    "uvicorn>=0.34,<1",
+]
 dev = [
+    "httpx2>=2.12,<2.13",
     "pytest>=8.3,<10",
     "ruff>=0.9,<1",
 ]

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -213,6 +214,7 @@ def run_challenge(
     provider: ModelProvider,
     *,
     student_prompt: str,
+    request_preflight: Callable[[tuple[ModelRequest, ...]], None] | None = None,
 ) -> ChallengeAggregateResult:
     """Run one complete challenge without returning partial results."""
 
@@ -225,15 +227,21 @@ def run_challenge(
 
     prepared_samples = _prepare_samples(artifacts)
     task = TaskType(artifacts.public.task)
-    outcomes: list[SampleEvaluationOutcome] = []
-    for prepared in prepared_samples:
-        request = ModelRequest(
+    requests = tuple(
+        ModelRequest(
             task=task,
             language=artifacts.public.language,
             treebank=artifacts.public.treebank,
             student_prompt=student_prompt,
             model_input=prepared.model_input,
         )
+        for prepared in prepared_samples
+    )
+    if request_preflight is not None:
+        request_preflight(requests)
+
+    outcomes: list[SampleEvaluationOutcome] = []
+    for prepared, request in zip(prepared_samples, requests, strict=True):
         generation = provider.generate(request)
         if not isinstance(generation, ModelGeneration):
             raise ProviderContractError("provider must return ModelGeneration")
