@@ -237,5 +237,6 @@ tests/                            自动化测试
 - [Qwen3.5 模型部署与首个基准](docs/MODEL_RUNTIME.md)
 - [Qwen3.5 中英文 UPOS 基准](docs/UPOS_BENCHMARK.md)
 - [UPOS Prompt 评测校准](docs/PROMPT_CALIBRATION.md)
+- [私有合成 UPOS 校准预注册](docs/PRIVATE_UPOS_CALIBRATION_PROTOCOL.md)
 - [MVP 路线图](docs/ROADMAP.md)
 - [CoNLL-U 官方格式说明](https://universaldependencies.org/format.html)
