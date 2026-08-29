@@ -10,9 +10,9 @@ different model behavior.
 
 The fixed model is Qwen3.5-9B at revision
 `c202236235762e1c871ad0ccb60c8ee5ba337b9a`, served by vLLM `0.27.1+cu129`.
-The Chinese GSDSimp and English EWT `upos-v1` challenges each contain 50
-samples. Temperature is `0`, top-p is `1`, seed is `2026`, thinking is disabled,
-and JSON-constrained decoding is not used.
+The Chinese GSDSimp and English EWT `upos-v1` calibration challenges each
+contain 50 samples. Temperature is `0`, top-p is `1`, seed is `2026`, thinking
+is disabled, and JSON-constrained decoding is not used.
 
 ## Reference student prompts
 
@@ -106,15 +106,49 @@ The baseline row comes from the earlier run under the same pinned runtime.
 The peak observed GPU memory remained about 22.5 GiB. All runs used one sequence
 on one RTX 3090.
 
+## Held-out Treebank check
+
+After the initial calibration was committed, the same four prompts and all
+runtime settings were frozen. They were then evaluated on two newly selected,
+publicly reproducible challenges: 50 Chinese GSD samples and 50 English GUM
+samples. Challenge selection used seed `2027`; model generation retained seed
+`2026`. Neither Treebank appeared in the initial GSDSimp/EWT calibration.
+
+Each prompt/challenge combination was again run twice. All eight repeated
+aggregates were identical.
+
+| Prompt | Chinese GSD valid | Chinese GSD accuracy | English GUM valid | English GUM accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| Contract-breaking | 0 / 50 | 0 | 0 / 50 | 0 |
+| Weak | 6 / 50 | 0.036776212832550864 | 22 / 50 | 0.1251548946716233 |
+| Strong candidate | 11 / 50 | 0.07276995305164319 | 23 / 50 | 0.14869888475836432 |
+| Baseline | 13 / 50 | 0.09389671361502347 | 29 / 50 | 0.1809169764560099 |
+
+Both held-out Treebanks reproduce the original ordering:
+
+```text
+contract-breaking < weak < strong candidate < baseline
+```
+
+The 800 sequential requests comprised 722 normal `stop` completions and 78
+`length` completions at the fixed 1,024-token limit, with no aborts or service
+errors. Mean end-to-end latency was 4.710 seconds/request, mean time to first
+token was 0.121 seconds/request, and mean token counts were 307.11 prompt and
+222.93 generated tokens/request. Peak GPU memory was about 22.5 GiB on one RTX
+3090. Length-limited outputs were scored as returned; none were retried,
+repaired, or removed.
+
 ## Conclusion and limits
 
-The initial calibration passes its basic discrimination check: an explicitly
-contract-breaking prompt scores zero, and the three task-oriented prompts have a
-stable, identical ordering across Chinese and English. Prompt identity is now
-recorded as SHA-256 in every runner report without exposing private prompt text.
+The calibration passes its basic discrimination and held-out Treebank checks:
+an explicitly contract-breaking prompt scores zero, and the three task-oriented
+prompts have a stable, identical ordering across both initial and held-out
+Chinese and English challenges. Prompt identity is recorded as SHA-256 in every
+runner report without echoing the prompt text itself.
 
-This is not yet evidence that the judge generalizes to unseen prompts. The
-reference prompts were analyzed on the same public challenges used for the
-baseline, and only one model and one task were calibrated. The next calibration
-stage should freeze these prompts, evaluate them on held-out Treebanks, and add
-more independently authored prompts before setting any production threshold.
+This is evidence of cross-Treebank stability for these four prompts, not yet
+evidence that the judge generalizes to unseen prompts. Only one model and one
+task were calibrated, all challenges are publicly reproducible, and the three
+task-oriented prompts still have low output-validity rates. More independently
+authored prompts and genuinely private data are required before setting any
+production threshold.
