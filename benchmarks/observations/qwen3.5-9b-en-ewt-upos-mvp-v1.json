@@ -1,0 +1,40 @@
+{
+  "aggregate_canonicalization": "python-json-v1",
+  "aggregate_sha256": "98e0ea6a32c115962f6f51c8f54913f8f8a042b6dc6eb86fce30fbe7f0a24759",
+  "benchmark": "qwen3.5-9b-en-ewt-upos-mvp-v1.json",
+  "challenge_id": "en-ewt-upos-v1",
+  "e2e_request_latency_seconds_count": 100,
+  "e2e_request_latency_seconds_sum": 134.73543667793274,
+  "finish_reasons": {
+    "abort": 0,
+    "error": 0,
+    "length": 0,
+    "repetition": 0,
+    "stop": 100
+  },
+  "evaluation_identity_sha256": "ab2692baf0ef6caacdcb852c00cef098b5a9c860121b5d1159b59d0f599d3825",
+  "generation_settings": {
+    "enable_thinking": false,
+    "max_tokens": 256,
+    "seed": 2026,
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "generation_tokens_total": 6020,
+  "model_identity": {
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129"
+  },
+  "prompt_tokens_total": 30030,
+  "request_count": 100,
+  "run_aggregate_sha256s": [
+    "98e0ea6a32c115962f6f51c8f54913f8f8a042b6dc6eb86fce30fbe7f0a24759",
+    "98e0ea6a32c115962f6f51c8f54913f8f8a042b6dc6eb86fce30fbe7f0a24759"
+  ],
+  "runs": 2,
+  "student_prompt_sha256": "e19f8507e18d3274ba4a9247e273312ce5a2b3f59be6c49ecb64097aafa48e92",
+  "time_to_first_token_seconds_count": 100,
+  "time_to_first_token_seconds_sum": 12.259318113327026
+}

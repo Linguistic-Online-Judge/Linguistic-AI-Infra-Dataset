@@ -222,7 +222,7 @@ tests/                            自动化测试
 2. 9B 在已测任务上均优于 4B，暂定为优先候选，但 UPOS 输出合法率仍不够稳定。
 3. 已完成 UPOS Prompt 校准和中英文留出 Treebank 检查，固定 Prompt 排序在两组数据上保持一致。
 4. 已完成 AI 辅助创作与审阅的独立 Prompt、未公开合成数据盲测，确认存在跨语言排名反转。
-5. 下一步使用离线人工双标的私有数据扩展任务，再设计生产阈值、API 和前端。
+5. 已冻结 English EWT UPOS 教学型 MVP 合同；下一步实现 FastAPI Mock 提交、后台任务和持久化纵向切片。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
 服务器部署方式。先做 API 或前端，之后很可能因为模型限制而返工。
@@ -238,5 +238,6 @@ tests/                            自动化测试
 - [Qwen3.5 中英文 UPOS 基准](docs/UPOS_BENCHMARK.md)
 - [UPOS Prompt 评测校准](docs/PROMPT_CALIBRATION.md)
 - [私有合成 UPOS 校准协议与结果](docs/PRIVATE_UPOS_CALIBRATION_PROTOCOL.md)
+- [ADR 0001：MVP 生产评测合同](docs/adr/0001-mvp-production-evaluation-contract.md)
 - [MVP 路线图](docs/ROADMAP.md)
 - [CoNLL-U 官方格式说明](https://universaldependencies.org/format.html)
