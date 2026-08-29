@@ -1,0 +1,18 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "en-gum-upos-holdout-v1",
+  "dataset_sha256": "4d8e3bfd67a477f123cf3ee3969d3fe3705f5165d420e4d1abd0488d96b2f954",
+  "language": "English",
+  "primary_metric": "micro_accuracy",
+  "response_schema_version": "upos-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [],
+  "security_level": "public_reproducible",
+  "selection_sha256": "86a115d955a3d6b542b524d1bcec4b12fc1e23b1fb4cf3847c9dad7759635697",
+  "status": "draft",
+  "task": "upos",
+  "title": "English GUM upos challenge",
+  "treebank": "GUM",
+  "version": "holdout-v1"
+}
