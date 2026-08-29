@@ -24,6 +24,12 @@ Exit criterion: the team can state exactly what a student sees, what stays
 server-side, what source-data leakage remains possible, and how every malformed
 or valid output is scored.
 
+The first MVP decision is now frozen in ADR 0001. It is an English EWT UPOS
+`public_reproducible` teaching benchmark, not a strict anti-cheating assessment.
+The official Treebank page states CC BY-SA 4.0; external activation remains
+blocked until the local release or commit, file hashes, attribution/share-alike
+requirements, and underlying-text rights review are recorded.
+
 ## Phase 1: deterministic evaluation core
 
 - Implement token-span segmentation precision, recall, and F1.
@@ -71,14 +77,19 @@ Task-specific immutable model input DTOs now enforce the gold-data boundary.
 - Evaluate candidate self-hosted models locally through Ollama, then on the school
   GPU development server.
 - Pin one model artifact, runtime, generation parameters, and prompt envelope.
-- Store raw responses privately and enforce time/output limits.
+- Define raw-response retention and enforce time/output limits. ADR 0001 chooses
+  aggregate-only persistence for the teaching MVP.
 
 Exit criterion: the same local evaluation command can switch from mock to the
 pinned model without changing scoring code.
 
 Implemented so far: the provider-neutral request/result contract, deterministic
-mock provider, complete preflight, and synchronous offline runner. A real pinned
-provider and production inference controls remain.
+mock provider, complete dataset/artifact preflight, synchronous offline runner,
+fixed Prompt Envelope `1.0`, and OpenAI-compatible adapter for the pinned
+self-hosted Qwen3.5-9B/vLLM runtime. Prompt calibration covers public, held-out
+Treebank, and unpublished synthetic data. ADR 0001 now freezes the first MVP
+model/challenge contract and inference limits. Pinned-tokenizer prompt/context
+preflight, persistence, queue execution, and safe production logging remain.
 
 ## Phase 4: backend service and jobs
 
@@ -94,7 +105,7 @@ Exit criterion: an API integration test completes a mock submission end to end.
 
 - Build login, challenge list, task details, and prompt editor.
 - Offer zero-shot, few-shot, and CoT templates as editable teaching aids.
-- Show queued/running/completed status and metric explanations.
+- Show queued/running/rejected/succeeded/failed status and metric explanations.
 - Show submission history and leaderboard.
 - Verify desktop and mobile layouts.
 
@@ -122,8 +133,12 @@ other developer.
 
 ## Immediate sequence
 
-1. Collect the school GPU server specifications and choose candidate models.
-2. Define and version the fixed platform prompt envelope and generation settings.
-3. Implement one local/self-hosted model provider without changing scoring code.
-4. Benchmark latency, memory use, output validity, and repeatability on the server.
-5. Design submission persistence and background evaluation jobs after the model is pinned.
+1. Implement a FastAPI Mock submission vertical slice against ADR 0001.
+2. Add SQLite persistence, migrations, an idempotent queue interface, and the
+   `queued/running/rejected/succeeded/failed` state machine.
+3. Pass an API integration test from submission through aggregate result and
+   leaderboard without blocking on model inference.
+4. Replace the in-memory test queue with Redis and run the fixed contract in a
+   single-concurrency GPU worker.
+5. Build the web flow only after submission persistence and background jobs are
+   stable.

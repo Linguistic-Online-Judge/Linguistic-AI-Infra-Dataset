@@ -67,7 +67,8 @@ Redis job queue ---- Python evaluation worker
 - **Gold data service**: loads samples by server-side challenge manifest.
   It must never expose the `answers` field to the client.
 - **Database**: users, competitions, problems, model configurations, submissions,
-  per-sample outcomes, and leaderboard aggregates.
+  aggregate outcomes, and leaderboard rows. ADR 0001 does not persist raw
+  per-sample responses for the teaching MVP.
 
 SQLite can be used for a single-machine prototype. PostgreSQL and Redis are the
 target once multiple evaluations can run concurrently.
@@ -75,8 +76,8 @@ target once multiple evaluations can run concurrently.
 ## Submission flow
 
 1. A student chooses a language and task and submits one prompt.
-2. The API stores an immutable submission with the active model configuration
-   and challenge version.
+2. The API stores an immutable submission with the complete evaluation-contract
+   snapshot and its canonical identity SHA-256.
 3. The worker validates the paired public/private artifacts, then loads the fixed
    server-side sample IDs and trusted gold denominators for that challenge.
 4. For each sample, the worker combines the student's prompt with the platform's
@@ -86,24 +87,28 @@ target once multiple evaluations can run concurrently.
 6. The scorer computes segmentation F1, tag accuracy, UAS/LAS, or token-level
    transliteration accuracy with sentence exact match.
 7. The worker stores aggregate metrics and safe error categories, then marks the
-   submission complete.
+   submission `rejected`, `succeeded`, or `failed`.
 8. The leaderboard reads persisted scores; it does not rerun evaluations.
 
 The current offline runner implements artifact/sample loading, the safe provider
-boundary, mock generation, response parsing, scoring, and in-memory aggregation.
-The fixed platform prompt envelope, API submission storage, background jobs, and
-persistence remain future work.
+boundary, mock and pinned self-hosted generation, fixed Prompt Envelope `1.0`,
+response parsing, scoring, and in-memory aggregation. ADR 0001 freezes the first
+MVP evaluation contract. API submission storage, background jobs, and persistence
+remain future work.
 
 ## Fairness and reproducibility
 
-- Pin the model artifact by exact version or checksum.
-- Pin the inference runtime and prompt envelope version.
+- Partition results by the complete canonical evaluation identity: contract,
+  challenge and artifact hashes, model revision, runtime, generation parameters,
+  Prompt Envelope, response schema, scorer, and aggregation versions.
+- Pin the model artifact by exact version or checksum and attest it at worker
+  startup.
 - Use fixed parameters, initially `temperature=0`, fixed maximum output tokens,
   and a fixed seed when the runtime supports it.
 - Use the same challenge manifest for all students in one competition. Only
   unpublished-data challenges should be described as hidden.
-- Record model version, runtime version, parameters, challenge version, and
-  scorer version on every submission.
+- Store the complete immutable contract snapshot and identity digest on every
+  submission rather than copying a partial set of version columns.
 - Do not use a rotating cloud "free model" alias for official ranking because
   providers may silently update it. A self-hosted open model is more reproducible,
   although compute is not free.

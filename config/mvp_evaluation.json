@@ -1,0 +1,178 @@
+{
+  "access_policy": {
+    "draft_submission_policy": "development_override_only",
+    "external_activation_requirements": [
+      "recorded_source_release_or_commit",
+      "recorded_source_file_sha256s",
+      "recorded_attribution_requirements",
+      "reviewed_share_alike_requirements",
+      "reviewed_underlying_text_rights"
+    ],
+    "leaderboard_identity": "non_email_public_handle",
+    "submission_identity": "server_verified_subject",
+    "submission_result_access": "owner_only"
+  },
+  "catalog": {
+    "annotation_license": "CC BY-SA 4.0",
+    "attribution_requirements": "unrecorded",
+    "challenge_id": "en-ewt-upos-v1",
+    "security_level": "public_reproducible",
+    "source_commit": "unrecorded",
+    "source_file_sha256s": [],
+    "source_release": "unrecorded",
+    "share_alike_requirements": "review_required",
+    "status": "draft",
+    "underlying_text_rights": "review_required"
+  },
+  "contract_version": "mvp-evaluation-v1",
+  "evaluation_identity": {
+    "aggregation_version": "1.0",
+    "challenge_id": "en-ewt-upos-v1",
+    "contract_version": "mvp-evaluation-v1",
+    "dataset_sha256": "4d8e3bfd67a477f123cf3ee3969d3fe3705f5165d420e4d1abd0488d96b2f954",
+    "generation_settings": {
+      "enable_thinking": false,
+      "max_tokens": 256,
+      "seed": 2026,
+      "temperature": 0.0,
+      "top_p": 1.0
+    },
+    "model_identity": {
+      "model": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "runtime": "vllm",
+      "runtime_version": "0.27.1+cu129"
+    },
+    "prompt_envelope_version": "1.0",
+    "response_schema_version": "upos-v1",
+    "scorer_version": "1.0",
+    "selection_sha256": "01ab9ded16d8b5a817be93516ab2088353ab595f358a3f5ddd93bc95a036397b",
+    "task": "upos"
+  },
+  "feedback": {
+    "owner_failure_fields": [
+      "code",
+      "failure_contract_version",
+      "retryable"
+    ],
+    "owner_result_fields": [
+      "aggregation_version",
+      "challenge_id",
+      "dataset_sha256",
+      "errors",
+      "generation_settings",
+      "metrics",
+      "model_identity",
+      "primary_metric",
+      "prompt_envelope_version",
+      "samples_invalid",
+      "samples_total",
+      "samples_valid",
+      "score",
+      "scorer_version",
+      "selection_sha256",
+      "student_prompt_sha256",
+      "task"
+    ],
+    "public_leaderboard_fields": [
+      "evaluation_identity_sha256",
+      "public_handle",
+      "rank",
+      "samples_invalid",
+      "samples_total",
+      "samples_valid",
+      "score",
+      "succeeded_at"
+    ]
+  },
+  "failure_contract": {
+    "codes": {
+      "DATASET_INTEGRITY": {
+        "retryable": false
+      },
+      "JOB_DEADLINE": {
+        "retryable": false
+      },
+      "MODEL_IDENTITY_MISMATCH": {
+        "retryable": false
+      },
+      "PROVIDER_TIMEOUT": {
+        "retryable": true
+      },
+      "PROVIDER_TRANSPORT": {
+        "retryable": true
+      },
+      "RUNTIME_MISCONFIGURATION": {
+        "retryable": false
+      },
+      "WORKER_CRASH": {
+        "retryable": false
+      }
+    },
+    "version": "platform-failure-v1"
+  },
+  "idempotency": {
+    "key_ascii_pattern": "^[A-Za-z0-9._~-]{1,128}$",
+    "key_match_semantics": "ascii_fullmatch",
+    "key_max_utf8_bytes": 128,
+    "request_hash_fields": [
+      "challenge_id",
+      "contract_version",
+      "student_prompt_exact_utf8"
+    ],
+    "scope": [
+      "user_id",
+      "idempotency_key"
+    ]
+  },
+  "job_policy": {
+    "job_deadline_seconds": 300,
+    "max_attempts": 2,
+    "provider_request_timeout_seconds": 120,
+    "retryable_failure_codes": [
+      "PROVIDER_TIMEOUT",
+      "PROVIDER_TRANSPORT"
+    ],
+    "retry_requires_prior_request_terminated": true,
+    "states": [
+      "queued",
+      "running",
+      "rejected",
+      "succeeded",
+      "failed"
+    ],
+    "token_limit_terminal_state": "rejected"
+  },
+  "leaderboard_partition": {
+    "algorithm": "sha256",
+    "canonicalization": "python-json-v1",
+    "canonicalization_parameters": {
+      "allow_nan": false,
+      "ensure_ascii": false,
+      "separators": [
+        ",",
+        ":"
+      ],
+      "sort_keys": true
+    },
+    "canonical_json_source": "evaluation_identity",
+    "expected_sha256": "ab2692baf0ef6caacdcb852c00cef098b5a9c860121b5d1159b59d0f599d3825"
+  },
+  "limits": {
+    "api_request_body_bytes": 16384,
+    "global_queue_depth": 100,
+    "max_outstanding_submissions_per_user": 3,
+    "max_rendered_input_tokens": 3840,
+    "max_running_submissions_per_user": 1,
+    "model_context_tokens": 4096,
+    "provider_response_body_bytes": 32768,
+    "student_prompt_tokens": 2048,
+    "student_prompt_utf8_bytes": 8192,
+    "submissions_per_user_per_challenge_per_24h": 5,
+    "worker_model_concurrency": 1
+  },
+  "request_policy": {
+    "api_request_body_enforcement": "edge_and_asgi_streaming_before_buffer_or_json_decode",
+    "oversized_request_status": 413
+  }
+}
