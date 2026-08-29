@@ -8,7 +8,13 @@ distinguishes newly authored prompts on unpublished inputs without adapting a
 prompt or gold label to the resulting scores.
 
 This is a calibration experiment, not a production threshold-setting exercise.
-The inputs and gold labels remain outside Git under `runtime/private/`.
+The inputs and gold labels remain outside Git under `runtime/private/`. In this
+document and the challenge IDs, `private` means locally stored and unpublished;
+it is a provenance label, not an implemented platform security level.
+
+The protocol was committed as `8bddc06` and merged as `4b6b456` before the
+first real-model request. Execution then completed without changing any frozen
+prompt, dataset, model, or generation setting.
 
 ## Fixed model and contracts
 
@@ -62,14 +68,15 @@ edited after authoring.
 Two authors working without access to any evaluated prompt or score created 50
 original synthetic sentences per language. A different reviewer audited every
 token and tag in each language. English required no gold changes. Chinese used
-a separate adjudication pass and changed five tokens before freezing. Both sets
-contain all 17 UPOS tags, globally unique IDs, aligned token/tag arrays, and no
-exact duplicate sentences.
+a separate adjudication pass and changed five tokens before freezing. Together
+the sets cover all 17 UPOS tags; Chinese has no deliberately unclassifiable `X`
+item. Both have globally unique IDs, aligned token/tag arrays, and no exact
+duplicate sentences.
 
-| Language | Samples | Gold tokens | Dataset SHA-256 |
-| --- | ---: | ---: | --- |
-| Chinese | 50 | 509 | `70ce7e00bc033ac731c58134119906d8f0d8bda7429031f004bbbfb91920c46b` |
-| English | 50 | 437 | `45196f5d1899ecffb7045efb7935d82d35937a1708ecf9233cd64fd58cfc1f28` |
+| Language | Samples | Gold tokens | UPOS tags | Dataset SHA-256 |
+| --- | ---: | ---: | ---: | --- |
+| Chinese | 50 | 509 | 16 | `70ce7e00bc033ac731c58134119906d8f0d8bda7429031f004bbbfb91920c46b` |
+| English | 50 | 437 | 17 | `45196f5d1899ecffb7045efb7935d82d35937a1708ecf9233cd64fd58cfc1f28` |
 
 The challenge Treebank identity is `PrivateSynthetic`, selection count is all 50
 records, selection seed is `2028`, and version is `private-v1`. Public-style
@@ -77,9 +84,12 @@ challenge descriptions, private manifests, samples, raw answers, and gold labels
 must all remain under `runtime/private/`; the current builder cannot truthfully
 assign a production private-security level.
 
-The sentences are unpublished and hidden from the evaluated self-hosted model,
-but they were created and reviewed through isolated AI-assisted sessions. They
-therefore cannot be claimed confidential from the authoring service provider.
+The sentences were held out from the evaluated self-hosted model before this
+execution and were sent only to that approved inference service during scoring.
+They were created and reviewed through isolated AI-assisted sessions, so those
+services saw the sentence text, tokenization, and gold UPOS labels. The data
+therefore cannot be claimed confidential from the authoring or review service
+providers.
 Production anti-cheating data still requires offline independent human creation,
 rights review, access control, and backend private-challenge validation.
 
@@ -92,7 +102,7 @@ reported and the experiment pauses without selecting the better run.
 
 Before model execution:
 
-1. Recompute all six frozen file hashes.
+1. Recompute the four new-prompt hashes and two private-dataset hashes.
 2. Validate all 100 samples and model inputs with repository code.
 3. Build challenge artifacts into private runtime directories.
 4. Run every prompt with the Mock Provider and confirm prompt-independent output.
@@ -118,3 +128,104 @@ The analysis asks:
 No production pass/fail threshold will be chosen from these 100 samples. After
 the first model request, a discovered annotation concern is documented but does
 not alter `private-v1`; a corrected dataset requires a new version.
+
+## Results
+
+The private challenge selection hashes are
+`463e9e3b846d48796e795198483142dcd5d4f484cf1f22efe408289ff3168bb7`
+for Chinese and
+`f4f5f69e0a5d21640063b65853f4334f419f09e29170483c48c87c9a62cb2504`
+for English. Challenge descriptions and manifests remain private. The Mock
+Provider produced prompt-independent output: all samples were valid, Chinese
+scored `0`, and English scored `0.011441647597254004` for all eight prompts.
+
+Every real prompt/challenge combination was run twice. All 16 repeated
+aggregates were byte-identical.
+
+| Prompt | Chinese valid | Chinese accuracy | English valid | English accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| Contract-breaking | 0 / 50 | 0 | 0 / 50 | 0 |
+| Weak | 27 / 50 | 0.3791748526522593 | 33 / 50 | 0.5194508009153318 |
+| Strong candidate | 37 / 50 | 0.49901768172888017 | 41 / 50 | 0.562929061784897 |
+| Baseline | 41 / 50 | 0.5265225933202358 | 46 / 50 | 0.7070938215102975 |
+| Alpha | 40 / 50 | 0.5520628683693517 | 44 / 50 | 0.6498855835240275 |
+| Beta | 41 / 50 | 0.5540275049115914 | 42 / 50 | 0.6224256292906178 |
+| Gamma | 41 / 50 | 0.581532416502947 | 44 / 50 | 0.6292906178489702 |
+| Delta | 40 / 50 | 0.518664047151277 | 45 / 50 | 0.6819221967963387 |
+
+The known references reproduce their prior ordering in both languages:
+
+```text
+contract-breaking < weak < strong candidate < baseline
+```
+
+The independently authored prompts have a nonzero spread but no common ranking:
+
+```text
+Chinese: delta < alpha < beta < gamma
+English: beta < gamma < alpha < delta
+```
+
+The independent-prompt score range is `0.062868` in Chinese and `0.059497` in
+English. Their descriptive Spearman rank correlation is `-0.8`, but four prompts
+are far too few for statistical inference. All four beat the strong reference in
+both languages. Three beat the baseline in Chinese; none beat it in English.
+This is evidence of discrimination and language dependence, not evidence for one
+universally best prompt.
+
+## Error profiles
+
+| Prompt | Chinese invalid JSON | Chinese invalid tag | Chinese length | English invalid JSON | English invalid tag | English length |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Contract-breaking | 50 | 0 | 0 | 50 | 0 | 0 |
+| Weak | 0 | 18 | 5 | 0 | 9 | 8 |
+| Strong candidate | 0 | 1 | 12 | 0 | 0 | 9 |
+| Baseline | 0 | 0 | 9 | 0 | 0 | 4 |
+| Alpha | 0 | 0 | 10 | 0 | 0 | 6 |
+| Beta | 0 | 0 | 9 | 0 | 3 | 5 |
+| Gamma | 0 | 0 | 9 | 0 | 1 | 5 |
+| Delta | 0 | 1 | 9 | 0 | 1 | 4 |
+
+The contract-breaking control again completed normally but returned prose. For
+task-oriented prompts, token-count mismatch remained the dominant protocol
+failure. Accuracy and output validity are related but not interchangeable: for
+example, Alpha and Gamma have equal English validity but different accuracy.
+
+## Runtime observations
+
+Each row covers 200 sequential requests: two Chinese and two English runs.
+
+| Prompt | Prompt tokens/request | Generated tokens/request | TTFT | Latency |
+| --- | ---: | ---: | ---: | ---: |
+| Contract-breaking | 223.18 | 203.20 | 0.099 s | 4.290 s |
+| Weak | 202.18 | 30.15 | 0.094 s | 0.695 s |
+| Strong candidate | 404.18 | 29.91 | 0.135 s | 0.732 s |
+| Baseline | 295.18 | 36.86 | 0.120 s | 0.860 s |
+| Alpha | 1288.18 | 67.23 | 0.343 s | 1.718 s |
+| Beta | 1095.18 | 60.67 | 0.274 s | 1.510 s |
+| Gamma | 1403.18 | 53.84 | 0.348 s | 1.444 s |
+| Delta | 1053.18 | 29.96 | 0.273 s | 0.871 s |
+
+All 1,600 requests ended with a normal `stop`; there were no token-limit,
+abort, repetition, or service-error completions. Overall means were 745.555
+prompt tokens, 63.9775 generated tokens, 0.211 seconds to first token, and 1.515
+seconds end-to-end per request. Peak GPU memory was 23,392 MiB on one RTX 3090.
+
+## Outcome and limits
+
+The experiment addresses all five preregistered analysis questions. It
+demonstrates deterministic scoring, a reliable contract-breaking control,
+stable ordering for known references, and meaningful score dispersion for unseen
+prompts. It also shows that prompt comparisons cannot safely be generalized from
+one language: the independent-prompt rankings reverse substantially across
+Chinese and English.
+
+The synthetic sentences are shorter and cleaner than public UD samples, which
+likely contributes to their higher scores. The data were AI-assisted, only 100
+samples were used, and the authoring and review providers saw the text, tokens,
+and gold labels. Published dataset and selection hashes cannot reconstruct the
+corpus by themselves, but they can confirm a candidate copy and therefore create
+a bounded confidentiality risk. These aggregates must not define a production
+threshold. The next security and validity gate is an offline, independently
+human-authored and double-annotated private set with documented rights,
+adjudication, and backend access controls.
