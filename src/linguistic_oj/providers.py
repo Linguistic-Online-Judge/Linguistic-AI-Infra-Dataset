@@ -239,6 +239,23 @@ class DeterministicMockProvider:
         return ModelGeneration(raw_text=raw_text)
 
 
+def deterministic_mock_model_identity() -> dict[str, str]:
+    return {
+        "model": "linguistic-oj-deterministic-mock",
+        "revision": "deterministic-v1",
+        "runtime": "mock",
+        "runtime_version": "1",
+    }
+
+
+def deterministic_mock_generation_settings() -> dict[str, int | float | bool]:
+    return GenerationSettings(max_tokens=256).to_dict()
+
+
+def deterministic_mock_tokenizer_identity() -> dict[str, str]:
+    return {"method": "unicode-codepoint-v1"}
+
+
 class OpenAICompatibleProvider:
     """Call a vLLM-style OpenAI chat-completions endpoint synchronously."""
 

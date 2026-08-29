@@ -73,6 +73,15 @@ Redis job queue ---- Python evaluation worker
 SQLite can be used for a single-machine prototype. PostgreSQL and Redis are the
 target once multiple evaluations can run concurrently.
 
+The current development slice implements an injected FastAPI app, SQLite schema
+migration, transactional submission/outbox creation, an identity-routed
+in-memory queue with acknowledgement/requeue, and an explicitly invoked Mock
+worker. The API returns `202 queued`; model evaluation never runs in the request
+handler. Owner queries bind both authenticated user and submission ID, while
+leaderboards read only version-partitioned aggregate rows. Mock deliveries use a
+30-second fenced lease inside the persisted 300-second job deadline; expired
+leases fail closed because `WORKER_CRASH` is non-retryable in this contract.
+
 ## Submission flow
 
 1. A student chooses a language and task and submits one prompt.
@@ -90,11 +99,18 @@ target once multiple evaluations can run concurrently.
    submission `rejected`, `succeeded`, or `failed`.
 8. The leaderboard reads persisted scores; it does not rerun evaluations.
 
-The current offline runner implements artifact/sample loading, the safe provider
+The offline runner implements artifact/sample loading, the safe provider
 boundary, mock and pinned self-hosted generation, fixed Prompt Envelope `1.0`,
-response parsing, scoring, and in-memory aggregation. ADR 0001 freezes the first
-MVP evaluation contract. API submission storage, background jobs, and persistence
-remain future work.
+response parsing, scoring, and in-memory aggregation. The Mock service slice now
+adds API submission storage, explicit background execution, aggregate result
+persistence, idempotency, ownership checks, and leaderboard queries.
+
+This slice is intentionally not the Qwen production worker. Mock scores use a
+separate `runtime=mock` identity and deterministic Unicode-code-point preflight;
+the worker rejects the frozen Qwen/vLLM identity. Production still requires the
+pinned Qwen tokenizer and chat-template counting, Redis delivery/visibility and
+retry handling, provider cancellation under the shared deadline, startup runtime
+attestation, production authentication, PostgreSQL, and deployment-safe logging.
 
 ## Fairness and reproducibility
 

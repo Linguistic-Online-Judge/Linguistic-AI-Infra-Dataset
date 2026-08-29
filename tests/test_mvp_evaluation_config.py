@@ -1,4 +1,3 @@
-import hashlib
 import json
 from pathlib import Path
 
@@ -7,6 +6,7 @@ from linguistic_oj.contracts import (
     RESPONSE_SCHEMA_VERSIONS,
     SCORER_VERSION,
 )
+from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
 from linguistic_oj.providers import PROMPT_ENVELOPE_VERSION
 from linguistic_oj.responses import TaskType
 
@@ -15,17 +15,6 @@ ROOT = Path(__file__).parents[1]
 
 def _load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _canonical_json_sha256(value: object) -> str:
-    canonical = json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
 
 
 def test_mvp_evaluation_config_matches_frozen_artifacts() -> None:
@@ -88,7 +77,7 @@ def test_mvp_evaluation_config_matches_frozen_artifacts() -> None:
         "stop": 100,
     }
     assert runtime["aggregate_canonicalization"] == "python-json-v1"
-    assert runtime["aggregate_sha256"] == _canonical_json_sha256(benchmark)
+    assert runtime["aggregate_sha256"] == canonical_sha256(benchmark)
     assert runtime["run_aggregate_sha256s"] == [runtime["aggregate_sha256"]] * 2
 
     limits = config["limits"]
@@ -111,7 +100,7 @@ def test_mvp_evaluation_config_matches_frozen_artifacts() -> None:
         "sort_keys": True,
     }
     assert partition["canonical_json_source"] == "evaluation_identity"
-    assert _canonical_json_sha256(identity) == partition["expected_sha256"]
+    assert canonical_sha256(identity) == partition["expected_sha256"]
     assert runtime["evaluation_identity_sha256"] == partition["expected_sha256"]
 
     feedback = config["feedback"]
@@ -252,3 +241,8 @@ def test_mvp_evaluation_config_matches_frozen_artifacts() -> None:
         ),
         "oversized_request_status": 413,
     }
+
+    runtime_contract = EvaluationContract.from_mapping(config)
+    assert runtime_contract.evaluation_identity_sha256 == partition["expected_sha256"]
+    assert runtime_contract.job_deadline_seconds == 300
+    assert runtime_contract.external_activation_ready is False
