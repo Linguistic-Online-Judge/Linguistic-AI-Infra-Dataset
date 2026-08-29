@@ -16,6 +16,8 @@ from typing import Any
 
 from .mvp_contract import EvaluationContract, canonical_json
 
+SQLITE_LOCK_TIMEOUT_SECONDS = 5.0
+
 
 class SubmissionStatus(StrEnum):
     QUEUED = "queued"
@@ -226,7 +228,11 @@ class SubmissionStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self._database_path, isolation_level=None)
+        connection = sqlite3.connect(
+            self._database_path,
+            isolation_level=None,
+            timeout=SQLITE_LOCK_TIMEOUT_SECONDS,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         try:
@@ -448,12 +454,19 @@ class SubmissionStore:
                 "SELECT * FROM submissions WHERE id = ?",
                 (submission_id,),
             ).fetchone()
+            if row is None:
+                connection.rollback()
+                return ClaimAttempt(claim=None, retry_later=False)
             if (
-                row is None
-                or row["status"] != SubmissionStatus.QUEUED.value
-                or row["evaluation_identity_sha256"] != evaluation_identity_sha256
+                row["evaluation_identity_sha256"] != evaluation_identity_sha256
                 or row["contract_snapshot_sha256"] != contract_snapshot_sha256
             ):
+                connection.rollback()
+                return ClaimAttempt(claim=None, retry_later=False)
+            if row["status"] == SubmissionStatus.RUNNING.value:
+                connection.rollback()
+                return ClaimAttempt(claim=None, retry_later=True)
+            if row["status"] != SubmissionStatus.QUEUED.value:
                 connection.rollback()
                 return ClaimAttempt(claim=None, retry_later=False)
             if row["attempt_number"] >= max_attempts:
@@ -606,6 +619,48 @@ class SubmissionStore:
                     claim.attempt_number,
                     claim.lease_token,
                 ),
+            )
+            if updated.rowcount != 1:
+                connection.rollback()
+                return False
+            connection.commit()
+        return True
+
+    def retry_submission(
+        self,
+        claim: ClaimedSubmission,
+        *,
+        max_attempts: int,
+    ) -> bool:
+        """Return a live claimed submission to queued without extending its deadline."""
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            now_text = _timestamp(_utc_now())
+            row = connection.execute(
+                """
+                SELECT attempt_number, deadline_at, lease_expires_at
+                FROM submissions
+                WHERE id = ? AND status = 'running' AND attempt_number = ? AND lease_token = ?
+                """,
+                (claim.submission_id, claim.attempt_number, claim.lease_token),
+            ).fetchone()
+            if (
+                row is None
+                or row["attempt_number"] >= max_attempts
+                or row["deadline_at"] <= now_text
+                or row["lease_expires_at"] <= now_text
+            ):
+                connection.rollback()
+                return False
+            updated = connection.execute(
+                """
+                UPDATE submissions
+                SET status = 'queued', lease_token = NULL, lease_expires_at = NULL,
+                    started_at = NULL
+                WHERE id = ? AND status = 'running' AND attempt_number = ? AND lease_token = ?
+                """,
+                (claim.submission_id, claim.attempt_number, claim.lease_token),
             )
             if updated.rowcount != 1:
                 connection.rollback()

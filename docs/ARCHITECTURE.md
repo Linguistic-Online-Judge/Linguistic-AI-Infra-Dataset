@@ -70,17 +70,40 @@ Redis job queue ---- Python evaluation worker
   aggregate outcomes, and leaderboard rows. ADR 0001 does not persist raw
   per-sample responses for the teaching MVP.
 
-SQLite can be used for a single-machine prototype. PostgreSQL and Redis are the
-target once multiple evaluations can run concurrently.
+SQLite can be used for a single-machine prototype. PostgreSQL remains the
+deployment database target. A Redis Streams queue adapter is implemented for
+cross-process delivery; production still needs persistent Redis deployment,
+credentials, monitoring, and recovery operations.
 
 The current development slice implements an injected FastAPI app, SQLite schema
-migration, transactional submission/outbox creation, an identity-routed
-in-memory queue with acknowledgement/requeue, and an explicitly invoked Mock
-worker. The API returns `202 queued`; model evaluation never runs in the request
-handler. Owner queries bind both authenticated user and submission ID, while
-leaderboards read only version-partitioned aggregate rows. Mock deliveries use a
-30-second fenced lease inside the persisted 300-second job deadline; expired
-leases fail closed because `WORKER_CRASH` is non-retryable in this contract.
+migration, transactional submission/outbox creation, identity-routed in-memory
+and Redis Streams queues, and an explicitly invoked Mock worker. The API returns
+`202 queued`; model evaluation never runs in the request handler. Owner queries
+bind both authenticated user and submission ID, while leaderboards read only
+version-partitioned aggregate rows. Redis uses a Consumer Group, pending-entry
+visibility recovery, per-claim receipt tokens, and an active-submission map for
+idempotent publication. This prevents stale handlers from acknowledging reclaimed
+work and prevents API restarts from duplicating durable Stream entries. Reclaimed
+and fresh work are interleaved so neither class can starve the other. Invalid UTF-8
+or malformed entries are removed rather than becoming permanent poison messages.
+Every queue instance appends a random incarnation ID to its configured consumer
+name, while receipt rotation is atomic with stale-entry claiming.
+Mock deliveries use a 30-second fenced database lease inside the persisted
+300-second job deadline; the 45-second queue visibility also budgets five seconds
+for SQLite lock acquisition, five seconds for claim processing, and five seconds
+of safety after the lease. Expired leases fail closed because `WORKER_CRASH` is
+non-retryable in this contract. A delivery blocked by an existing run or per-user
+concurrency limit stays pending until visibility recovery instead of entering an
+immediate requeue loop. Redis must run without independent Stream trimming or
+key eviction; idempotent publication does self-heal when its tracked Stream entry
+is missing, but operational deletion of queue metadata remains unsupported.
+
+Only `PROVIDER_TIMEOUT` and `PROVIDER_TRANSPORT` can restart the complete job.
+The first failure atomically returns the same submission to `queued` and nacks the
+existing delivery. The next claim increments the attempt number without extending
+the original deadline. A second failure is terminal and owner feedback reports
+`retryable=false`. Mock calls are synchronous and have returned before retry; a
+real provider must additionally prove remote request termination or cancellation.
 
 ## Submission flow
 
@@ -108,9 +131,9 @@ persistence, idempotency, ownership checks, and leaderboard queries.
 This slice is intentionally not the Qwen production worker. Mock scores use a
 separate `runtime=mock` identity and deterministic Unicode-code-point preflight;
 the worker rejects the frozen Qwen/vLLM identity. Production still requires the
-pinned Qwen tokenizer and chat-template counting, Redis delivery/visibility and
-retry handling, provider cancellation under the shared deadline, startup runtime
-attestation, production authentication, PostgreSQL, and deployment-safe logging.
+pinned Qwen tokenizer and chat-template counting, provider cancellation under the
+shared deadline, startup runtime attestation, production authentication,
+PostgreSQL, persistent Redis operations, and deployment-safe logging.
 
 ## Fairness and reproducibility
 

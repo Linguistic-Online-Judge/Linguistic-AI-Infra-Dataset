@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from threading import Lock
+from time import monotonic
 from typing import Protocol
 
 from .challenge import ChallengeArtifacts
@@ -23,7 +24,14 @@ from .providers import (
     deterministic_mock_tokenizer_identity,
 )
 from .runner import EvaluationPreflightError, run_challenge
-from .submission_store import ClaimedSubmission, SubmissionStore
+from .submission_store import (
+    SQLITE_LOCK_TIMEOUT_SECONDS,
+    ClaimedSubmission,
+    SubmissionStore,
+)
+
+_CLAIM_PROCESSING_BUDGET_SECONDS = 5.0
+_VISIBILITY_SAFETY_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,38 +43,49 @@ class JobMessage:
 
 @dataclass(frozen=True, slots=True)
 class JobDelivery:
-    delivery_id: int
+    delivery_id: str
     message: JobMessage
+    receipt_token: str
 
 
 class JobQueue(Protocol):
     @property
     def routing_key(self) -> str: ...
 
+    @property
+    def visibility_timeout_seconds(self) -> float: ...
+
     def publish(self, message: JobMessage) -> None: ...
 
     def receive(self) -> JobDelivery | None: ...
 
-    def ack(self, delivery: JobDelivery) -> None: ...
+    def ack(self, delivery: JobDelivery) -> bool: ...
 
-    def nack(self, delivery: JobDelivery) -> None: ...
+    def nack(self, delivery: JobDelivery) -> bool: ...
 
 
 class InMemoryJobQueue:
     """Process-local at-least-once queue used only by tests and development."""
 
-    def __init__(self, routing_key: str) -> None:
+    def __init__(self, routing_key: str, *, visibility_timeout_seconds: float = 45.0) -> None:
         if not routing_key:
             raise ValueError("routing_key must not be empty")
+        if visibility_timeout_seconds <= 0:
+            raise ValueError("visibility_timeout_seconds must be positive")
         self._routing_key = routing_key
+        self._visibility_timeout_seconds = float(visibility_timeout_seconds)
         self._messages: deque[JobMessage] = deque()
-        self._inflight: dict[int, JobMessage] = {}
+        self._inflight: dict[str, tuple[JobMessage, float]] = {}
         self._next_delivery_id = 1
         self._lock = Lock()
 
     @property
     def routing_key(self) -> str:
         return self._routing_key
+
+    @property
+    def visibility_timeout_seconds(self) -> float:
+        return self._visibility_timeout_seconds
 
     def publish(self, message: JobMessage) -> None:
         if not isinstance(message, JobMessage):
@@ -78,24 +97,47 @@ class InMemoryJobQueue:
 
     def receive(self) -> JobDelivery | None:
         with self._lock:
+            now = monotonic()
+            expired = [
+                delivery_id
+                for delivery_id, (_, received_at) in self._inflight.items()
+                if now - received_at >= self._visibility_timeout_seconds
+            ]
+            for delivery_id in expired:
+                message, _ = self._inflight.pop(delivery_id)
+                self._messages.append(message)
             if not self._messages:
                 return None
-            delivery_id = self._next_delivery_id
+            delivery_id = str(self._next_delivery_id)
             self._next_delivery_id += 1
             message = self._messages.popleft()
-            self._inflight[delivery_id] = message
-            return JobDelivery(delivery_id, message)
+            self._inflight[delivery_id] = (message, now)
+            return JobDelivery(delivery_id, message, delivery_id)
 
-    def ack(self, delivery: JobDelivery) -> None:
+    def ack(self, delivery: JobDelivery) -> bool:
         with self._lock:
-            if self._inflight.pop(delivery.delivery_id, None) != delivery.message:
-                raise ValueError("delivery is not in flight")
+            inflight = self._inflight.get(delivery.delivery_id)
+            if (
+                inflight is None
+                or inflight[0] != delivery.message
+                or delivery.receipt_token != delivery.delivery_id
+            ):
+                return False
+            self._inflight.pop(delivery.delivery_id)
+            return True
 
-    def nack(self, delivery: JobDelivery) -> None:
+    def nack(self, delivery: JobDelivery) -> bool:
         with self._lock:
-            if self._inflight.pop(delivery.delivery_id, None) != delivery.message:
-                raise ValueError("delivery is not in flight")
+            inflight = self._inflight.get(delivery.delivery_id)
+            if (
+                inflight is None
+                or inflight[0] != delivery.message
+                or delivery.receipt_token != delivery.delivery_id
+            ):
+                return False
+            self._inflight.pop(delivery.delivery_id)
             self._messages.append(delivery.message)
+            return True
 
     def __len__(self) -> int:
         with self._lock:
@@ -201,6 +243,18 @@ class SubmissionWorker:
             raise ValueError("the deterministic Mock provider requires a mock evaluation identity")
         if queue.routing_key != contract.contract_snapshot_sha256:
             raise ValueError("queue does not match the evaluation contract")
+        lease_seconds = min(30, contract.job_deadline_seconds)
+        minimum_visibility = (
+            lease_seconds
+            + SQLITE_LOCK_TIMEOUT_SECONDS
+            + _CLAIM_PROCESSING_BUDGET_SECONDS
+            + _VISIBILITY_SAFETY_SECONDS
+        )
+        if queue.visibility_timeout_seconds < minimum_visibility:
+            raise ValueError(
+                "queue visibility must cover claim acquisition and exceed the database "
+                "lease by five seconds"
+            )
         identity = contract.evaluation_identity
         if (
             artifacts.public.challenge_id != contract.challenge_id
@@ -225,6 +279,7 @@ class SubmissionWorker:
         self._contract = contract
         self._artifacts = artifacts
         self._provider = provider
+        self._lease_seconds = lease_seconds
         self._request_preflight = MockRequestPreflight(contract)
 
     def run_once(self) -> bool:
@@ -241,20 +296,18 @@ class SubmissionWorker:
             or message.contract_snapshot_sha256
             != self._contract.contract_snapshot_sha256
         ):
-            self._queue.nack(delivery)
+            self._queue.ack(delivery)
             return False
         claim_attempt = self._store.claim_submission(
             message.submission_id,
             evaluation_identity_sha256=self._contract.evaluation_identity_sha256,
             contract_snapshot_sha256=self._contract.contract_snapshot_sha256,
-            lease_seconds=min(30, self._contract.job_deadline_seconds),
+            lease_seconds=self._lease_seconds,
             max_attempts=self._contract.max_attempts,
             max_running_per_user=self._contract.max_running_submissions_per_user,
         )
         if claim_attempt.claim is None:
-            if claim_attempt.retry_later:
-                self._queue.nack(delivery)
-            else:
+            if not claim_attempt.retry_later:
                 self._queue.ack(delivery)
             return False
         claim = claim_attempt.claim
@@ -264,12 +317,10 @@ class SubmissionWorker:
             or claim.evaluation_identity_sha256
             != self._contract.evaluation_identity_sha256
         ):
-            self._fail(claim, "RUNTIME_MISCONFIGURATION")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "RUNTIME_MISCONFIGURATION")
             return True
         if self._store.claim_deadline_expired(claim):
-            self._fail(claim, "JOB_DEADLINE")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "JOB_DEADLINE")
             return True
 
         try:
@@ -287,33 +338,26 @@ class SubmissionWorker:
             self._queue.ack(delivery)
             return True
         except TimeoutError:
-            self._fail(claim, "PROVIDER_TIMEOUT")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "PROVIDER_TIMEOUT")
             return True
         except ProviderTransportError:
-            self._fail(claim, "PROVIDER_TRANSPORT")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "PROVIDER_TRANSPORT")
             return True
         except EvaluationPreflightError:
-            self._fail(claim, "DATASET_INTEGRITY")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "DATASET_INTEGRITY")
             return True
         except ProviderContractError:
-            self._fail(claim, "RUNTIME_MISCONFIGURATION")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "RUNTIME_MISCONFIGURATION")
             return True
         except (OSError, ValueError):
-            self._fail(claim, "DATASET_INTEGRITY")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "DATASET_INTEGRITY")
             return True
         except Exception:
-            self._fail(claim, "RUNTIME_MISCONFIGURATION")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "RUNTIME_MISCONFIGURATION")
             return True
 
         if self._store.claim_deadline_expired(claim):
-            self._fail(claim, "JOB_DEADLINE")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "JOB_DEADLINE")
             return True
         try:
             owner_result = self._contract.owner_result(
@@ -321,18 +365,31 @@ class SubmissionWorker:
                 student_prompt_sha256=claim.student_prompt_sha256,
             )
         except Exception:
-            self._fail(claim, "RUNTIME_MISCONFIGURATION")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "RUNTIME_MISCONFIGURATION")
             return True
         if not self._store.complete_success(claim, owner_result=owner_result):
-            self._fail(claim, "JOB_DEADLINE")
-            self._queue.ack(delivery)
+            self._handle_failure(delivery, claim, "JOB_DEADLINE")
             return False
         self._queue.ack(delivery)
         return True
 
-    def _fail(self, claim: ClaimedSubmission, code: str) -> bool:
-        retryable = code in self._contract.retryable_failure_codes
+    def _handle_failure(
+        self,
+        delivery: JobDelivery,
+        claim: ClaimedSubmission,
+        code: str,
+    ) -> None:
+        if code in self._contract.retryable_failure_codes and self._store.retry_submission(
+            claim,
+            max_attempts=self._contract.max_attempts,
+        ):
+            # The synchronous provider call has returned, so no prior call remains in flight.
+            self._queue.nack(delivery)
+            return
+        self._fail(claim, code, retryable=False)
+        self._queue.ack(delivery)
+
+    def _fail(self, claim: ClaimedSubmission, code: str, *, retryable: bool) -> bool:
         completed = self._store.complete_failure(
             claim,
             failure_contract_version=self._contract.failure_contract_version,
