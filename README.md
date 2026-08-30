@@ -214,6 +214,7 @@ src/linguistic_oj/runner.py       离线端到端评测流程
 src/linguistic_oj/mvp_contract.py 读取和验证冻结评测合同
 src/linguistic_oj/submission_store.py SQLite 提交、outbox、结果和排行榜
 src/linguistic_oj/submission_jobs.py 进程内队列、outbox dispatcher 和 Mock Worker
+src/linguistic_oj/redis_job_queue.py Redis Streams 队列和 visibility recovery
 src/linguistic_oj/api.py          FastAPI 提交、状态、结果和排行榜接口
 tests/                            自动化测试
 ```
@@ -228,7 +229,8 @@ tests/                            自动化测试
 4. 已完成 AI 辅助创作与审阅的独立 Prompt、未公开合成数据盲测，确认存在跨语言排名反转。
 5. 已冻结 English EWT UPOS 教学型 MVP 合同，并完成 FastAPI + SQLite + Mock Worker
    的异步提交纵向切片。
-6. 下一步替换进程内测试队列、接入固定 tokenizer 和真实 GPU Worker，再实现网页流程。
+6. 已实现 Redis Streams Queue Adapter、Consumer Group visibility recovery、幂等发布、
+   旧 receipt 隔离和最多两次的完整 Job 重试；下一步接入固定 tokenizer 和真实 GPU Worker。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
 服务器部署方式。先做 API 或前端，之后很可能因为模型限制而返工。

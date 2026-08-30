@@ -104,11 +104,14 @@ Exit criterion: an API integration test completes a mock submission end to end.
 
 Implemented so far: FastAPI app factory, SQLite schema migration, authenticated
 owner-scoped submission/status/result routes, transactional idempotency and
-outbox, an identity-routed in-memory queue, explicit fenced Mock Worker execution,
-aggregate-only results, safe failure DTOs, and version-isolated leaderboards. The
-integration suite covers `202 queued`, replay/conflict behavior, cross-owner
-`404`, preflight rejection, duplicate delivery, queue restart recovery, safe
-platform failure, and Mock/Qwen identity separation.
+outbox, identity-routed in-memory and Redis Streams queues, explicit fenced Mock
+Worker execution, bounded complete-job retries, aggregate-only results, safe
+failure DTOs, and version-isolated leaderboards. The integration suite covers
+`202 queued`, replay/conflict behavior, cross-owner `404`, preflight rejection,
+duplicate delivery, visibility recovery, retry success/exhaustion, safe platform
+failure, and Mock/Qwen identity separation. CI validates Redis behavior against a
+real Redis 7.4 service; local runs skip that one test when `REDIS_TEST_URL` is not
+configured.
 
 ## Phase 5: web application
 
@@ -142,12 +145,12 @@ other developer.
 
 ## Immediate sequence
 
-1. Replace the in-memory test queue with Redis delivery leases and implement the
-   contract's bounded whole-job retry policy.
-2. Add pinned Qwen tokenizer/chat-template preflight, provider response bounds,
+1. Add pinned Qwen tokenizer/chat-template preflight, provider response bounds,
    request cancellation, deadline enforcement, and runtime attestation.
-3. Run the fixed contract in a single-concurrency GPU worker without permitting
+2. Run the fixed contract in a single-concurrency GPU worker without permitting
    Mock scores in the Qwen partition.
+3. Configure persistent Redis deployment, credentials, health monitoring, and
+   worker process entry points.
 4. Move deployment persistence to PostgreSQL and add production authentication,
    migrations, rate-limit operations, and structured safe logging.
 5. Build the web flow only after submission persistence and background jobs are

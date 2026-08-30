@@ -10,12 +10,14 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+import linguistic_oj.submission_jobs as submission_jobs_module
 import linguistic_oj.submission_store as submission_store_module
 from linguistic_oj.api import Principal, RequestBodyLimitMiddleware, create_app
 from linguistic_oj.challenge import ChallengeArtifacts, build_challenge
 from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
 from linguistic_oj.providers import (
     DeterministicMockProvider,
+    ProviderTransportError,
     deterministic_mock_generation_settings,
     deterministic_mock_model_identity,
     deterministic_mock_tokenizer_identity,
@@ -106,6 +108,18 @@ class _RecordingMockProvider(DeterministicMockProvider):
 class _ExplodingMockProvider(DeterministicMockProvider):
     def generate(self, request):
         raise RuntimeError("private provider detail")
+
+
+class _TransportFailureMockProvider(DeterministicMockProvider):
+    def __init__(self, *, failures: int) -> None:
+        self.calls = 0
+        self.failures = failures
+
+    def generate(self, request):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ProviderTransportError("temporary transport detail")
+        return super().generate(request)
 
 
 def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: EvaluationContract):
@@ -432,7 +446,97 @@ def test_platform_failure_returns_only_the_safe_failure_contract(tmp_path: Path)
         assert "private provider detail" not in failed.text
 
 
-def test_temporarily_unclaimable_job_is_requeued(tmp_path: Path) -> None:
+def test_retryable_transport_failure_requeues_complete_job_once(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, queue, _, _, _, app = _components(tmp_path, artifacts, contract)
+    provider = _TransportFailureMockProvider(failures=1)
+    worker = SubmissionWorker(
+        store=store,
+        queue=queue,
+        contract=contract,
+        artifacts=artifacts,
+        provider=provider,
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "retry-success"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        )
+        submission_id = created.json()["submission_id"]
+
+        assert worker.run_once() is True
+        retrying = client.get(
+            f"/v1/submissions/{submission_id}",
+            headers=_headers("subject-alice"),
+        )
+        assert retrying.json()["status"] == "queued"
+        assert len(queue) == 1
+        assert store.count_outbox_records() == 1
+        assert store.count_results() == 0
+
+        assert worker.run_once() is True
+        completed = client.get(
+            f"/v1/submissions/{submission_id}",
+            headers=_headers("subject-alice"),
+        )
+        assert completed.json()["status"] == "succeeded"
+        assert provider.calls == 3
+        assert store.count_results() == 1
+
+
+def test_retryable_transport_failure_stops_after_max_attempts(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, queue, _, _, _, app = _components(tmp_path, artifacts, contract)
+    provider = _TransportFailureMockProvider(failures=2)
+    worker = SubmissionWorker(
+        store=store,
+        queue=queue,
+        contract=contract,
+        artifacts=artifacts,
+        provider=provider,
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "retry-failed"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        )
+        submission_id = created.json()["submission_id"]
+
+        assert worker.run_once() is True
+        assert worker.run_once() is True
+        assert len(queue) == 0
+        failed = client.get(
+            f"/v1/submissions/{submission_id}/result",
+            headers=_headers("subject-alice"),
+        )
+        assert failed.status_code == 200
+        assert failed.json() == {
+            "code": "PROVIDER_TRANSPORT",
+            "failure_contract_version": "platform-failure-v1",
+            "retryable": False,
+        }
+        assert provider.calls == 2
+        assert store.count_results() == 0
+
+
+def test_temporarily_unclaimable_job_waits_for_visibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    monkeypatch.setattr(submission_jobs_module, "monotonic", lambda: now[0])
     artifacts = _artifacts(tmp_path)
     contract = _mock_contract(artifacts)
     store, queue, _, _, worker, app = _components(tmp_path, artifacts, contract)
@@ -451,6 +555,9 @@ def test_temporarily_unclaimable_job_is_requeued(tmp_path: Path) -> None:
         ).json()
         user = store.user_by_subject("subject-alice")
         assert user is not None
+        first_delivery = queue.receive()
+        assert first_delivery is not None
+        assert first_delivery.message.submission_id == first["submission_id"]
         claimed = store.claim_submission(
             first["submission_id"],
             evaluation_identity_sha256=contract.evaluation_identity_sha256,
@@ -462,8 +569,8 @@ def test_temporarily_unclaimable_job_is_requeued(tmp_path: Path) -> None:
         assert claimed is not None
 
         assert worker.run_once() is False
+        assert len(queue) == 0
         assert worker.run_once() is False
-        assert len(queue) == 1
         queued = client.get(
             f"/v1/submissions/{second['submission_id']}",
             headers=_headers("subject-alice"),
@@ -476,8 +583,83 @@ def test_temporarily_unclaimable_job_is_requeued(tmp_path: Path) -> None:
             code="WORKER_CRASH",
             retryable=False,
         )
+        assert queue.ack(first_delivery) is True
+        now[0] += queue.visibility_timeout_seconds
         assert worker.run_once() is True
         assert len(queue) == 0
+
+
+def test_duplicate_running_submission_waits_for_visibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    monkeypatch.setattr(submission_jobs_module, "monotonic", lambda: now[0])
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, queue, _, _, worker, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "duplicate-running"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        ).json()
+        submission_id = created["submission_id"]
+        message = JobMessage(
+            submission_id=submission_id,
+            evaluation_identity_sha256=contract.evaluation_identity_sha256,
+            contract_snapshot_sha256=contract.contract_snapshot_sha256,
+        )
+        queue.publish(message)
+        first_delivery = queue.receive()
+        assert first_delivery is not None
+        claim = store.claim_submission(
+            submission_id,
+            evaluation_identity_sha256=contract.evaluation_identity_sha256,
+            contract_snapshot_sha256=contract.contract_snapshot_sha256,
+            lease_seconds=min(30, contract.job_deadline_seconds),
+            max_attempts=contract.max_attempts,
+            max_running_per_user=contract.max_running_submissions_per_user,
+        ).claim
+        assert claim is not None
+
+        assert worker.run_once() is False
+        assert worker.run_once() is False
+        assert store.complete_failure(
+            claim,
+            failure_contract_version=contract.failure_contract_version,
+            code="WORKER_CRASH",
+            retryable=False,
+        )
+        assert queue.ack(first_delivery) is True
+
+        now[0] += queue.visibility_timeout_seconds
+        assert worker.run_once() is False
+        assert queue.receive() is None
+
+
+def test_worker_rejects_visibility_without_claim_and_safety_budgets(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+
+    with pytest.raises(ValueError, match="claim acquisition"):
+        SubmissionWorker(
+            store=store,
+            queue=InMemoryJobQueue(
+                contract.contract_snapshot_sha256,
+                visibility_timeout_seconds=44.999,
+            ),
+            contract=contract,
+            artifacts=artifacts,
+            provider=DeterministicMockProvider(),
+        )
 
 
 def test_mock_token_preflight_rejects_without_provider_calls(tmp_path: Path) -> None:
