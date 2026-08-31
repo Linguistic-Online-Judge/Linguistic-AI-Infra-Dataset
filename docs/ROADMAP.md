@@ -87,10 +87,12 @@ Implemented so far: the provider-neutral request/result contract, deterministic
 mock provider, complete dataset/artifact preflight, synchronous offline runner,
 fixed Prompt Envelope `1.0`, and OpenAI-compatible adapter for the pinned
 self-hosted Qwen3.5-9B/vLLM runtime. Prompt calibration covers public, held-out
-Treebank, and unpublished synthetic data. ADR 0001 now freezes the first MVP
-model/challenge contract and inference limits. Pinned-tokenizer prompt/context
-preflight and safe production logging remain. The development Mock path has its
-own deterministic code-point preflight and cannot write to the Qwen partition.
+Treebank, and unpublished synthetic data. ADR 0001 freezes the historical v1
+model/challenge contract and inference limits. The v2 runtime contract adds exact
+tokenizer and chat-template hashes, all-sample prompt/context preflight, remaining
+deadline propagation, bounded provider responses, conservative termination-aware
+retry, and startup runtime attestation. The development Mock path retains its own
+deterministic code-point preflight and cannot write to the Qwen partition.
 
 ## Phase 4: backend service and jobs
 
@@ -145,9 +147,9 @@ other developer.
 
 ## Immediate sequence
 
-1. Add pinned Qwen tokenizer/chat-template preflight, provider response bounds,
-   request cancellation, deadline enforcement, and runtime attestation.
-2. Run the fixed contract in a single-concurrency GPU worker without permitting
+1. Load the verified local tokenizer snapshot and trusted vLLM attestation in a
+   real worker process entry point.
+2. Run the v2 contract in a single-concurrency GPU worker without permitting
    Mock scores in the Qwen partition.
 3. Configure persistent Redis deployment, credentials, health monitoring, and
    worker process entry points.

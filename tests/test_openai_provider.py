@@ -1,10 +1,12 @@
 import json
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+import linguistic_oj.providers as providers_module
 from linguistic_oj.model_inputs import SegmentationModelInput, TaggingModelInput
 from linguistic_oj.providers import (
     PROMPT_ENVELOPE_VERSION,
@@ -14,6 +16,7 @@ from linguistic_oj.providers import (
     OpenAICompatibleProvider,
     PromptEnvelope,
     ProviderContractError,
+    ProviderTimeoutError,
     ProviderTransportError,
 )
 from linguistic_oj.responses import TaskType
@@ -40,6 +43,16 @@ class _FakeModelHandler(BaseHTTPRequestHandler):
         )
         response_body = json.dumps(self.response_payload).encode("utf-8")
         self.send_response(self.response_status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        response_body = json.dumps({"data": [{"id": "Qwen/Qwen3.5-4B"}]}).encode(
+            "utf-8"
+        )
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(response_body)))
         self.end_headers()
@@ -158,8 +171,15 @@ def test_openai_provider_sends_fixed_contract_and_returns_raw_content(
     assert payload["max_tokens"] == 256
     assert payload["seed"] == 2026
     assert payload["stream"] is False
+    assert payload["add_generation_prompt"] is True
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert "response_format" not in payload
+
+
+def test_openai_provider_reads_served_model_ids(fake_model_service: str) -> None:
+    provider = OpenAICompatibleProvider(base_url=fake_model_service, identity=_identity())
+
+    assert provider.served_model_ids() == frozenset({"Qwen/Qwen3.5-4B"})
 
 
 def test_openai_provider_rejects_malformed_service_payload(fake_model_service: str) -> None:
@@ -179,3 +199,160 @@ def test_openai_provider_sanitizes_http_failure(fake_model_service: str) -> None
         provider.generate(_request())
 
     assert "service details" not in str(error.value)
+    assert error.value.termination_confirmed is True
+
+
+def test_openai_provider_enforces_response_limit_before_json_decode(
+    fake_model_service: str,
+) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": "x" * 100}}]
+    }
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        max_response_body_bytes=32,
+    )
+
+    with pytest.raises(ProviderContractError, match="too large"):
+        provider.generate(_request())
+
+
+def test_openai_provider_enforces_streaming_response_limit_without_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Response:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, limit: int) -> bytes:
+            return b"x" * limit
+
+    monkeypatch.setattr(providers_module, "urlopen", lambda *args, **kwargs: _Response())
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=_identity(),
+        max_response_body_bytes=32,
+    )
+
+    with pytest.raises(ProviderContractError, match="too large"):
+        provider.generate(_request())
+
+
+def test_openai_provider_clamps_timeout_to_remaining_job_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_timeout = None
+
+    class _Response:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, limit: int) -> bytes:
+            return b'{"choices":[{"message":{"content":"{\\"tokens\\":[\\"A\\",\\"B\\"]}"}}]}'
+
+    def fake_urlopen(request, *, timeout):
+        nonlocal observed_timeout
+        observed_timeout = timeout
+        return _Response()
+
+    monkeypatch.setattr(providers_module, "urlopen", fake_urlopen)
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=_identity(),
+        timeout_seconds=120,
+    )
+
+    provider.generate(_request(), timeout_seconds=7.5)
+
+    assert observed_timeout is not None
+    assert 0 < observed_timeout <= 7.5
+
+
+def test_openai_provider_timeout_is_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, *, timeout):
+        raise TimeoutError
+
+    monkeypatch.setattr(providers_module, "urlopen", fake_urlopen)
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=_identity(),
+    )
+
+    with pytest.raises(ProviderTimeoutError) as error:
+        provider.generate(_request(), timeout_seconds=1)
+
+    assert error.value.termination_confirmed is False
+
+
+def test_openai_provider_enforces_absolute_deadline_and_blocks_new_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+
+    def fake_urlopen(request, *, timeout):
+        release.wait()
+        raise TimeoutError
+
+    monkeypatch.setattr(providers_module, "urlopen", fake_urlopen)
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=_identity(),
+    )
+
+    started = time.monotonic()
+    with pytest.raises(ProviderTimeoutError, match="absolute request deadline"):
+        provider.generate(_request(), timeout_seconds=0.02)
+    elapsed = time.monotonic() - started
+    with pytest.raises(ProviderTransportError, match="prior model request"):
+        provider.generate(_request(), timeout_seconds=1)
+
+    release.set()
+    deadline = time.monotonic() + 1
+    while provider.has_active_request and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert elapsed < 0.2
+    assert provider.has_active_request is False
+
+
+def test_openai_provider_does_not_start_a_request_after_caller_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending_targets = []
+
+    class _DeferredThread:
+        def __init__(self, *, target, daemon) -> None:
+            assert daemon is True
+            self._target = target
+
+        def start(self) -> None:
+            pending_targets.append(self._target)
+
+    def fail_if_opened(*args, **kwargs):
+        raise AssertionError("the deferred request must not reach urlopen")
+
+    monkeypatch.setattr(providers_module, "Thread", _DeferredThread)
+    monkeypatch.setattr(providers_module, "urlopen", fail_if_opened)
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=_identity(),
+    )
+
+    with pytest.raises(ProviderTimeoutError) as error:
+        provider.generate(_request(), timeout_seconds=0.01)
+
+    assert error.value.termination_confirmed is True
+    pending_targets.pop()()
+    assert provider._active_request is None

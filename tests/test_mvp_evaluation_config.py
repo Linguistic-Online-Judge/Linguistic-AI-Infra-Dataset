@@ -6,7 +6,11 @@ from linguistic_oj.contracts import (
     RESPONSE_SCHEMA_VERSIONS,
     SCORER_VERSION,
 )
-from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
+from linguistic_oj.mvp_contract import (
+    EvaluationContract,
+    canonical_sha256,
+    load_qwen_worker_contract,
+)
 from linguistic_oj.providers import PROMPT_ENVELOPE_VERSION
 from linguistic_oj.responses import TaskType
 
@@ -246,3 +250,40 @@ def test_mvp_evaluation_config_matches_frozen_artifacts() -> None:
     assert runtime_contract.evaluation_identity_sha256 == partition["expected_sha256"]
     assert runtime_contract.job_deadline_seconds == 300
     assert runtime_contract.external_activation_ready is False
+
+
+def test_qwen_runtime_v2_adds_pinned_tokenizer_partition() -> None:
+    config = _load_json(ROOT / "config" / "mvp_evaluation_v2.json")
+    identity = config["evaluation_identity"]
+    partition = config["leaderboard_partition"]
+    assert isinstance(identity, dict)
+    assert isinstance(partition, dict)
+    assert config["contract_version"] == identity["contract_version"]
+    assert config["contract_version"] == "mvp-evaluation-v2"
+    assert partition["expected_sha256"] == (
+        "97af30df18b531c1eecdbf6a22f3a7983c8c93eb48e338917d8fd10a9e55483d"
+    )
+    assert canonical_sha256(identity) == partition["expected_sha256"]
+    assert identity["tokenizer_identity"] == {
+        "add_generation_prompt": True,
+        "chat_template_sha256": (
+            "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+        ),
+        "counting_method": "hf-apply-chat-template-tokenize-v1",
+        "enable_thinking": False,
+        "repository": "Qwen/Qwen3.5-9B",
+        "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+        "tokenizer_config_sha256": (
+            "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8"
+        ),
+        "tokenizer_json_sha256": (
+            "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+        ),
+    }
+
+    contract = EvaluationContract.from_mapping(config)
+    assert contract.provider_request_timeout_seconds == 120
+    assert contract.provider_response_body_bytes == 32768
+    assert contract.worker_model_concurrency == 1
+    assert contract.retry_requires_prior_request_terminated is True
+    assert load_qwen_worker_contract(ROOT) == contract

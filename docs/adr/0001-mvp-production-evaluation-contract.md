@@ -215,3 +215,20 @@ undeclared tie-break metric.
   rights scope are recorded alongside the CC BY-SA 4.0 annotation license. File
   hashes use records containing a repository-relative POSIX path and a lowercase
   64-character SHA-256 value.
+
+## Runtime-Attested Successor
+
+`mvp-evaluation-v1` remains frozen so its baseline evidence and leaderboard
+partition stay interpretable. `config/mvp_evaluation_v2.json` is its successor for
+the online Qwen worker. It adds the pinned tokenizer repository/revision,
+`tokenizer_config.json` hash, `tokenizer.json` hash, chat-template hash, and exact
+counting method to the evaluation identity. Its identity SHA-256 is
+`97af30df18b531c1eecdbf6a22f3a7983c8c93eb48e338917d8fd10a9e55483d`.
+
+The v2 worker verifies the local tokenizer snapshot and injected runtime evidence
+before consuming a job; it preflights every rendered sample, bounds provider
+response bodies, and clamps every request to the remaining shared deadline. An
+ambiguous HTTP timeout or disconnect is terminal, even though its failure code is
+normally retryable, because this MVP has no server-side request cancellation
+acknowledgment. A real deployment must still provide a trusted worker process
+entry point and co-located vLLM attestation before v2 scores are enabled.

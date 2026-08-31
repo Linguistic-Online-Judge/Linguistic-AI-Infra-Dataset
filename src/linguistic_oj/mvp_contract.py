@@ -67,6 +67,10 @@ class EvaluationContract:
     global_queue_depth: int
     max_attempts: int
     job_deadline_seconds: int
+    provider_request_timeout_seconds: int
+    provider_response_body_bytes: int
+    worker_model_concurrency: int
+    retry_requires_prior_request_terminated: bool
     failure_contract_version: str
     retryable_failure_codes: frozenset[str]
 
@@ -127,6 +131,20 @@ class EvaluationContract:
         )
         if retryable_codes != declared_retryable:
             raise ValueError("retryable failure-code declarations do not match")
+        positive_limits = {
+            "provider_response_body_bytes": limits.get("provider_response_body_bytes"),
+            "worker_model_concurrency": limits.get("worker_model_concurrency"),
+            "provider_request_timeout_seconds": job_policy.get(
+                "provider_request_timeout_seconds"
+            ),
+        }
+        if any(type(item) is not int or item <= 0 for item in positive_limits.values()):
+            raise ValueError("provider and worker limits must be positive integers")
+        retry_requires_termination = job_policy.get(
+            "retry_requires_prior_request_terminated"
+        )
+        if type(retry_requires_termination) is not bool:
+            raise ValueError("retry termination policy must be boolean")
 
         return cls(
             snapshot_json=snapshot_json,
@@ -158,6 +176,12 @@ class EvaluationContract:
             global_queue_depth=int(limits["global_queue_depth"]),
             max_attempts=int(job_policy["max_attempts"]),
             job_deadline_seconds=int(job_policy["job_deadline_seconds"]),
+            provider_request_timeout_seconds=positive_limits[
+                "provider_request_timeout_seconds"
+            ],
+            provider_response_body_bytes=positive_limits["provider_response_body_bytes"],
+            worker_model_concurrency=positive_limits["worker_model_concurrency"],
+            retry_requires_prior_request_terminated=retry_requires_termination,
             failure_contract_version=str(failure_contract["version"]),
             retryable_failure_codes=retryable_codes,
         )
@@ -271,3 +295,9 @@ class EvaluationContract:
 
 def load_mvp_contract(root: Path) -> EvaluationContract:
     return EvaluationContract.from_path(root / "config" / "mvp_evaluation.json")
+
+
+def load_qwen_worker_contract(root: Path) -> EvaluationContract:
+    """Load the distinct runtime-attested Qwen Worker contract."""
+
+    return EvaluationContract.from_path(root / "config" / "mvp_evaluation_v2.json")

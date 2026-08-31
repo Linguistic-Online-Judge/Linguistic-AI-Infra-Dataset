@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,8 @@ from linguistic_oj.providers import (
     ProviderContractError,
 )
 from linguistic_oj.responses import TaskType
+from linguistic_oj.runner import JobDeadline, JobDeadlineExceeded, run_challenge
 from linguistic_oj.runner import main as runner_main
-from linguistic_oj.runner import run_challenge
 
 
 def _sample(sample_id: str, text: str = "AB") -> dict:
@@ -128,7 +129,7 @@ class _StaticProvider:
         self.raw_text = raw_text
         self.calls = 0
 
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         self.calls += 1
         return ModelGeneration(raw_text=self.raw_text)
 
@@ -195,11 +196,14 @@ class _ExplodingProvider:
         self.calls = 0
         self.explode_on_call = explode_on_call
 
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         self.calls += 1
         if self.calls == self.explode_on_call:
             raise RuntimeError("provider unavailable")
-        return DeterministicMockProvider().generate(request)
+        return DeterministicMockProvider().generate(
+            request,
+            timeout_seconds=timeout_seconds,
+        )
 
 
 def test_provider_failure_aborts_without_partial_aggregate(tmp_path: Path) -> None:
@@ -215,8 +219,70 @@ def test_provider_failure_aborts_without_partial_aggregate(tmp_path: Path) -> No
     assert provider.calls == 2
 
 
+def test_runner_propagates_decreasing_whole_job_deadline(tmp_path: Path) -> None:
+    artifacts = _artifacts(
+        tmp_path,
+        "segmentation",
+        [_sample("sample-a", "AB"), _sample("sample-b", "CD")],
+    )
+    now = [datetime(2026, 1, 1, tzinfo=UTC)]
+
+    class _DeadlineProvider(DeterministicMockProvider):
+        def __init__(self) -> None:
+            self.timeouts: list[float] = []
+
+        def generate(self, request, *, timeout_seconds=None):
+            assert timeout_seconds is not None
+            self.timeouts.append(timeout_seconds)
+            now[0] += timedelta(seconds=1)
+            return super().generate(request, timeout_seconds=timeout_seconds)
+
+    provider = _DeadlineProvider()
+    deadline = JobDeadline(
+        expires_at=now[0] + timedelta(seconds=5),
+        clock=lambda: now[0],
+    )
+
+    run_challenge(
+        artifacts,
+        provider,
+        student_prompt="Segment the text.",
+        deadline=deadline,
+    )
+
+    assert provider.timeouts == [5.0, 4.0]
+
+
+def test_runner_aborts_when_deadline_expires_during_request(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path, "segmentation")
+    now = [datetime(2026, 1, 1, tzinfo=UTC)]
+
+    class _SlowProvider(DeterministicMockProvider):
+        calls = 0
+
+        def generate(self, request, *, timeout_seconds=None):
+            self.calls += 1
+            now[0] += timedelta(seconds=2)
+            return super().generate(request, timeout_seconds=timeout_seconds)
+
+    provider = _SlowProvider()
+    deadline = JobDeadline(
+        expires_at=now[0] + timedelta(seconds=1),
+        clock=lambda: now[0],
+    )
+
+    with pytest.raises(JobDeadlineExceeded):
+        run_challenge(
+            artifacts,
+            provider,
+            student_prompt="Segment the text.",
+            deadline=deadline,
+        )
+    assert provider.calls == 1
+
+
 class _WrongResultProvider:
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         return "not a ModelGeneration"
 
 
@@ -246,9 +312,9 @@ class _RecordingProvider(DeterministicMockProvider):
     def __init__(self) -> None:
         self.texts: list[str] = []
 
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         self.texts.append(request.model_input.text)
-        return super().generate(request)
+        return super().generate(request, timeout_seconds=timeout_seconds)
 
 
 def test_provider_requests_follow_manifest_order(tmp_path: Path) -> None:

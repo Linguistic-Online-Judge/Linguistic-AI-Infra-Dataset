@@ -10,6 +10,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+import linguistic_oj.qwen_runtime as qwen_runtime_module
 import linguistic_oj.submission_jobs as submission_jobs_module
 import linguistic_oj.submission_store as submission_store_module
 from linguistic_oj.api import Principal, RequestBodyLimitMiddleware, create_app
@@ -17,15 +18,22 @@ from linguistic_oj.challenge import ChallengeArtifacts, build_challenge
 from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
 from linguistic_oj.providers import (
     DeterministicMockProvider,
+    GenerationSettings,
+    ModelGeneration,
+    ModelIdentity,
+    OpenAICompatibleProvider,
+    ProviderTimeoutError,
     ProviderTransportError,
     deterministic_mock_generation_settings,
     deterministic_mock_model_identity,
     deterministic_mock_tokenizer_identity,
 )
+from linguistic_oj.qwen_runtime import TokenizerIdentity
 from linguistic_oj.submission_jobs import (
     InMemoryJobQueue,
     JobMessage,
     OutboxDispatcher,
+    QwenSubmissionWorker,
     SubmissionWorker,
 )
 from linguistic_oj.submission_store import SubmissionStore
@@ -92,6 +100,66 @@ def _mock_contract(
     return EvaluationContract.from_mapping(config)
 
 
+_TEST_CHAT_TEMPLATE = "<|im_start|>{{ messages }}<|im_end|>"
+
+
+def _qwen_snapshot(tmp_path: Path) -> tuple[Path, Path, TokenizerIdentity]:
+    revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
+    snapshot_path = tmp_path / "qwen-snapshot" / revision
+    snapshot_path.mkdir(parents=True)
+    (snapshot_path / "tokenizer_config.json").write_text(
+        json.dumps({"chat_template": _TEST_CHAT_TEMPLATE}),
+        encoding="utf-8",
+    )
+    (snapshot_path / "tokenizer.json").write_bytes(b"test tokenizer")
+    launch_evidence_path = tmp_path / "qwen-launch.json"
+    launch_evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "linguistic-oj-vllm-launch-v1",
+                "model_snapshot_path": str(snapshot_path.resolve()),
+                "runtime_version": "0.27.1+cu129",
+                "max_model_len": 4096,
+                "max_num_seqs": 1,
+                "language_model_only": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return (
+        snapshot_path,
+        launch_evidence_path,
+        TokenizerIdentity.from_snapshot(
+            snapshot_path,
+            repository="Qwen/Qwen3.5-9B",
+            revision=revision,
+        ),
+    )
+
+
+def _qwen_contract(
+    artifacts: ChallengeArtifacts,
+    tokenizer_identity: TokenizerIdentity,
+) -> EvaluationContract:
+    config = json.loads(
+        (ROOT / "config" / "mvp_evaluation_v2.json").read_text(encoding="utf-8")
+    )
+    config["catalog"]["challenge_id"] = artifacts.public.challenge_id
+    identity = config["evaluation_identity"]
+    identity.update(
+        {
+            "challenge_id": artifacts.public.challenge_id,
+            "dataset_sha256": artifacts.public.dataset_sha256,
+            "response_schema_version": artifacts.public.response_schema_version,
+            "selection_sha256": artifacts.public.selection_sha256,
+            "task": artifacts.public.task,
+            "tokenizer_identity": tokenizer_identity.to_dict(),
+        }
+    )
+    config["leaderboard_partition"]["expected_sha256"] = canonical_sha256(identity)
+    return EvaluationContract.from_mapping(config)
+
+
 def _authenticate(request: Request) -> Principal:
     return Principal(request.headers.get("X-Test-Subject", ""))
 
@@ -100,13 +168,13 @@ class _RecordingMockProvider(DeterministicMockProvider):
     def __init__(self) -> None:
         self.calls = 0
 
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         self.calls += 1
-        return super().generate(request)
+        return super().generate(request, timeout_seconds=timeout_seconds)
 
 
 class _ExplodingMockProvider(DeterministicMockProvider):
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         raise RuntimeError("private provider detail")
 
 
@@ -115,11 +183,52 @@ class _TransportFailureMockProvider(DeterministicMockProvider):
         self.calls = 0
         self.failures = failures
 
-    def generate(self, request):
+    def generate(self, request, *, timeout_seconds=None):
         self.calls += 1
         if self.calls <= self.failures:
             raise ProviderTransportError("temporary transport detail")
-        return super().generate(request)
+        return super().generate(request, timeout_seconds=timeout_seconds)
+
+
+class _TestQwenTokenizer:
+    chat_template = _TEST_CHAT_TEMPLATE
+
+    def encode(self, text, *, add_special_tokens):
+        return [1, 2, 3]
+
+    def apply_chat_template(
+        self,
+        conversation,
+        *,
+        tokenize,
+        add_generation_prompt,
+        enable_thinking,
+    ):
+        return list(range(100))
+
+
+class _TestQwenProvider(OpenAICompatibleProvider):
+    def __init__(self, contract: EvaluationContract, failures: list[Exception] | None = None):
+        identity = contract.evaluation_identity["model_identity"]
+        settings = contract.evaluation_identity["generation_settings"]
+        super().__init__(
+            base_url="http://127.0.0.1:8000/v1",
+            identity=ModelIdentity(**identity),
+            settings=GenerationSettings(**settings),
+            timeout_seconds=contract.provider_request_timeout_seconds,
+            max_response_body_bytes=contract.provider_response_body_bytes,
+        )
+        self.failures = list(failures or [])
+        self.calls = 0
+
+    def generate(self, request, *, timeout_seconds=None):
+        self.calls += 1
+        if self.failures:
+            raise self.failures.pop(0)
+        return ModelGeneration(raw_text='{"tags":["X","X"]}')
+
+    def served_model_ids(self) -> frozenset[str]:
+        return frozenset({self.identity.model})
 
 
 def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: EvaluationContract):
@@ -145,6 +254,49 @@ def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: Evaluat
         environment="test",
     )
     return store, queue, dispatcher, provider, worker, app
+
+
+def _qwen_components(
+    tmp_path: Path,
+    artifacts: ChallengeArtifacts,
+    contract: EvaluationContract,
+    tokenizer_snapshot_path: Path,
+    launch_evidence_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    failures: list[Exception] | None = None,
+):
+    store = SubmissionStore(tmp_path / "qwen-submissions.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+    queue = InMemoryJobQueue(
+        contract.contract_snapshot_sha256,
+        visibility_timeout_seconds=contract.job_deadline_seconds + 15,
+    )
+    dispatcher = OutboxDispatcher(store, queue, contract)
+    provider = _TestQwenProvider(contract, failures)
+    monkeypatch.setattr(
+        qwen_runtime_module,
+        "load_huggingface_tokenizer",
+        lambda path: _TestQwenTokenizer(),
+    )
+    worker = QwenSubmissionWorker(
+        store=store,
+        queue=queue,
+        contract=contract,
+        artifacts=artifacts,
+        provider=provider,
+        tokenizer_snapshot_path=tokenizer_snapshot_path,
+        launch_evidence_path=launch_evidence_path,
+    )
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+    return store, queue, provider, worker, app
 
 
 def _headers(subject: str, idempotency_key: str | None = None) -> dict[str, str]:
@@ -529,6 +681,163 @@ def test_retryable_transport_failure_stops_after_max_attempts(tmp_path: Path) ->
         }
         assert provider.calls == 2
         assert store.count_results() == 0
+
+
+def test_attested_qwen_worker_completes_in_separate_partition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    snapshot_path, launch_evidence_path, tokenizer_identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, tokenizer_identity)
+    store, queue, provider, worker, app = _qwen_components(
+        tmp_path,
+        artifacts,
+        contract,
+        snapshot_path,
+        launch_evidence_path,
+        monkeypatch,
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "qwen-success"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        )
+        assert created.status_code == 202
+        submission_id = created.json()["submission_id"]
+
+        assert worker.run_once() is True
+        result = client.get(
+            f"/v1/submissions/{submission_id}/result",
+            headers=_headers("subject-alice"),
+        )
+        assert result.status_code == 200
+        assert result.json()["model_identity"]["model"] == "Qwen/Qwen3.5-9B"
+        assert provider.calls == 2
+        assert len(queue) == 0
+        assert store.count_results() == 1
+
+
+def test_qwen_worker_does_not_claim_work_while_a_request_is_unconfirmed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    snapshot_path, launch_evidence_path, tokenizer_identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, tokenizer_identity)
+    _, queue, provider, worker, app = _qwen_components(
+        tmp_path,
+        artifacts,
+        contract,
+        snapshot_path,
+        launch_evidence_path,
+        monkeypatch,
+    )
+    provider._active_request = object()
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "qwen-blocked-by-active-request"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        )
+
+    assert created.status_code == 202
+    assert worker.run_once() is False
+    assert provider.calls == 0
+    assert len(queue) == 1
+
+
+def test_qwen_worker_retries_only_after_confirmed_request_termination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    snapshot_path, launch_evidence_path, tokenizer_identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, tokenizer_identity)
+    _, queue, provider, worker, app = _qwen_components(
+        tmp_path,
+        artifacts,
+        contract,
+        snapshot_path,
+        launch_evidence_path,
+        monkeypatch,
+        failures=[
+            ProviderTransportError(
+                "temporary transport detail",
+                termination_confirmed=True,
+            )
+        ],
+    )
+
+    with TestClient(app) as client:
+        submission_id = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "qwen-confirmed-retry"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        ).json()["submission_id"]
+
+        assert worker.run_once() is True
+        assert len(queue) == 1
+        assert worker.run_once() is True
+        assert provider.calls == 3
+        completed = client.get(
+            f"/v1/submissions/{submission_id}",
+            headers=_headers("subject-alice"),
+        )
+        assert completed.json()["status"] == "succeeded"
+
+
+def test_qwen_worker_does_not_retry_ambiguous_remote_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    snapshot_path, launch_evidence_path, tokenizer_identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, tokenizer_identity)
+    _, queue, provider, worker, app = _qwen_components(
+        tmp_path,
+        artifacts,
+        contract,
+        snapshot_path,
+        launch_evidence_path,
+        monkeypatch,
+        failures=[ProviderTimeoutError()],
+    )
+
+    with TestClient(app) as client:
+        submission_id = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "qwen-ambiguous-timeout"),
+            json={
+                "challenge_id": contract.challenge_id,
+                "student_prompt": "Return JSON.",
+            },
+        ).json()["submission_id"]
+
+        assert worker.run_once() is True
+        assert provider.calls == 1
+        assert len(queue) == 0
+        failure = client.get(
+            f"/v1/submissions/{submission_id}/result",
+            headers=_headers("subject-alice"),
+        )
+        assert failure.json() == {
+            "code": "PROVIDER_TIMEOUT",
+            "failure_contract_version": "platform-failure-v1",
+            "retryable": False,
+        }
 
 
 def test_temporarily_unclaimable_job_waits_for_visibility(

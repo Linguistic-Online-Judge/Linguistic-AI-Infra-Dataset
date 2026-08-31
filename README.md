@@ -6,7 +6,8 @@
 并提供从“构造安全题目”到“解析模型回答、自动评分、汇总结果”的完整离线流程。
 
 一句话说明当前进度：**现在可以用 Mock Provider 或 OpenAI-compatible
-自托管模型跑完整评测，但后端 API、数据库、前端和排行榜还没有实现。**
+自托管模型跑完整评测，并已具备 FastAPI、SQLite、Redis Streams 和 Qwen Worker
+的后端纵向切片；前端与生产认证/数据库迁移仍未完成。**
 
 ## 当前能做什么
 
@@ -20,7 +21,8 @@
 | Mock Provider 离线端到端评测 | 已完成 |
 | OpenAI-compatible 自托管模型 Provider | 已完成 |
 | GPU 模型部署与 4B/9B 真实基准 | 已完成 |
-| API、数据库、任务队列、前端、排行榜 | 未开始 |
+| FastAPI、SQLite、Redis Streams、Mock/Qwen Worker | 已完成 MVP 纵向切片 |
+| 前端、生产认证、PostgreSQL 迁移 | 未完成 |
 
 当前评测流程：
 
@@ -215,6 +217,7 @@ src/linguistic_oj/mvp_contract.py 读取和验证冻结评测合同
 src/linguistic_oj/submission_store.py SQLite 提交、outbox、结果和排行榜
 src/linguistic_oj/submission_jobs.py 进程内队列、outbox dispatcher 和 Mock Worker
 src/linguistic_oj/redis_job_queue.py Redis Streams 队列和 visibility recovery
+src/linguistic_oj/qwen_runtime.py   固定 tokenizer 预检和 Qwen 运行时身份核验
 src/linguistic_oj/api.py          FastAPI 提交、状态、结果和排行榜接口
 tests/                            自动化测试
 ```
@@ -230,7 +233,9 @@ tests/                            自动化测试
 5. 已冻结 English EWT UPOS 教学型 MVP 合同，并完成 FastAPI + SQLite + Mock Worker
    的异步提交纵向切片。
 6. 已实现 Redis Streams Queue Adapter、Consumer Group visibility recovery、幂等发布、
-   旧 receipt 隔离和最多两次的完整 Job 重试；下一步接入固定 tokenizer 和真实 GPU Worker。
+   旧 receipt 隔离和最多两次的完整 Job 重试。
+7. 已实现 Qwen v2 固定 tokenizer/chat-template 身份、全样本预检、共享 deadline、
+   Provider 响应上限、终止确认和 runtime attestation；下一步接入真实 GPU Worker 进程。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
 服务器部署方式。先做 API 或前端，之后很可能因为模型限制而返工。

@@ -18,6 +18,78 @@ runtime:
 | Context length | 4,096 tokens |
 | Model mode | text-only, non-thinking |
 
+The online worker uses `config/mvp_evaluation_v2.json`. Its pinned 9B tokenizer
+evidence at the model revision above is:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `tokenizer_config.json` | `316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8` |
+| `tokenizer.json` | `5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42` |
+| UTF-8 chat-template value | `a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715` |
+
+The worker must compute these hashes from the local snapshot and use
+`apply_chat_template(..., tokenize=True, add_generation_prompt=True,
+enable_thinking=False)` before consuming jobs. A served model alias alone is not
+runtime attestation because it does not prove the model commit or tokenizer
+artifacts.
+
+## Online worker attestation
+
+`load_qwen_worker_contract(root)` loads the only contract accepted by
+`QwenSubmissionWorker`: `mvp-evaluation-v2`. At startup it loads the tokenizer
+from a deployment-owned local model directory with Transformers in offline mode,
+rehashes the two tokenizer files and template, and verifies the local vLLM
+`/v1/models` response before it claims a job. The directory name is not treated
+as revision evidence; the pinned tokenizer file hashes are. The Worker accepts
+only a loopback hostname:
+`127.0.0.1`, `::1`, or `localhost`. An SSH tunnel can also bind to a loopback
+address and cannot be distinguished by the HTTP client, so deployment network
+policy must prohibit tunnels and remote port forwarding for online evaluation.
+
+This check protects the Worker from accidental configuration mismatch. It is not
+a cryptographic proof of a running vLLM process or model weights: the
+OpenAI-compatible `/v1/models` API exposes a model alias, not a revision hash or
+process identity. Production therefore trusts the deployment boundary that owns
+the Worker command, local snapshot, launch-evidence file, loopback network
+namespace, and vLLM process. Do not run the Worker with a snapshot, evidence
+file, or localhost endpoint controlled by an untrusted tenant.
+
+The vLLM launcher must write an operator-controlled JSON evidence file before
+starting the Worker. On POSIX systems, the Worker rejects a symlink, non-regular,
+group-writable, or world-writable evidence file. It has this exact schema:
+
+```json
+{
+  "schema_version": "linguistic-oj-vllm-launch-v1",
+  "model_snapshot_path": "/absolute/path/to/c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+  "runtime_version": "0.27.1+cu129",
+  "max_model_len": 4096,
+  "max_num_seqs": 1,
+  "language_model_only": true
+}
+```
+
+The Worker derives its attestation from this file, the local snapshot, and the
+local service. It does not accept a caller-supplied identity assertion. Every
+chat-completions request explicitly sends `add_generation_prompt: true` and
+`enable_thinking: false`, matching local token preflight.
+
+Install the Worker with `pip install '.[qwen-worker]'`. Run it from a deployment
+root containing `config/mvp_evaluation_v2.json`, for example
+`python -m linguistic_oj.qwen_worker --root /srv/linguistic-oj ...`. It requires
+the SQLite database, Redis URL, challenge artifacts, dataset, localhost vLLM URL,
+tokenizer snapshot, and launch-evidence paths as explicit command-line arguments.
+Use `--once` for a single operational smoke delivery; otherwise it polls the
+contract-specific Redis Stream continuously.
+
+Run the paired API with `python -m linguistic_oj.qwen_api --root /srv/linguistic-oj
+--database ... --redis-url ... --authenticate package.module:callback`. The
+authentication callback receives a FastAPI request and must return
+`linguistic_oj.api.Principal`; it is deployment-owned rather than a built-in
+header-based fallback. Both API and Worker derive the same v2 contract snapshot
+and Redis routing key. Development smoke tests may opt in to draft submissions;
+production cannot.
+
 The model files were downloaded from `https://hf-mirror.com` at the pinned
 revisions. `hf cache verify` checked all 14 4B files and all 16 9B files
 successfully. The model directories occupy about 8.8 GB and 19 GB respectively.
