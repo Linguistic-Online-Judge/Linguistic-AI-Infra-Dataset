@@ -186,6 +186,10 @@ class RedisJobQueue:
     def visibility_timeout_seconds(self) -> float:
         return self._visibility_timeout_ms / 1000
 
+    def health_check(self) -> None:
+        if not self._client.ping():
+            raise RuntimeError("Redis health check failed")
+
     def _ensure_group(self) -> None:
         try:
             self._client.xgroup_create(

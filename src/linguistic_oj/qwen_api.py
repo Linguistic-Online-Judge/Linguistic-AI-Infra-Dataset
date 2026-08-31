@@ -53,11 +53,17 @@ def build_qwen_api(
         namespace=namespace,
     )
     dispatcher = OutboxDispatcher(store, queue, contract)
+
+    def readiness_check() -> None:
+        store.health_check()
+        queue.health_check()
+
     app = create_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
         authenticate=authenticate,
+        readiness_check=readiness_check,
         allow_draft_submissions=allow_draft_submissions,
         environment=environment,
     )

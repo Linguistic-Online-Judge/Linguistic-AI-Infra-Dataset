@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, status
@@ -31,6 +35,10 @@ class Principal:
 
 
 Authenticate = Callable[[Request], Principal]
+ReadinessCheck = Callable[[], None]
+
+_REQUEST_ID_HEADER = b"x-request-id"
+_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class CreateSubmissionRequest(BaseModel):
@@ -168,6 +176,65 @@ class RequestBodyLimitMiddleware:
         await response(scope, receive, send)
 
 
+class SafeRequestLoggingMiddleware:
+    """Emit one body-free, allowlisted completion record per HTTP request."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+        self._logger = logging.getLogger("linguistic_oj.http")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        request_id = _request_id(scope["headers"])
+        started = perf_counter()
+        response_status = 500
+
+        async def send_with_request_id(message: Message) -> None:
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
+                headers = list(message.get("headers", []))
+                if not any(name.lower() == _REQUEST_ID_HEADER for name, _ in headers):
+                    headers.append((_REQUEST_ID_HEADER, request_id.encode("ascii")))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        try:
+            await self._app(scope, receive, send_with_request_id)
+        finally:
+            self._logger.info(
+                json.dumps(
+                    {
+                        "duration_ms": round((perf_counter() - started) * 1000, 3),
+                        "event": "http_request_complete",
+                        "method": scope["method"],
+                        "path": scope["path"],
+                        "request_id": request_id,
+                        "status_code": response_status,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+
+
+def _request_id(headers: list[tuple[bytes, bytes]]) -> str:
+    for name, value in headers:
+        if name.lower() != _REQUEST_ID_HEADER:
+            continue
+        try:
+            candidate = value.decode("ascii")
+        except UnicodeDecodeError:
+            break
+        if _REQUEST_ID.fullmatch(candidate) is not None:
+            return candidate
+        break
+    return uuid.uuid4().hex
+
+
 def _submission_response(submission: SubmissionRecord) -> SubmissionResponse:
     return SubmissionResponse(
         submission_id=submission.submission_id,
@@ -185,6 +252,7 @@ def create_app(
     dispatcher: OutboxDispatcher,
     contract: EvaluationContract,
     authenticate: Authenticate,
+    readiness_check: ReadinessCheck | None = None,
     allow_draft_submissions: bool = False,
     environment: Literal["development", "test", "production"] = "production",
 ) -> FastAPI:
@@ -197,7 +265,24 @@ def create_app(
 
     app = FastAPI(title="Linguistic Online Judge API", version="0.1.0")
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=contract.api_request_body_bytes)
+    app.add_middleware(SafeRequestLoggingMiddleware)
     dispatcher.recover_published_queued()
+
+    @app.get("/health/live", include_in_schema=False)
+    def live() -> dict[str, str]:
+        return {"status": "live"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    def ready() -> dict[str, str]:
+        try:
+            if readiness_check is not None:
+                readiness_check()
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service not ready",
+            ) from None
+        return {"status": "ready"}
 
     def current_user(request: Request) -> UserRecord:
         principal = authenticate(request)

@@ -147,10 +147,10 @@ other developer.
 
 ## Immediate sequence
 
-1. Load the verified local tokenizer snapshot and trusted vLLM attestation in a
-   real worker process entry point.
-2. Run the v2 contract in a single-concurrency GPU worker without permitting
-   Mock scores in the Qwen partition.
+1. Completed: load the verified local tokenizer snapshot and trusted vLLM
+   attestation in a real worker process entry point.
+2. Completed: run the v2 contract in a single-concurrency GPU worker without
+   permitting Mock scores in the Qwen partition.
 3. Configure persistent Redis deployment, credentials, health monitoring, and
    worker process entry points.
 4. Move deployment persistence to PostgreSQL and add production authentication,

@@ -234,8 +234,10 @@ tests/                            自动化测试
    的异步提交纵向切片。
 6. 已实现 Redis Streams Queue Adapter、Consumer Group visibility recovery、幂等发布、
    旧 receipt 隔离和最多两次的完整 Job 重试。
-7. 已实现 Qwen v2 固定 tokenizer/chat-template 身份、全样本预检、共享 deadline、
-   Provider 响应上限、终止确认和 runtime attestation；下一步接入真实 GPU Worker 进程。
+7. 已实现并在真实 GPU Worker/API 链路验证 Qwen v2 固定 tokenizer/chat-template 身份、
+   全样本预检、共享 deadline、Provider 响应上限、终止确认和 runtime attestation。
+8. 下一阶段是持久 Redis 7+、PostgreSQL、生产认证、健康监控和重启/并发验证；完成前不
+   对学生开放提交。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
 服务器部署方式。先做 API 或前端，之后很可能因为模型限制而返工。
