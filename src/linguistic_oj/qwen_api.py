@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,7 @@ from fastapi import FastAPI
 
 from .api import Authenticate, create_app
 from .mvp_contract import EvaluationContract, load_qwen_worker_contract
-from .redis_job_queue import RedisJobQueue
+from .redis_job_queue import RedisJobQueue, resolve_redis_url
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
     OutboxDispatcher,
@@ -87,7 +88,9 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         help="deployment root containing config/mvp_evaluation_v2.json",
     )
     parser.add_argument("--database", type=Path, required=True)
-    parser.add_argument("--redis-url", required=True)
+    redis = parser.add_mutually_exclusive_group(required=True)
+    redis.add_argument("--redis-url")
+    redis.add_argument("--redis-url-file", type=Path)
     parser.add_argument(
         "--authenticate",
         required=True,
@@ -105,6 +108,14 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(arguments)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    try:
+        args.redis_url = resolve_redis_url(
+            inline_url=args.redis_url,
+            credential_file=args.redis_url_file,
+            allow_inline_credentials=args.environment != "production",
+        )
+    except ValueError as error:
+        parser.error(str(error))
     return args
 
 
@@ -118,12 +129,23 @@ def _load_authenticate(reference: str) -> Authenticate:
     return cast(Authenticate, callback)
 
 
+def _configure_safe_request_logging() -> None:
+    logger = logging.getLogger("linguistic_oj.http")
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         import uvicorn
     except ImportError as error:
         raise RuntimeError("install the api extra to run the Qwen API") from error
+    _configure_safe_request_logging()
     runtime = build_qwen_api(
         root=args.root,
         database_path=args.database,
@@ -133,7 +155,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         allow_draft_submissions=args.allow_draft_submissions,
         environment=args.environment,
     )
-    uvicorn.run(runtime.app, host=args.host, port=args.port)
+    uvicorn.run(runtime.app, host=args.host, port=args.port, access_log=False)
     return 0
 
 

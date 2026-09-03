@@ -544,6 +544,14 @@ def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path
             allow_draft_submissions=True,
             environment="production",
         )
+    with pytest.raises(ValueError, match="requires a readiness check"):
+        create_app(
+            store=store,
+            dispatcher=dispatcher,
+            contract=contract,
+            authenticate=_authenticate,
+            environment="production",
+        )
 
     closed_app = create_app(
         store=store,

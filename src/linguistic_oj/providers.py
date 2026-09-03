@@ -471,9 +471,11 @@ class OpenAICompatibleProvider:
             except Exception as error:
                 outcome["error"] = error
             finally:
-                with self._request_lock:
-                    if self._active_request is request_token:
-                        self._active_request = None
+                error = outcome.get("error")
+                if error is None or isinstance(error, (HTTPError, ProviderContractError)):
+                    with self._request_lock:
+                        if self._active_request is request_token:
+                            self._active_request = None
                 completed.set()
 
         Thread(target=execute_request, daemon=True).start()

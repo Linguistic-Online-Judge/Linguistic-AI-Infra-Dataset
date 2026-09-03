@@ -260,6 +260,8 @@ def create_app(
         raise ValueError("unsupported deployment environment")
     if environment == "production" and allow_draft_submissions:
         raise ValueError("draft submission override is forbidden in production")
+    if environment == "production" and readiness_check is None:
+        raise ValueError("production requires a readiness check")
     if not dispatcher.matches(store, contract):
         raise ValueError("outbox dispatcher does not match the store and contract")
 
