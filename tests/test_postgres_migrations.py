@@ -65,6 +65,7 @@ def test_validate_postgres_url_rejects_multihost_authority() -> None:
         "postgresql://judge@127.0.0.1/linguistic_oj?host=db.example&sslmode=require",
         "postgresql://judge@127.0.0.1/linguistic_oj?hostaddr=203.0.113.10",
         "postgresql://judge@127.0.0.1/linguistic_oj?port=6432",
+        "postgresql://judge@/linguistic_oj?host=/private/socket%2C203.0.113.10",
     ),
 )
 def test_validate_postgres_url_rejects_target_overrides(database_url: str) -> None:
