@@ -21,6 +21,9 @@ api = [
 qwen-worker = [
     "transformers>=4.57,<5",
 ]
+postgres = [
+    "psycopg[binary]>=3.2,<4",
+]
 dev = [
     "httpx2>=2.12,<2.13",
     "pytest>=8.3,<10",
