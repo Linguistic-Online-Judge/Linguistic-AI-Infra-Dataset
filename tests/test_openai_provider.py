@@ -219,6 +219,9 @@ def test_openai_provider_allows_missing_generation_metadata(
 def test_openai_provider_can_request_exact_xpos_regex(
     fake_model_service: str,
 ) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": '{"tags":["NN","PROAV"]}'}}]
+    }
     provider = OpenAICompatibleProvider(
         base_url=fake_model_service,
         identity=_identity(),
@@ -233,6 +236,27 @@ def test_openai_provider_can_request_exact_xpos_regex(
     assert re.fullmatch(pattern, '{"tags":["NN"]}') is None
     assert re.fullmatch(pattern, '{"tags":["NN","PAV"]}') is None
     assert re.fullmatch(pattern, '{ "tags": ["NN","PROAV"] }') is None
+
+
+def test_openai_provider_rejects_structured_response_outside_xpos_inventory(
+    fake_model_service: str,
+) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": '{"tags":["NN","PAV"]}'}}]
+    }
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        structured_json=True,
+    )
+
+    with pytest.raises(ProviderContractError, match="structured output constraint"):
+        provider.generate(_tagging_request())
+
+
+def test_xpos_inventory_mapping_is_read_only() -> None:
+    with pytest.raises(TypeError):
+        providers_module._XPOS_TAG_INVENTORIES[("German", "HDT")] = ("PAV",)
 
 
 def test_openai_provider_requires_boolean_structured_json() -> None:

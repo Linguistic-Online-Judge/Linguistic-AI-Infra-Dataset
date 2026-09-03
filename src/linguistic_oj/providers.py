@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 from dataclasses import dataclass
 from threading import Event, Lock, Thread
 from time import monotonic
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -23,7 +25,7 @@ from .model_inputs import (
     model_input_matches_task,
     response_expectations,
 )
-from .responses import TaskType, response_json_schema
+from .responses import TaggingResponse, TaskType, parse_model_response, response_json_schema
 
 PROMPT_ENVELOPE_VERSION = "1.0"
 STRUCTURED_OUTPUT_CONTRACT_VERSION = "dynamic-response-constraint-v5"
@@ -31,59 +33,70 @@ HDT_XPOS_TAG_INVENTORY_VERSION = "de-hdt-xpos-tags-v1"
 HDT_XPOS_TAG_INVENTORY_SHA256 = (
     "1edae8cc60e60644fd70bd107832b9c317cf180b99f84bf499e080526ec1a073"
 )
-_XPOS_TAG_INVENTORIES = {
-    ("German", "HDT"): (
-        "$(",
-        "$,",
-        "$.",
-        "ADJA",
-        "ADJD",
-        "ADV",
-        "APPO",
-        "APPR",
-        "APZR",
-        "ART",
-        "CARD",
-        "FM",
-        "ITJ",
-        "KOKOM",
-        "KON",
-        "KOUI",
-        "KOUS",
-        "NE",
-        "NN",
-        "PDAT",
-        "PDS",
-        "PIAT",
-        "PIDAT",
-        "PIS",
-        "PPER",
-        "PPOSAT",
-        "PRELAT",
-        "PRELS",
-        "PRF",
-        "PROAV",
-        "PTKA",
-        "PTKNEG",
-        "PTKVZ",
-        "PTKZU",
-        "PWAT",
-        "PWAV",
-        "PWS",
-        "TRUNC",
-        "VAFIN",
-        "VAINF",
-        "VAPP",
-        "VMFIN",
-        "VMINF",
-        "VVFIN",
-        "VVIMP",
-        "VVINF",
-        "VVIZU",
-        "VVPP",
-        "XY",
-    )
-}
+_XPOS_TAG_INVENTORIES = MappingProxyType(
+    {
+        ("German", "HDT"): (
+            "$(",
+            "$,",
+            "$.",
+            "ADJA",
+            "ADJD",
+            "ADV",
+            "APPO",
+            "APPR",
+            "APZR",
+            "ART",
+            "CARD",
+            "FM",
+            "ITJ",
+            "KOKOM",
+            "KON",
+            "KOUI",
+            "KOUS",
+            "NE",
+            "NN",
+            "PDAT",
+            "PDS",
+            "PIAT",
+            "PIDAT",
+            "PIS",
+            "PPER",
+            "PPOSAT",
+            "PRELAT",
+            "PRELS",
+            "PRF",
+            "PROAV",
+            "PTKA",
+            "PTKNEG",
+            "PTKVZ",
+            "PTKZU",
+            "PWAT",
+            "PWAV",
+            "PWS",
+            "TRUNC",
+            "VAFIN",
+            "VAINF",
+            "VAPP",
+            "VMFIN",
+            "VMINF",
+            "VVFIN",
+            "VVIMP",
+            "VVINF",
+            "VVIZU",
+            "VVPP",
+            "XY",
+        )
+    }
+)
+_hdt_inventory_sha256 = hashlib.sha256(
+    json.dumps(
+        _XPOS_TAG_INVENTORIES[("German", "HDT")],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
+if _hdt_inventory_sha256 != HDT_XPOS_TAG_INVENTORY_SHA256:
+    raise RuntimeError("HDT XPOS inventory does not match its frozen identity")
 _PINNED_REVISION = re.compile(r"[0-9a-f]{40}")
 _SAFE_FINISH_REASONS = frozenset(
     {
@@ -699,6 +712,8 @@ class OpenAICompatibleProvider:
             ) from None
         if not isinstance(content, str):
             raise ProviderContractError("model service message content must be a string")
+        if self._structured_json:
+            self._validate_structured_content(request, content)
 
         raw_finish_reason = choice.get("finish_reason")
         finish_reason = (
@@ -721,6 +736,32 @@ class OpenAICompatibleProvider:
             generated_token_count=generated_token_count,
             finish_reason=finish_reason,
         )
+
+    @staticmethod
+    def _validate_structured_content(request: ModelRequest, content: str) -> None:
+        expected_count, expected_token_ids = response_expectations(
+            request.task,
+            request.model_input,
+        )
+        parsed = parse_model_response(
+            request.task,
+            content,
+            expected_count=expected_count,
+            expected_token_ids=expected_token_ids,
+        )
+        if not parsed.is_valid:
+            raise ProviderContractError(
+                "model service did not satisfy the structured output constraint"
+            )
+        xpos_inventory = _XPOS_TAG_INVENTORIES.get((request.language, request.treebank))
+        if request.task is TaskType.XPOS and xpos_inventory is not None:
+            value = parsed.value
+            if not isinstance(value, TaggingResponse) or any(
+                tag not in xpos_inventory for tag in value.tags
+            ):
+                raise ProviderContractError(
+                    "model service did not satisfy the structured output constraint"
+                )
 
     def _read_response_body(self, response: object) -> bytes:
         headers = getattr(response, "headers", None)

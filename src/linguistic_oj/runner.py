@@ -489,11 +489,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Calibration-only dynamic JSON schema; changes the evaluation protocol.",
     )
+    parser.add_argument(
+        "--generation-diagnostics",
+        action="store_true",
+        help="Include non-deterministic aggregate timing and generation diagnostics.",
+    )
     return parser.parse_args()
 
 
 def _provider_from_args(args: argparse.Namespace) -> ModelProvider:
     if args.provider == "mock":
+        if args.structured_json:
+            raise ValueError("structured JSON requires the openai provider")
         return DeterministicMockProvider()
 
     required = {
@@ -538,7 +545,10 @@ def main() -> None:
         )
         provider = _provider_from_args(args)
         diagnostics = (
-            ChallengeRunDiagnostics() if isinstance(provider, OpenAICompatibleProvider) else None
+            ChallengeRunDiagnostics()
+            if args.generation_diagnostics
+            and isinstance(provider, OpenAICompatibleProvider)
+            else None
         )
         result = run_challenge(
             artifacts,
@@ -558,9 +568,8 @@ def main() -> None:
                 report["structured_output_contract_version"] = (
                     STRUCTURED_OUTPUT_CONTRACT_VERSION
                 )
-            if diagnostics is None:
-                raise RunnerInvariantError("OpenAI diagnostics were not initialized")
-            report["generation_diagnostics"] = diagnostics.to_dict()
+            if diagnostics is not None:
+                report["generation_diagnostics"] = diagnostics.to_dict()
         print(
             json.dumps(
                 report,

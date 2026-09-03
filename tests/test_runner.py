@@ -495,3 +495,41 @@ def test_cli_reports_prompt_identity_without_prompt_text(
     ).hexdigest()
     assert prompt_text not in captured.out
     assert captured.err == ""
+
+
+def test_cli_rejects_structured_mode_for_mock_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifacts = _artifacts(tmp_path, "segmentation")
+    public_path, private_path = write_challenge(
+        artifacts,
+        public_dir=tmp_path / "public",
+        private_dir=tmp_path / "private",
+    )
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("Segment the text.", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "runner",
+            "--public",
+            str(public_path),
+            "--private",
+            str(private_path),
+            "--dataset",
+            str(artifacts.dataset_path),
+            "--prompt-file",
+            str(prompt_path),
+            "--structured-json",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        runner_main()
+
+    captured = capsys.readouterr()
+    assert error.value.code == 1
+    assert "Evaluation failed: ValueError" in captured.err
+    assert captured.out == ""

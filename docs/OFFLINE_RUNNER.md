@@ -134,12 +134,13 @@ ssh -L 8000:127.0.0.1:8000 75
 
 The aggregate JSON includes the model identity, runtime version, generation
 settings, prompt-envelope version, and SHA-256 identity of the exact student
-prompt. OpenAI-compatible runs also include `generation_diagnostics`, an
-aggregate-only observation with total execution time, request-latency summary,
-completion-token counts, response UTF-8 byte counts, normalized finish-reason
-counts, and parse-error counts. Providers may omit token usage or finish reason;
-the report records those values as missing rather than inventing them. It still
-excludes prompt text, raw responses, model inputs, sample IDs, and gold data.
+prompt. OpenAI-compatible runs include `generation_diagnostics` only when
+`--generation-diagnostics` is explicitly enabled. This aggregate-only observation
+contains total execution time, request-latency summary, completion-token counts,
+response UTF-8 byte counts, normalized finish-reason counts, and parse-error
+counts. Providers may omit token usage or finish reason; the report records those
+values as missing rather than inventing them. It still excludes prompt text, raw
+responses, model inputs, sample IDs, and gold data.
 Diagnostics are not part of `ChallengeAggregateResult`, the evaluation identity,
 owner results, or leaderboard data, and the CLI does not persist them.
 
