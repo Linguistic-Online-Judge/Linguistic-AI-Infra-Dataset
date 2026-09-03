@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -27,7 +28,13 @@ REVISION = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 class _FakeModelHandler(BaseHTTPRequestHandler):
     response_status = 200
     response_payload: object = {
-        "choices": [{"message": {"content": '{"tokens":["A","B"]}'}}]
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": '{"tokens":["A","B"]}'},
+            }
+        ],
+        "usage": {"completion_tokens": 7},
     }
     requests: list[dict] = []
 
@@ -66,7 +73,13 @@ class _FakeModelHandler(BaseHTTPRequestHandler):
 def fake_model_service() -> Iterator[str]:
     _FakeModelHandler.response_status = 200
     _FakeModelHandler.response_payload = {
-        "choices": [{"message": {"content": '{"tokens":["A","B"]}'}}]
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": '{"tokens":["A","B"]}'},
+            }
+        ],
+        "usage": {"completion_tokens": 7},
     }
     _FakeModelHandler.requests = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeModelHandler)
@@ -96,6 +109,16 @@ def _request() -> ModelRequest:
         treebank="Tiny",
         student_prompt="Segment carefully.",
         model_input=SegmentationModelInput(text="AB"),
+    )
+
+
+def _tagging_request() -> ModelRequest:
+    return ModelRequest(
+        task=TaskType.XPOS,
+        language="German",
+        treebank="HDT",
+        student_prompt="Tag every token.",
+        model_input=TaggingModelInput(tokens=("A", "B")),
     )
 
 
@@ -163,6 +186,8 @@ def test_openai_provider_sends_fixed_contract_and_returns_raw_content(
     recorded = _FakeModelHandler.requests[0]
     payload = recorded["payload"]
     assert generation.raw_text == '{"tokens":["A","B"]}'
+    assert generation.generated_token_count == 7
+    assert generation.finish_reason == "stop"
     assert recorded["path"] == "/v1/chat/completions"
     assert recorded["authorization"] == "Bearer test-key"
     assert payload["model"] == "Qwen/Qwen3.5-4B"
@@ -174,6 +199,117 @@ def test_openai_provider_sends_fixed_contract_and_returns_raw_content(
     assert payload["add_generation_prompt"] is True
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert "response_format" not in payload
+    assert "structured_outputs" not in payload
+
+
+def test_openai_provider_allows_missing_generation_metadata(
+    fake_model_service: str,
+) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": '{"tokens":["A","B"]}'}}]
+    }
+    provider = OpenAICompatibleProvider(base_url=fake_model_service, identity=_identity())
+
+    generation = provider.generate(_request())
+
+    assert generation.generated_token_count is None
+    assert generation.finish_reason is None
+
+
+def test_openai_provider_can_request_exact_xpos_regex(
+    fake_model_service: str,
+) -> None:
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        structured_json=True,
+    )
+
+    provider.generate(_tagging_request())
+
+    structured_outputs = _FakeModelHandler.requests[0]["payload"]["structured_outputs"]
+    pattern = structured_outputs["regex"]
+    assert re.fullmatch(pattern, '{"tags":["NN","PROAV"]}') is not None
+    assert re.fullmatch(pattern, '{"tags":["NN"]}') is None
+    assert re.fullmatch(pattern, '{"tags":["NN","PAV"]}') is None
+    assert re.fullmatch(pattern, '{ "tags": ["NN","PROAV"] }') is None
+
+
+def test_openai_provider_requires_boolean_structured_json() -> None:
+    with pytest.raises(TypeError, match="structured_json"):
+        OpenAICompatibleProvider(
+            base_url="http://127.0.0.1:8000/v1",
+            identity=_identity(),
+            structured_json=1,  # type: ignore[arg-type]
+        )
+
+
+def test_openai_provider_structured_mode_is_read_only() -> None:
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=_identity(),
+    )
+
+    with pytest.raises(AttributeError):
+        provider.structured_json = True  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="configuration is frozen"):
+        provider._structured_json = True
+    with pytest.raises(AttributeError, match="configuration is frozen"):
+        del provider._structured_json
+    with pytest.raises(AttributeError, match="configuration is frozen"):
+        del provider._config_frozen
+    vars(provider)["_structured_json"] = True
+    vars(provider)["_config_frozen"] = False
+    assert provider.structured_json is False
+    with pytest.raises(AttributeError, match="configuration is frozen"):
+        provider._structured_json = True
+
+
+def test_openai_provider_normalizes_unknown_finish_reason(
+    fake_model_service: str,
+) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [
+            {
+                "finish_reason": "vendor_specific",
+                "message": {"content": '{"tokens":["A","B"]}'},
+            }
+        ]
+    }
+    provider = OpenAICompatibleProvider(base_url=fake_model_service, identity=_identity())
+
+    assert provider.generate(_request()).finish_reason == "other"
+
+
+@pytest.mark.parametrize(
+    "response_payload",
+    [
+        {
+            "choices": [
+                {
+                    "finish_reason": 1,
+                    "message": {"content": '{"tokens":["A","B"]}'},
+                }
+            ]
+        },
+        {
+            "choices": [{"message": {"content": '{"tokens":["A","B"]}'}}],
+            "usage": {"completion_tokens": -1},
+        },
+    ],
+)
+def test_openai_provider_ignores_invalid_generation_metadata(
+    fake_model_service: str,
+    response_payload: object,
+) -> None:
+    _FakeModelHandler.response_payload = response_payload
+    provider = OpenAICompatibleProvider(base_url=fake_model_service, identity=_identity())
+
+    generation = provider.generate(_request())
+
+    assert generation.raw_text == '{"tokens":["A","B"]}'
+    assert generation.generated_token_count is None
+    assert generation.finish_reason is None
 
 
 def test_openai_provider_reads_served_model_ids(fake_model_service: str) -> None:

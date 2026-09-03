@@ -20,6 +20,7 @@ from linguistic_oj.qwen_runtime import (
     QwenTokenLimitExceeded,
     TokenizerIdentity,
     attest_qwen_runtime_from_snapshot,
+    verify_qwen_runtime,
 )
 from linguistic_oj.responses import TaskType
 
@@ -239,6 +240,16 @@ def test_runtime_attestation_derives_identity_from_local_evidence(
 
     assert runtime.attestation.model_identity == model_identity
     assert runtime.tokenizer_identity == tokenizer_identity
+    structured_provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000/v1",
+        identity=model_identity,
+        settings=GenerationSettings(max_tokens=256),
+        timeout_seconds=contract.provider_request_timeout_seconds,
+        max_response_body_bytes=contract.provider_response_body_bytes,
+        structured_json=True,
+    )
+    with pytest.raises(QwenRuntimeAttestationError, match="not declared"):
+        verify_qwen_runtime(contract, structured_provider, runtime.attestation)
     with pytest.raises(TypeError, match="attest_qwen_runtime_from_snapshot"):
         AttestedQwenRuntime(
             tokenizer=_FakeTokenizer(),

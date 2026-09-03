@@ -454,6 +454,10 @@ def verify_qwen_runtime(
         raise TypeError("Qwen runtime requires OpenAICompatibleProvider")
     if not isinstance(attestation, QwenRuntimeAttestation):
         raise TypeError("attestation must be a QwenRuntimeAttestation")
+    if provider.structured_json:
+        raise QwenRuntimeAttestationError(
+            "structured JSON is not declared by the evaluation contract"
+        )
     identity = contract.evaluation_identity
     if provider.identity.to_dict() != identity.get("model_identity"):
         raise QwenRuntimeAttestationError("provider model identity does not match the contract")
