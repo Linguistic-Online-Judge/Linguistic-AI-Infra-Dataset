@@ -134,8 +134,25 @@ ssh -L 8000:127.0.0.1:8000 75
 
 The aggregate JSON includes the model identity, runtime version, generation
 settings, prompt-envelope version, and SHA-256 identity of the exact student
-prompt. It still excludes prompt text, raw responses, model inputs, sample IDs,
-and gold data.
+prompt. OpenAI-compatible runs include `generation_diagnostics` only when
+`--generation-diagnostics` is explicitly enabled. This aggregate-only observation
+contains total execution time, request-latency summary, completion-token counts,
+response UTF-8 byte counts, normalized finish-reason counts, and parse-error
+counts. Providers may omit token usage or finish reason; the report records those
+values as missing rather than inventing them. It still excludes prompt text, raw
+responses, model inputs, sample IDs, and gold data.
+Diagnostics are not part of `ChallengeAggregateResult`, the evaluation identity,
+owner results, or leaderboard data, and the CLI does not persist them.
+
+The optional `--structured-json` flag is calibration-only. It asks compatible
+servers to enforce the response object and exact task-output length through a
+dynamic JSON schema. Enabling it changes model behavior and therefore the
+evaluation protocol; the report records `dynamic-response-constraint-v5`. The
+vLLM constraint uses exact-length JSON schemas for open-string tasks and a compact
+finite regex when XPOS has a fixed treebank inventory. The frozen Qwen Worker
+fails attestation if this mode is enabled. Production use requires a new
+evaluation identity and contract rather than adding the flag to an existing
+Worker command.
 
 The verified Qwen3.5 deployment procedure and first real-model result are in
 [`MODEL_RUNTIME.md`](MODEL_RUNTIME.md).

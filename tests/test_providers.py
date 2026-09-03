@@ -93,3 +93,14 @@ def test_model_request_exposes_response_schema_without_private_context() -> None
 def test_model_generation_requires_raw_string() -> None:
     with pytest.raises(TypeError, match="raw_text must be a string"):
         ModelGeneration(raw_text=123)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("generated_token_count", [-1, True, 1.5])
+def test_model_generation_rejects_invalid_token_count(generated_token_count) -> None:
+    with pytest.raises(ValueError, match="generated_token_count"):
+        ModelGeneration(raw_text="{}", generated_token_count=generated_token_count)
+
+
+def test_model_generation_rejects_unsafe_finish_reason() -> None:
+    with pytest.raises(ValueError, match="finish_reason"):
+        ModelGeneration(raw_text="{}", finish_reason="provider-private-detail")

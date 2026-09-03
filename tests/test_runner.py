@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import linguistic_oj.runner as runner_module
 from linguistic_oj.challenge import (
     ChallengeArtifacts,
     build_challenge,
@@ -17,7 +18,13 @@ from linguistic_oj.providers import (
     ProviderContractError,
 )
 from linguistic_oj.responses import TaskType
-from linguistic_oj.runner import JobDeadline, JobDeadlineExceeded, run_challenge
+from linguistic_oj.runner import (
+    GENERATION_DIAGNOSTICS_VERSION,
+    ChallengeRunDiagnostics,
+    JobDeadline,
+    JobDeadlineExceeded,
+    run_challenge,
+)
 from linguistic_oj.runner import main as runner_main
 
 
@@ -217,6 +224,74 @@ def test_provider_failure_aborts_without_partial_aggregate(tmp_path: Path) -> No
     with pytest.raises(RuntimeError, match="provider unavailable"):
         run_challenge(artifacts, provider, student_prompt="Segment the text.")
     assert provider.calls == 2
+
+
+def test_runner_collects_aggregate_only_generation_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(
+        tmp_path,
+        "segmentation",
+        [_sample("sample-a", "AB"), _sample("sample-b", "CD")],
+    )
+    generations = iter(
+        [
+            ModelGeneration(
+                raw_text='{"tokens":["A","B"]}',
+                generated_token_count=4,
+                finish_reason="stop",
+            ),
+            ModelGeneration(
+                raw_text="不是 JSON",
+                generated_token_count=2,
+                finish_reason="length",
+            ),
+        ]
+    )
+
+    class _DiagnosticsProvider:
+        def generate(self, request, *, timeout_seconds=None):
+            return next(generations)
+
+    times = iter([0.0, 1.0, 3.0, 4.0, 7.0, 8.0])
+    monkeypatch.setattr(runner_module, "monotonic", lambda: next(times))
+    diagnostics = ChallengeRunDiagnostics()
+
+    result = run_challenge(
+        artifacts,
+        _DiagnosticsProvider(),
+        student_prompt="Segment the text.",
+        diagnostics=diagnostics,
+    )
+    report = diagnostics.to_dict()
+
+    assert result.errors == {"INVALID_JSON": 1}
+    assert report["schema_version"] == GENERATION_DIAGNOSTICS_VERSION
+    assert report["execution_seconds"] == 8.0
+    assert report["request_count"] == 2
+    assert report["request_latency_seconds"] == {
+        "total": 5.0,
+        "minimum": 2.0,
+        "maximum": 3.0,
+        "mean": 2.5,
+    }
+    assert report["generated_tokens"] == {
+        "observed_count": 2,
+        "missing_count": 0,
+        "total": 6,
+        "maximum": 4,
+        "mean_observed": 3.0,
+    }
+    assert report["finish_reasons"] == {"length": 1, "stop": 1}
+    assert report["parse_errors"] == result.errors
+    assert report["response_utf8_bytes"]["total"] == sum(
+        len(value.encode("utf-8")) for value in ('{"tokens":["A","B"]}', "不是 JSON")
+    )
+    serialized = json.dumps(report, ensure_ascii=False)
+    assert "sample-a" not in serialized
+    assert "sample-b" not in serialized
+    assert "不是 JSON" not in serialized
 
 
 def test_runner_propagates_decreasing_whole_job_deadline(tmp_path: Path) -> None:
@@ -420,3 +495,41 @@ def test_cli_reports_prompt_identity_without_prompt_text(
     ).hexdigest()
     assert prompt_text not in captured.out
     assert captured.err == ""
+
+
+def test_cli_rejects_structured_mode_for_mock_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifacts = _artifacts(tmp_path, "segmentation")
+    public_path, private_path = write_challenge(
+        artifacts,
+        public_dir=tmp_path / "public",
+        private_dir=tmp_path / "private",
+    )
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("Segment the text.", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "runner",
+            "--public",
+            str(public_path),
+            "--private",
+            str(private_path),
+            "--dataset",
+            str(artifacts.dataset_path),
+            "--prompt-file",
+            str(prompt_path),
+            "--structured-json",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        runner_main()
+
+    captured = capsys.readouterr()
+    assert error.value.code == 1
+    assert "Evaluation failed: ValueError" in captured.err
+    assert captured.out == ""

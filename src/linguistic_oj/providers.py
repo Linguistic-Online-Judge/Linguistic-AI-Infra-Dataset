@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from threading import Event, Lock, Thread
 from time import monotonic
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -21,11 +24,205 @@ from .model_inputs import (
     TransliterationModelInput,
     canonicalize_model_input,
     model_input_matches_task,
+    response_expectations,
 )
 from .responses import TaskType, response_json_schema
 
 PROMPT_ENVELOPE_VERSION = "1.0"
+STRUCTURED_OUTPUT_CONTRACT_VERSION = "dynamic-response-constraint-v5"
+HDT_XPOS_TAG_INVENTORY_VERSION = "de-hdt-xpos-tags-v1"
+HDT_XPOS_TAG_INVENTORY_SHA256 = (
+    "1edae8cc60e60644fd70bd107832b9c317cf180b99f84bf499e080526ec1a073"
+)
+_XPOS_TAG_INVENTORIES = MappingProxyType(
+    {
+        ("German", "HDT"): (
+            "$(",
+            "$,",
+            "$.",
+            "ADJA",
+            "ADJD",
+            "ADV",
+            "APPO",
+            "APPR",
+            "APZR",
+            "ART",
+            "CARD",
+            "FM",
+            "ITJ",
+            "KOKOM",
+            "KON",
+            "KOUI",
+            "KOUS",
+            "NE",
+            "NN",
+            "PDAT",
+            "PDS",
+            "PIAT",
+            "PIDAT",
+            "PIS",
+            "PPER",
+            "PPOSAT",
+            "PRELAT",
+            "PRELS",
+            "PRF",
+            "PROAV",
+            "PTKA",
+            "PTKNEG",
+            "PTKVZ",
+            "PTKZU",
+            "PWAT",
+            "PWAV",
+            "PWS",
+            "TRUNC",
+            "VAFIN",
+            "VAINF",
+            "VAPP",
+            "VMFIN",
+            "VMINF",
+            "VVFIN",
+            "VVIMP",
+            "VVINF",
+            "VVIZU",
+            "VVPP",
+            "XY",
+        )
+    }
+)
+_hdt_inventory_sha256 = hashlib.sha256(
+    json.dumps(
+        _XPOS_TAG_INVENTORIES[("German", "HDT")],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
+if _hdt_inventory_sha256 != HDT_XPOS_TAG_INVENTORY_SHA256:
+    raise RuntimeError("HDT XPOS inventory does not match its frozen identity")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _json_value_matches_schema(
+    value: object,
+    schema: dict[str, Any],
+    root_schema: dict[str, Any],
+) -> bool:
+    reference = schema.get("$ref")
+    if isinstance(reference, str):
+        if not reference.startswith("#/"):
+            return False
+        target: object = root_schema
+        for raw_part in reference[2:].split("/"):
+            part = raw_part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or part not in target:
+                return False
+            target = target[part]
+        return isinstance(target, dict) and _json_value_matches_schema(
+            value,
+            target,
+            root_schema,
+        )
+
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if type(value) is not dict:
+            return False
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            return False
+        if any(key not in value for key in required):
+            return False
+        if schema.get("additionalProperties") is False and any(
+            key not in properties for key in value
+        ):
+            return False
+        return all(
+            key not in value
+            or (
+                isinstance(property_schema, dict)
+                and _json_value_matches_schema(value[key], property_schema, root_schema)
+            )
+            for key, property_schema in properties.items()
+        )
+    if schema_type == "array":
+        if type(value) is not list:
+            return False
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        item_schema = schema.get("items")
+        return isinstance(item_schema, dict) and all(
+            _json_value_matches_schema(item, item_schema, root_schema) for item in value
+        )
+    if schema_type == "string":
+        if type(value) is not str:
+            return False
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        pattern = schema.get("pattern")
+        return not isinstance(pattern, str) or re.search(pattern, value) is not None
+    if schema_type == "integer":
+        if type(value) is int:
+            number = value
+        elif isinstance(value, Decimal) and value.is_finite() and value == value.to_integral():
+            number = value
+        else:
+            return False
+        minimum = schema.get("minimum")
+        exclusive_minimum = schema.get("exclusiveMinimum")
+        maximum = schema.get("maximum")
+        exclusive_maximum = schema.get("exclusiveMaximum")
+        return (
+            (not isinstance(minimum, (int, float)) or number >= minimum)
+            and (
+                not isinstance(exclusive_minimum, (int, float))
+                or number > exclusive_minimum
+            )
+            and (not isinstance(maximum, (int, float)) or number <= maximum)
+            and (
+                not isinstance(exclusive_maximum, (int, float))
+                or number < exclusive_maximum
+            )
+        )
+    return False
+
+
 _PINNED_REVISION = re.compile(r"[0-9a-f]{40}")
+_SAFE_FINISH_REASONS = frozenset(
+    {
+        "abort",
+        "content_filter",
+        "error",
+        "function_call",
+        "length",
+        "other",
+        "repetition",
+        "stop",
+        "tool_calls",
+    }
+)
+_OPENAI_PROVIDER_IMMUTABLE_CONFIG_FIELDS = frozenset(
+    {
+        "_api_key",
+        "_config_frozen",
+        "_structured_json",
+        "base_url",
+        "identity",
+        "max_response_body_bytes",
+        "settings",
+        "timeout_seconds",
+    }
+)
 _PLATFORM_SYSTEM_PROMPT = """You are a linguistic analysis engine.
 The user message is a versioned JSON envelope created by the platform.
 Follow its task, input, and required_output_schema exactly.
@@ -104,10 +301,21 @@ class ModelRequest:
 @dataclass(frozen=True, slots=True)
 class ModelGeneration:
     raw_text: str
+    generated_token_count: int | None = None
+    finish_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.raw_text, str):
             raise TypeError("raw_text must be a string")
+        if self.generated_token_count is not None and (
+            type(self.generated_token_count) is not int or self.generated_token_count < 0
+        ):
+            raise ValueError("generated_token_count must be a non-negative integer or None")
+        if self.finish_reason is not None and (
+            not isinstance(self.finish_reason, str)
+            or self.finish_reason not in _SAFE_FINISH_REASONS
+        ):
+            raise ValueError("finish_reason must be a safe normalized category or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +511,44 @@ def deterministic_mock_tokenizer_identity() -> dict[str, str]:
 class OpenAICompatibleProvider:
     """Call a vLLM-style OpenAI chat-completions endpoint synchronously."""
 
+    __slots__ = (
+        "__dict__",
+        "_active_request",
+        "_api_key",
+        "_config_frozen",
+        "_request_lock",
+        "_structured_json",
+        "base_url",
+        "identity",
+        "max_response_body_bytes",
+        "settings",
+        "timeout_seconds",
+    )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        try:
+            config_frozen = object.__getattribute__(self, "_config_frozen")
+        except AttributeError:
+            config_frozen = False
+        if (
+            name in _OPENAI_PROVIDER_IMMUTABLE_CONFIG_FIELDS
+            and config_frozen
+        ):
+            raise AttributeError(f"provider configuration is frozen: {name}")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        try:
+            config_frozen = object.__getattribute__(self, "_config_frozen")
+        except AttributeError:
+            config_frozen = False
+        if (
+            name in _OPENAI_PROVIDER_IMMUTABLE_CONFIG_FIELDS
+            and config_frozen
+        ):
+            raise AttributeError(f"provider configuration is frozen: {name}")
+        object.__delattr__(self, name)
+
     def __init__(
         self,
         *,
@@ -312,6 +558,7 @@ class OpenAICompatibleProvider:
         timeout_seconds: float = 120.0,
         max_response_body_bytes: int = 32768,
         api_key: str | None = None,
+        structured_json: bool = False,
     ) -> None:
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("base_url must be a non-empty string")
@@ -337,15 +584,19 @@ class OpenAICompatibleProvider:
             raise ValueError("max_response_body_bytes must be a positive integer")
         if api_key is not None and (not isinstance(api_key, str) or not api_key.strip()):
             raise ValueError("api_key must be a non-empty string when provided")
+        if type(structured_json) is not bool:
+            raise TypeError("structured_json must be boolean")
 
         self.base_url = base_url.rstrip("/")
         self.identity = identity
         self.settings = settings or GenerationSettings()
         self.timeout_seconds = float(timeout_seconds)
         self.max_response_body_bytes = max_response_body_bytes
+        self._structured_json = structured_json
         self._api_key = api_key
         self._request_lock = Lock()
         self._active_request: object | None = None
+        self._config_frozen = True
 
     @property
     def has_active_request(self) -> bool:
@@ -353,6 +604,10 @@ class OpenAICompatibleProvider:
 
         with self._request_lock:
             return self._active_request is not None
+
+    @property
+    def structured_json(self) -> bool:
+        return self._structured_json
 
     def _request_body(self, request: ModelRequest) -> bytes:
         envelope = PromptEnvelope.from_request(request)
@@ -369,12 +624,50 @@ class OpenAICompatibleProvider:
                 "enable_thinking": self.settings.enable_thinking,
             },
         }
+        if self.structured_json:
+            payload["structured_outputs"] = self._structured_outputs(request)
         return json.dumps(
             payload,
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
+
+    @staticmethod
+    def _structured_outputs(request: ModelRequest) -> dict[str, Any]:
+        schema = request.response_schema
+        expected_count, _ = response_expectations(request.task, request.model_input)
+        xpos_inventory = _XPOS_TAG_INVENTORIES.get((request.language, request.treebank))
+        if (
+            request.task is TaskType.XPOS
+            and expected_count is not None
+            and xpos_inventory is not None
+        ):
+            tag = '"(?:' + "|".join(re.escape(value) for value in xpos_inventory) + ')"'
+            tags = tag
+            if expected_count > 1:
+                tags += f"(?:,{tag}){{{expected_count - 1}}}"
+            return {"regex": r'\{"tags":\[' + tags + r"\]\}"}
+        if expected_count is not None:
+            field_name = {
+                TaskType.UPOS: "tags",
+                TaskType.XPOS: "tags",
+                TaskType.DEPENDENCY: "arcs",
+                TaskType.TRANSLITERATION: "transliterations",
+            }[request.task]
+            try:
+                array_schema = schema["properties"][field_name]
+            except (KeyError, TypeError):
+                raise ProviderContractError(
+                    "response schema cannot express the required output length"
+                ) from None
+            if not isinstance(array_schema, dict):
+                raise ProviderContractError(
+                    "response schema cannot express the required output length"
+                )
+            array_schema["minItems"] = expected_count
+            array_schema["maxItems"] = expected_count
+        return {"json": schema}
 
     def served_model_ids(self) -> frozenset[str]:
         """Read the OpenAI-compatible model list during trusted worker startup."""
@@ -508,14 +801,69 @@ class OpenAICompatibleProvider:
             raise ProviderContractError("model service returned invalid JSON") from None
 
         try:
-            content = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError):
             raise ProviderContractError(
                 "model service response is missing choices[0].message.content"
             ) from None
         if not isinstance(content, str):
             raise ProviderContractError("model service message content must be a string")
-        return ModelGeneration(raw_text=content)
+        if self._structured_json:
+            self._validate_structured_content(request, content)
+
+        raw_finish_reason = choice.get("finish_reason")
+        finish_reason = (
+            raw_finish_reason
+            if isinstance(raw_finish_reason, str) and raw_finish_reason
+            else None
+        )
+        if finish_reason is not None and finish_reason not in _SAFE_FINISH_REASONS:
+            finish_reason = "other"
+
+        generated_token_count = None
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            reported_token_count = usage.get("completion_tokens")
+            if type(reported_token_count) is int and reported_token_count >= 0:
+                generated_token_count = reported_token_count
+
+        return ModelGeneration(
+            raw_text=content,
+            generated_token_count=generated_token_count,
+            finish_reason=finish_reason,
+        )
+
+    @staticmethod
+    def _validate_structured_content(request: ModelRequest, content: str) -> None:
+        constraint = OpenAICompatibleProvider._structured_outputs(request)
+        pattern = constraint.get("regex")
+        if isinstance(pattern, str):
+            if re.fullmatch(pattern, content) is None:
+                raise ProviderContractError(
+                    "model service did not satisfy the structured output constraint"
+                )
+            return
+
+        try:
+            payload = json.loads(
+                content,
+                parse_float=Decimal,
+                parse_constant=_reject_json_constant,
+            )
+        except (json.JSONDecodeError, ValueError):
+            raise ProviderContractError(
+                "model service did not satisfy the structured output constraint"
+            ) from None
+        schema = constraint.get("json")
+        if not isinstance(schema, dict) or not _json_value_matches_schema(
+            payload,
+            schema,
+            schema,
+        ):
+            raise ProviderContractError(
+                "model service did not satisfy the structured output constraint"
+            )
 
     def _read_response_body(self, response: object) -> bytes:
         headers = getattr(response, "headers", None)

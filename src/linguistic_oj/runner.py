@@ -5,12 +5,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from .aggregation import ChallengeAggregateResult, SampleEvaluationOutcome, aggregate_challenge
@@ -37,6 +40,7 @@ from .model_inputs import (
 )
 from .providers import (
     PROMPT_ENVELOPE_VERSION,
+    STRUCTURED_OUTPUT_CONTRACT_VERSION,
     DeterministicMockProvider,
     GenerationSettings,
     ModelGeneration,
@@ -67,6 +71,139 @@ class RunnerInvariantError(RuntimeError):
 
 class JobDeadlineExceeded(TimeoutError):
     """Raised when the complete evaluation job has no time remaining."""
+
+
+GENERATION_DIAGNOSTICS_VERSION = "generation-diagnostics-v1"
+
+
+@dataclass(slots=True)
+class ChallengeRunDiagnostics:
+    """Aggregate-only model runtime observations for one challenge run."""
+
+    _request_count: int = 0
+    _request_latency_seconds_total: float = 0.0
+    _request_latency_seconds_min: float | None = None
+    _request_latency_seconds_max: float | None = None
+    _generated_token_count_observed: int = 0
+    _generated_token_count_missing: int = 0
+    _generated_tokens_total: int = 0
+    _generated_tokens_max: int | None = None
+    _response_utf8_bytes_total: int = 0
+    _response_utf8_bytes_min: int | None = None
+    _response_utf8_bytes_max: int | None = None
+    _finish_reasons: Counter[str] = field(default_factory=Counter)
+    _parse_errors: Counter[str] = field(default_factory=Counter)
+    _execution_seconds: float | None = None
+
+    def record(
+        self,
+        generation: ModelGeneration,
+        outcome: SampleEvaluationOutcome,
+        *,
+        request_latency_seconds: float,
+    ) -> None:
+        if self._execution_seconds is not None:
+            raise RuntimeError("cannot record diagnostics after run completion")
+        if not isinstance(generation, ModelGeneration):
+            raise TypeError("generation must be ModelGeneration")
+        if not isinstance(outcome, SampleEvaluationOutcome):
+            raise TypeError("outcome must be SampleEvaluationOutcome")
+        if (
+            type(request_latency_seconds) not in {int, float}
+            or not math.isfinite(request_latency_seconds)
+            or request_latency_seconds < 0
+        ):
+            raise ValueError("request_latency_seconds must be finite and non-negative")
+
+        latency = float(request_latency_seconds)
+        response_bytes = len(generation.raw_text.encode("utf-8"))
+        self._request_count += 1
+        self._request_latency_seconds_total += latency
+        self._request_latency_seconds_min = (
+            latency
+            if self._request_latency_seconds_min is None
+            else min(self._request_latency_seconds_min, latency)
+        )
+        self._request_latency_seconds_max = (
+            latency
+            if self._request_latency_seconds_max is None
+            else max(self._request_latency_seconds_max, latency)
+        )
+        self._response_utf8_bytes_total += response_bytes
+        self._response_utf8_bytes_min = (
+            response_bytes
+            if self._response_utf8_bytes_min is None
+            else min(self._response_utf8_bytes_min, response_bytes)
+        )
+        self._response_utf8_bytes_max = (
+            response_bytes
+            if self._response_utf8_bytes_max is None
+            else max(self._response_utf8_bytes_max, response_bytes)
+        )
+
+        if generation.generated_token_count is None:
+            self._generated_token_count_missing += 1
+        else:
+            self._generated_token_count_observed += 1
+            self._generated_tokens_total += generation.generated_token_count
+            self._generated_tokens_max = (
+                generation.generated_token_count
+                if self._generated_tokens_max is None
+                else max(self._generated_tokens_max, generation.generated_token_count)
+            )
+        self._finish_reasons[generation.finish_reason or "missing"] += 1
+        if outcome.error_code is not None:
+            self._parse_errors[outcome.error_code.value] += 1
+
+    def complete(self, *, execution_seconds: float) -> None:
+        if self._execution_seconds is not None:
+            raise RuntimeError("run diagnostics are already complete")
+        if (
+            type(execution_seconds) not in {int, float}
+            or not math.isfinite(execution_seconds)
+            or execution_seconds < 0
+        ):
+            raise ValueError("execution_seconds must be finite and non-negative")
+        self._execution_seconds = float(execution_seconds)
+
+    def to_dict(self) -> dict[str, Any]:
+        observed_tokens = self._generated_token_count_observed
+        return {
+            "schema_version": GENERATION_DIAGNOSTICS_VERSION,
+            "execution_seconds": self._execution_seconds,
+            "request_count": self._request_count,
+            "request_latency_seconds": {
+                "total": self._request_latency_seconds_total,
+                "minimum": self._request_latency_seconds_min,
+                "maximum": self._request_latency_seconds_max,
+                "mean": (
+                    self._request_latency_seconds_total / self._request_count
+                    if self._request_count
+                    else None
+                ),
+            },
+            "generated_tokens": {
+                "observed_count": observed_tokens,
+                "missing_count": self._generated_token_count_missing,
+                "total": self._generated_tokens_total,
+                "maximum": self._generated_tokens_max,
+                "mean_observed": (
+                    self._generated_tokens_total / observed_tokens if observed_tokens else None
+                ),
+            },
+            "response_utf8_bytes": {
+                "total": self._response_utf8_bytes_total,
+                "minimum": self._response_utf8_bytes_min,
+                "maximum": self._response_utf8_bytes_max,
+                "mean": (
+                    self._response_utf8_bytes_total / self._request_count
+                    if self._request_count
+                    else None
+                ),
+            },
+            "finish_reasons": dict(sorted(self._finish_reasons.items())),
+            "parse_errors": dict(sorted(self._parse_errors.items())),
+        }
 
 
 def _utc_now() -> datetime:
@@ -266,6 +403,7 @@ def run_challenge(
     student_prompt: str,
     request_preflight: Callable[[tuple[ModelRequest, ...]], None] | None = None,
     deadline: JobDeadline | None = None,
+    diagnostics: ChallengeRunDiagnostics | None = None,
 ) -> ChallengeAggregateResult:
     """Run one complete challenge without returning partial results."""
 
@@ -277,7 +415,10 @@ def run_challenge(
         raise ValueError("student_prompt must be a non-empty string")
     if deadline is not None and not isinstance(deadline, JobDeadline):
         raise TypeError("deadline must be a JobDeadline")
+    if diagnostics is not None and not isinstance(diagnostics, ChallengeRunDiagnostics):
+        raise TypeError("diagnostics must be ChallengeRunDiagnostics")
 
+    execution_started = monotonic() if diagnostics is not None else None
     prepared_samples = _prepare_samples(artifacts)
     task = TaskType(artifacts.public.task)
     requests = tuple(
@@ -298,21 +439,35 @@ def run_challenge(
     outcomes: list[SampleEvaluationOutcome] = []
     for prepared, request in zip(prepared_samples, requests, strict=True):
         timeout_seconds = deadline.require_remaining() if deadline is not None else None
+        request_started = monotonic() if diagnostics is not None else None
         generation = provider.generate(request, timeout_seconds=timeout_seconds)
+        request_finished = monotonic() if diagnostics is not None else None
         if not isinstance(generation, ModelGeneration):
             raise ProviderContractError("provider must return ModelGeneration")
         if deadline is not None:
             deadline.require_remaining()
-        outcomes.append(
-            evaluate_raw_response(
-                sample=prepared.dataset_sample,
-                manifest_sample=prepared.manifest_sample,
-                task=task,
-                model_input=prepared.model_input,
-                raw_response=generation.raw_text,
-            )
+        outcome = evaluate_raw_response(
+            sample=prepared.dataset_sample,
+            manifest_sample=prepared.manifest_sample,
+            task=task,
+            model_input=prepared.model_input,
+            raw_response=generation.raw_text,
         )
-    return aggregate_challenge(artifacts, outcomes)
+        outcomes.append(outcome)
+        if diagnostics is not None:
+            if request_started is None or request_finished is None:
+                raise RunnerInvariantError("diagnostic timer was not initialized")
+            diagnostics.record(
+                generation,
+                outcome,
+                request_latency_seconds=request_finished - request_started,
+            )
+    aggregate = aggregate_challenge(artifacts, outcomes)
+    if diagnostics is not None:
+        if execution_started is None:
+            raise RunnerInvariantError("execution timer was not initialized")
+        diagnostics.complete(execution_seconds=monotonic() - execution_started)
+    return aggregate
 
 
 def parse_args() -> argparse.Namespace:
@@ -329,11 +484,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-key-env")
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--max-tokens", type=int, default=1024)
+    parser.add_argument(
+        "--structured-json",
+        action="store_true",
+        help="Calibration-only dynamic JSON schema; changes the evaluation protocol.",
+    )
+    parser.add_argument(
+        "--generation-diagnostics",
+        action="store_true",
+        help="Include non-deterministic aggregate timing and generation diagnostics.",
+    )
     return parser.parse_args()
 
 
 def _provider_from_args(args: argparse.Namespace) -> ModelProvider:
     if args.provider == "mock":
+        if args.structured_json:
+            raise ValueError("structured JSON requires the openai provider")
         return DeterministicMockProvider()
 
     required = {
@@ -363,6 +530,7 @@ def _provider_from_args(args: argparse.Namespace) -> ModelProvider:
         settings=GenerationSettings(max_tokens=args.max_tokens),
         timeout_seconds=args.timeout_seconds,
         api_key=api_key,
+        structured_json=args.structured_json,
     )
 
 
@@ -376,10 +544,17 @@ def main() -> None:
             dataset_path=args.dataset,
         )
         provider = _provider_from_args(args)
+        diagnostics = (
+            ChallengeRunDiagnostics()
+            if args.generation_diagnostics
+            and isinstance(provider, OpenAICompatibleProvider)
+            else None
+        )
         result = run_challenge(
             artifacts,
             provider,
             student_prompt=student_prompt,
+            diagnostics=diagnostics,
         )
         report = result.to_dict()
         report["student_prompt_sha256"] = hashlib.sha256(
@@ -389,6 +564,12 @@ def main() -> None:
             report["model_identity"] = provider.identity.to_dict()
             report["generation_settings"] = provider.settings.to_dict()
             report["prompt_envelope_version"] = PROMPT_ENVELOPE_VERSION
+            if provider.structured_json:
+                report["structured_output_contract_version"] = (
+                    STRUCTURED_OUTPUT_CONTRACT_VERSION
+                )
+            if diagnostics is not None:
+                report["generation_diagnostics"] = diagnostics.to_dict()
         print(
             json.dumps(
                 report,
