@@ -18,7 +18,7 @@ from typing import Any, Protocol
 from .mvp_contract import EvaluationContract, canonical_json
 
 SQLITE_LOCK_TIMEOUT_SECONDS = 5.0
-SQLITE_SCHEMA_VERSION = 2
+SQLITE_SCHEMA_VERSION = 3
 
 
 class SubmissionStatus(StrEnum):
@@ -27,6 +27,11 @@ class SubmissionStatus(StrEnum):
     REJECTED = "rejected"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+class UserRole(StrEnum):
+    USER = "user"
+    ADMIN = "admin"
 
 
 class IdempotencyConflictError(ValueError):
@@ -61,6 +66,7 @@ class UserRecord:
     user_id: str
     auth_subject: str
     public_handle: str
+    role: UserRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +156,13 @@ class SubmissionStoreProtocol(Protocol):
 
     def health_check(self) -> None: ...
 
-    def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord: ...
+    def register_user(
+        self,
+        *,
+        auth_subject: str,
+        public_handle: str,
+        role: UserRole = UserRole.USER,
+    ) -> UserRecord: ...
 
     def user_by_subject(self, auth_subject: str) -> UserRecord | None: ...
 
@@ -311,9 +323,15 @@ CREATE INDEX IF NOT EXISTS idx_results_leaderboard_v2
 ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC, submission_id ASC);
 """
 
+_SCHEMA_V3 = """
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
+CHECK (role IN ('user', 'admin'));
+"""
+
 _SQLITE_MIGRATIONS = {
     1: _SCHEMA_V1,
     2: _SCHEMA_V2,
+    3: _SCHEMA_V3,
 }
 _EXPECTED_SQLITE_SCHEMA_VERSIONS = tuple(range(1, SQLITE_SCHEMA_VERSION + 1))
 
@@ -444,31 +462,45 @@ class SubmissionStore:
             if versions != _EXPECTED_SQLITE_SCHEMA_VERSIONS:
                 raise RuntimeError(f"unsupported SQLite schema versions: {versions}")
 
-    def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord:
+    def register_user(
+        self,
+        *,
+        auth_subject: str,
+        public_handle: str,
+        role: UserRole = UserRole.USER,
+    ) -> UserRecord:
         if not auth_subject or not public_handle or "@" in public_handle:
             raise ValueError("user subject and non-email public handle are required")
+        if not isinstance(role, UserRole):
+            raise TypeError("role must be a UserRole")
         user_id = uuid.uuid4().hex
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
-                INSERT INTO users(id, auth_subject, public_handle, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO users(id, auth_subject, public_handle, role, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (user_id, auth_subject, public_handle, _timestamp(_utc_now())),
+                (user_id, auth_subject, public_handle, role.value, _timestamp(_utc_now())),
             )
             connection.commit()
-        return UserRecord(user_id, auth_subject, public_handle)
+        return UserRecord(user_id, auth_subject, public_handle, role)
 
     def user_by_subject(self, auth_subject: str) -> UserRecord | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT id, auth_subject, public_handle FROM users WHERE auth_subject = ?",
+                "SELECT id, auth_subject, public_handle, role FROM users "
+                "WHERE auth_subject = ?",
                 (auth_subject,),
             ).fetchone()
         if row is None:
             return None
-        return UserRecord(row["id"], row["auth_subject"], row["public_handle"])
+        return UserRecord(
+            row["id"],
+            row["auth_subject"],
+            row["public_handle"],
+            UserRole(row["role"]),
+        )
 
     def create_submission(
         self,

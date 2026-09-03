@@ -8,6 +8,21 @@ deterministic score, inspect safe aggregate feedback, and appear on a leaderboar
 Public UD development challenges are reproducible rather than secret; strict
 assessments use unpublished data. No gold answer is sent to the browser.
 
+## Confirmed account and access boundary
+
+- The public service does not depend on the school eHall identity system.
+- V1 uses only two account roles: general user and administrator. It does not
+  create separate student and teacher roles.
+- Authentication must still be verified by the server before protected data is
+  returned. The final registration and credential method remains undecided.
+- A later public release is expected to run on an overseas server, so an internal
+  campus-network assumption must not be used as a security control.
+- Frontend visual design is owned by the project team. The East China Normal
+  University online judge is an optional reference rather than a requirement.
+
+These decisions are recorded in ADR 0002. Registration fields and administrator
+capabilities must not be invented until they are approved.
+
 ## Gate 0: security and specification
 
 - Make the repository private before treating the checked-in test data as hidden.
@@ -98,6 +113,7 @@ deterministic code-point preflight and cannot write to the Qwen partition.
 
 - Create the FastAPI application and database migrations.
 - Add users, challenges, model configurations, submissions, and result tables.
+- Store an explicit general-user or administrator role for every account.
 - Add submission, status, result, and leaderboard endpoints.
 - Run evaluations in a worker; never block an HTTP request on model inference.
 - Add rate limits, retry policy, idempotency, and safe logs.
@@ -108,7 +124,8 @@ Implemented so far: FastAPI app factory, SQLite schema migration, authenticated
 owner-scoped submission/status/result routes, transactional idempotency and
 outbox, identity-routed in-memory and Redis Streams queues, explicit fenced Mock
 Worker execution, bounded complete-job retries, aggregate-only results, safe
-failure DTOs, and version-isolated leaderboards. The integration suite covers
+failure DTOs, version-isolated leaderboards, explicit `user`/`admin` account roles,
+and an owner-safe current-user endpoint. The integration suite covers
 `202 queued`, replay/conflict behavior, cross-owner `404`, preflight rejection,
 duplicate delivery, visibility recovery, retry success/exhaustion, safe platform
 failure, and Mock/Qwen identity separation. CI validates Redis behavior against a

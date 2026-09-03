@@ -37,7 +37,7 @@ from linguistic_oj.submission_jobs import (
     QwenSubmissionWorker,
     SubmissionWorker,
 )
-from linguistic_oj.submission_store import SubmissionStore
+from linguistic_oj.submission_store import SubmissionStore, UserRole
 
 ROOT = Path(__file__).parents[1]
 
@@ -385,6 +385,18 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
     }
 
     with TestClient(app) as client:
+        current_user = client.get(
+            "/v1/users/me",
+            headers=_headers("subject-alice"),
+        )
+        assert current_user.status_code == 200
+        assert current_user.json() == {
+            "user_id": store.user_by_subject("subject-alice").user_id,
+            "public_handle": "alice",
+            "role": UserRole.USER.value,
+        }
+        _assert_no_private_fields(current_user.json())
+
         created = client.post(
             "/v1/submissions",
             headers=_headers("subject-alice", "submission-1"),
