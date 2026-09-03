@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from ipaddress import ip_address
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 POSTGRES_SCHEMA_VERSION = 2
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
@@ -12,6 +14,8 @@ POSTGRES_SESSION_OPTIONS = (
     "-c statement_timeout=10000 "
     "-c idle_in_transaction_session_timeout=15000"
 )
+_MAX_POSTGRES_CREDENTIAL_BYTES = 4096
+_SECURE_POSTGRES_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
 
 _EXPECTED_SCHEMA_VERSIONS = tuple(range(1, POSTGRES_SCHEMA_VERSION + 1))
 
@@ -95,13 +99,70 @@ _POSTGRES_MIGRATIONS = {
 }
 
 
+def _is_loopback_postgres_host(hostname: str | None) -> bool:
+    if hostname is None or hostname == "localhost" or hostname.startswith("/"):
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def validate_postgres_url(database_url: str) -> str:
     if not isinstance(database_url, str) or not database_url.strip():
         raise ValueError("PostgreSQL database URL must not be empty")
     parsed = urlparse(database_url)
     if parsed.scheme not in {"postgres", "postgresql"} or parsed.path in {"", "/"}:
         raise ValueError("database URL must be a PostgreSQL URL with a database name")
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    host_parameters = [*query.get("host", []), *query.get("hostaddr", [])]
+    if any(
+        not _is_loopback_postgres_host(host)
+        for parameter in host_parameters
+        for host in parameter.split(",")
+    ) or (not host_parameters and not _is_loopback_postgres_host(parsed.hostname)):
+        ssl_modes = query.get("sslmode", [])
+        if len(ssl_modes) != 1 or ssl_modes[0] not in _SECURE_POSTGRES_SSL_MODES:
+            raise ValueError(
+                "non-loopback PostgreSQL connections require a secure sslmode"
+            )
     return database_url
+
+
+def resolve_postgres_url(
+    *,
+    inline_url: str | None,
+    credential_file: Path | None,
+    allow_inline_credentials: bool,
+) -> str:
+    """Resolve a PostgreSQL URL without exposing production secrets in argv."""
+
+    if (inline_url is None) == (credential_file is None):
+        raise ValueError("configure exactly one PostgreSQL URL source")
+    if credential_file is not None:
+        try:
+            if not credential_file.is_file():
+                raise ValueError("PostgreSQL credential path must be a regular file")
+            if credential_file.stat().st_size > _MAX_POSTGRES_CREDENTIAL_BYTES:
+                raise ValueError("PostgreSQL credential file is too large")
+            database_url = credential_file.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as error:
+            raise ValueError("PostgreSQL credential file cannot be read") from error
+        if not database_url or "\n" in database_url or "\r" in database_url:
+            raise ValueError("PostgreSQL credential file must contain exactly one URL")
+    else:
+        database_url = inline_url
+    if not isinstance(database_url, str) or not database_url:
+        raise ValueError("PostgreSQL database URL must not be empty")
+    parsed = urlparse(database_url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if not allow_inline_credentials and inline_url is not None and (
+        parsed.password is not None or "password" in query
+    ):
+        raise ValueError(
+            "production PostgreSQL credentials must use --postgres-database-url-file"
+        )
+    return validate_postgres_url(database_url)
 
 
 def migrate_postgres(database_url: str, *, applied_at: str) -> None:

@@ -384,12 +384,7 @@ def test_postgres_structured_quota_and_queued_deadline_sweep() -> None:
             "WHERE id = %s",
             (created.submission.submission_id,),
         )
-    assert (
-        store.expire_queued_deadlines(
-            evaluation_identity_sha256=contract.evaluation_identity_sha256
-        )
-        == 1
-    )
+    assert store.expire_queued_deadlines() == 1
     result = store.owner_result(created.submission.submission_id, user.user_id)
     assert result is not None and result.failure is not None
     assert result.failure["code"] == "JOB_DEADLINE"

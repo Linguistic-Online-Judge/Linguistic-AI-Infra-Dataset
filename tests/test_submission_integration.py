@@ -1330,6 +1330,37 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
         assert expired.failure["retryable"] is False
 
 
+def test_queued_deadline_sweep_crosses_identity_partitions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [datetime(2026, 8, 30, tzinfo=UTC)]
+    monkeypatch.setattr(submission_store_module, "_utc_now", lambda: now[0])
+    artifacts = _artifacts(tmp_path)
+    contracts = [
+        _mock_contract(artifacts, contract_version=f"mock-evaluation-v{version}")
+        for version in (1, 2)
+    ]
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    submission_ids = []
+    for index, contract in enumerate(contracts, start=1):
+        created = store.create_submission(
+            user=user,
+            idempotency_key=f"queued-deadline-{index}",
+            student_prompt="Return JSON.",
+            contract=contract,
+        )
+        submission_ids.append(created.submission.submission_id)
+
+    now[0] += timedelta(seconds=301)
+    assert store.expire_queued_deadlines() == 2
+    for submission_id in submission_ids:
+        expired = store.owner_result(submission_id, user.user_id)
+        assert expired is not None and expired.failure is not None
+        assert expired.failure["code"] == "JOB_DEADLINE"
+
+
 def test_terminal_timestamp_is_sampled_after_sqlite_write_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
