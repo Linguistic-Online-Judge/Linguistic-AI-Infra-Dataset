@@ -186,7 +186,7 @@ class SubmissionStoreProtocol(Protocol):
 
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool: ...
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int: ...
+    def expire_leases(self) -> int: ...
 
     def expire_queued_deadlines(self) -> int: ...
 
@@ -756,7 +756,7 @@ class SubmissionStore:
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool:
         return claim.deadline_at <= _timestamp(_utc_now())
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_leases(self) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -771,9 +771,8 @@ class SubmissionStore:
                     END,
                     failure_retryable = 0
                 WHERE status = 'running' AND lease_expires_at <= ?
-                      AND evaluation_identity_sha256 = ?
                 """,
-                (now_text, now_text, now_text, evaluation_identity_sha256),
+                (now_text, now_text, now_text),
             )
             connection.commit()
         return updated.rowcount

@@ -36,6 +36,20 @@ def test_validate_postgres_url_cannot_bypass_tls_with_query_host() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "postgresql:///linguistic_oj",
+        "postgresql:///linguistic_oj?service=remote",
+    ),
+)
+def test_validate_postgres_url_rejects_ambient_host_resolution(
+    database_url: str,
+) -> None:
+    with pytest.raises(ValueError, match="explicit host|service indirection"):
+        validate_postgres_url(database_url)
+
+
 def test_resolve_postgres_url_reads_production_credentials_from_file(
     tmp_path: Path,
 ) -> None:

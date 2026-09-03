@@ -328,9 +328,7 @@ class _SubmissionWorkerCore:
         if now < self._next_receive_at:
             return False
         if now >= self._next_lease_sweep_at:
-            self._store.expire_leases(
-                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-            )
+            self._store.expire_leases()
             self._store.expire_queued_deadlines()
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
@@ -383,9 +381,7 @@ class _SubmissionWorkerCore:
             )
         except (TokenLimitExceeded, QwenTokenLimitExceeded):
             if not self._store.complete_rejected(claim):
-                self._store.expire_leases(
-                    evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-                )
+                self._store.expire_leases()
             self._queue.ack(delivery)
             return True
         except JobDeadlineExceeded:
@@ -474,9 +470,7 @@ class _SubmissionWorkerCore:
             retryable=retryable,
         )
         if not completed:
-            self._store.expire_leases(
-                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-            )
+            self._store.expire_leases()
         return completed
 
     def _request_retry_allowed(self, termination_confirmed: bool) -> bool:

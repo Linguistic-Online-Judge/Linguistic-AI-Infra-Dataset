@@ -289,7 +289,7 @@ class PostgresSubmissionStore:
             with connection.cursor() as cursor:
                 return claim.deadline_at <= _timestamp(self._database_now(cursor))
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_leases(self) -> int:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 now_text = _timestamp(self._database_now(cursor))
@@ -298,9 +298,8 @@ class PostgresSubmissionStore:
                     "lease_token = NULL, lease_expires_at = NULL, "
                     "failure_code = CASE WHEN deadline_at <= %s THEN 'JOB_DEADLINE' "
                     "ELSE 'WORKER_CRASH' END, failure_retryable = FALSE "
-                    "WHERE status = 'running' AND lease_expires_at <= %s "
-                    "AND evaluation_identity_sha256 = %s",
-                    (now_text, now_text, now_text, evaluation_identity_sha256),
+                    "WHERE status = 'running' AND lease_expires_at <= %s",
+                    (now_text, now_text, now_text),
                 )
                 return cursor.rowcount
 
