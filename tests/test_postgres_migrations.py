@@ -50,6 +50,22 @@ def test_validate_postgres_url_rejects_ambient_host_resolution(
         validate_postgres_url(database_url)
 
 
+def test_validate_postgres_url_rejects_multihost_authority() -> None:
+    with pytest.raises(ValueError, match="exactly one host"):
+        validate_postgres_url(
+            "postgresql://judge@127.0.0.1:5432,db.example:5432/linguistic_oj"
+        )
+
+
+def test_validate_postgres_url_rejects_libpq_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PGHOSTADDR", "203.0.113.10")
+
+    with pytest.raises(ValueError, match=r"PG\* connection environment"):
+        validate_postgres_url("postgresql://judge@127.0.0.1/linguistic_oj")
+
+
 def test_resolve_postgres_url_reads_production_credentials_from_file(
     tmp_path: Path,
 ) -> None:
@@ -70,6 +86,21 @@ def test_resolve_postgres_url_rejects_inline_production_password() -> None:
     with pytest.raises(ValueError, match="credential"):
         resolve_postgres_url(
             inline_url="postgresql://judge:secret@127.0.0.1/linguistic_oj",
+            credential_file=None,
+            allow_inline_credentials=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "secret_parameter",
+    ("sslpassword=secret", "oauth_client_secret=secret", "scram_client_key=secret"),
+)
+def test_resolve_postgres_url_rejects_inline_extended_secrets(
+    secret_parameter: str,
+) -> None:
+    with pytest.raises(ValueError, match="credential"):
+        resolve_postgres_url(
+            inline_url=f"postgresql://judge@127.0.0.1/linguistic_oj?{secret_parameter}",
             credential_file=None,
             allow_inline_credentials=False,
         )
