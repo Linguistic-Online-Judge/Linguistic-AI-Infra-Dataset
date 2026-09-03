@@ -9,6 +9,7 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,55 @@ class EvaluationPreflightError(ValueError):
 
 class RunnerInvariantError(RuntimeError):
     """Raised when trusted platform components violate their internal contract."""
+
+
+class JobDeadlineExceeded(TimeoutError):
+    """Raised when the complete evaluation job has no time remaining."""
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class JobDeadline:
+    """One absolute UTC deadline shared by every sample and retry attempt."""
+
+    expires_at: datetime
+    clock: Callable[[], datetime] = _utc_now
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.expires_at, datetime) or self.expires_at.tzinfo is None:
+            raise ValueError("expires_at must be a timezone-aware datetime")
+        if not callable(self.clock):
+            raise TypeError("clock must be callable")
+
+    @classmethod
+    def from_timestamp(
+        cls,
+        value: str,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> JobDeadline:
+        if not isinstance(value, str):
+            raise TypeError("deadline timestamp must be a string")
+        try:
+            expires_at = datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError("deadline timestamp must be ISO 8601") from None
+        return cls(expires_at=expires_at, clock=clock)
+
+    def remaining_seconds(self) -> float:
+        now = self.clock()
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise RuntimeError("deadline clock must return a timezone-aware datetime")
+        return (self.expires_at - now).total_seconds()
+
+    def require_remaining(self) -> float:
+        remaining = self.remaining_seconds()
+        if remaining <= 0:
+            raise JobDeadlineExceeded("evaluation job deadline expired")
+        return remaining
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +265,7 @@ def run_challenge(
     *,
     student_prompt: str,
     request_preflight: Callable[[tuple[ModelRequest, ...]], None] | None = None,
+    deadline: JobDeadline | None = None,
 ) -> ChallengeAggregateResult:
     """Run one complete challenge without returning partial results."""
 
@@ -224,6 +275,8 @@ def run_challenge(
         raise TypeError("provider must implement ModelProvider")
     if not isinstance(student_prompt, str) or not student_prompt.strip():
         raise ValueError("student_prompt must be a non-empty string")
+    if deadline is not None and not isinstance(deadline, JobDeadline):
+        raise TypeError("deadline must be a JobDeadline")
 
     prepared_samples = _prepare_samples(artifacts)
     task = TaskType(artifacts.public.task)
@@ -239,12 +292,17 @@ def run_challenge(
     )
     if request_preflight is not None:
         request_preflight(requests)
+    if deadline is not None:
+        deadline.require_remaining()
 
     outcomes: list[SampleEvaluationOutcome] = []
     for prepared, request in zip(prepared_samples, requests, strict=True):
-        generation = provider.generate(request)
+        timeout_seconds = deadline.require_remaining() if deadline is not None else None
+        generation = provider.generate(request, timeout_seconds=timeout_seconds)
         if not isinstance(generation, ModelGeneration):
             raise ProviderContractError("provider must return ModelGeneration")
+        if deadline is not None:
+            deadline.require_remaining()
         outcomes.append(
             evaluate_raw_response(
                 sample=prepared.dataset_sample,

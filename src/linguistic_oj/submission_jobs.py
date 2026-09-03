@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Lock
 from time import monotonic
 from typing import Protocol
@@ -16,14 +18,27 @@ from .providers import (
     DeterministicMockProvider,
     ModelProvider,
     ModelRequest,
+    OpenAICompatibleProvider,
     PromptEnvelope,
     ProviderContractError,
+    ProviderTimeoutError,
     ProviderTransportError,
     deterministic_mock_generation_settings,
     deterministic_mock_model_identity,
     deterministic_mock_tokenizer_identity,
 )
-from .runner import EvaluationPreflightError, run_challenge
+from .qwen_runtime import (
+    QWEN_EVALUATION_CONTRACT_VERSION,
+    QwenTokenizerPreflight,
+    QwenTokenLimitExceeded,
+    attest_qwen_runtime_from_snapshot,
+)
+from .runner import (
+    EvaluationPreflightError,
+    JobDeadline,
+    JobDeadlineExceeded,
+    run_challenge,
+)
 from .submission_store import (
     SQLITE_LOCK_TIMEOUT_SECONDS,
     ClaimedSubmission,
@@ -32,6 +47,9 @@ from .submission_store import (
 
 _CLAIM_PROCESSING_BUDGET_SECONDS = 5.0
 _VISIBILITY_SAFETY_SECONDS = 5.0
+QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS = int(
+    SQLITE_LOCK_TIMEOUT_SECONDS + _CLAIM_PROCESSING_BUDGET_SECONDS + _VISIBILITY_SAFETY_SECONDS
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,7 +245,26 @@ class MockRequestPreflight:
                 raise TokenLimitExceeded("rendered Mock input exceeds the context window")
 
 
-class SubmissionWorker:
+def _artifacts_match_contract(
+    artifacts: ChallengeArtifacts,
+    contract: EvaluationContract,
+) -> bool:
+    identity = contract.evaluation_identity
+    return (
+        artifacts.public.challenge_id == contract.challenge_id
+        and artifacts.public.status == contract.catalog_status
+        and artifacts.public.dataset_sha256 == identity.get("dataset_sha256")
+        and artifacts.public.selection_sha256 == identity.get("selection_sha256")
+        and artifacts.public.task == identity.get("task")
+        and artifacts.public.response_schema_version
+        == identity.get("response_schema_version")
+        and identity.get("scorer_version") == SCORER_VERSION
+        and identity.get("aggregation_version") == AGGREGATION_VERSION
+        and identity.get("prompt_envelope_version") == PROMPT_ENVELOPE_VERSION
+    )
+
+
+class _SubmissionWorkerCore:
     def __init__(
         self,
         *,
@@ -236,14 +273,12 @@ class SubmissionWorker:
         contract: EvaluationContract,
         artifacts: ChallengeArtifacts,
         provider: ModelProvider,
+        lease_seconds: int,
+        request_preflight: Callable[[tuple[ModelRequest, ...]], None],
+        require_termination_confirmation: bool,
     ) -> None:
-        if not isinstance(provider, DeterministicMockProvider):
-            raise ValueError("the Mock submission slice requires DeterministicMockProvider")
-        if not contract.uses_mock_runtime:
-            raise ValueError("the deterministic Mock provider requires a mock evaluation identity")
         if queue.routing_key != contract.contract_snapshot_sha256:
             raise ValueError("queue does not match the evaluation contract")
-        lease_seconds = min(30, contract.job_deadline_seconds)
         minimum_visibility = (
             lease_seconds
             + SQLITE_LOCK_TIMEOUT_SECONDS
@@ -255,24 +290,7 @@ class SubmissionWorker:
                 "queue visibility must cover claim acquisition and exceed the database "
                 "lease by five seconds"
             )
-        identity = contract.evaluation_identity
-        if (
-            artifacts.public.challenge_id != contract.challenge_id
-            or artifacts.public.status != contract.catalog_status
-            or artifacts.public.dataset_sha256 != identity.get("dataset_sha256")
-            or artifacts.public.selection_sha256 != identity.get("selection_sha256")
-            or artifacts.public.task != identity.get("task")
-            or artifacts.public.response_schema_version
-            != identity.get("response_schema_version")
-            or identity.get("scorer_version") != SCORER_VERSION
-            or identity.get("aggregation_version") != AGGREGATION_VERSION
-            or identity.get("prompt_envelope_version") != PROMPT_ENVELOPE_VERSION
-            or identity.get("model_identity") != deterministic_mock_model_identity()
-            or identity.get("generation_settings")
-            != deterministic_mock_generation_settings()
-            or identity.get("tokenizer_identity")
-            != deterministic_mock_tokenizer_identity()
-        ):
+        if not _artifacts_match_contract(artifacts, contract):
             raise ValueError("challenge artifacts do not match the evaluation contract")
         self._store = store
         self._queue = queue
@@ -280,9 +298,17 @@ class SubmissionWorker:
         self._artifacts = artifacts
         self._provider = provider
         self._lease_seconds = lease_seconds
-        self._request_preflight = MockRequestPreflight(contract)
+        self._request_preflight = request_preflight
+        self._require_termination_confirmation = require_termination_confirmation
 
     def run_once(self) -> bool:
+        if (
+            self._require_termination_confirmation
+            and isinstance(self._provider, OpenAICompatibleProvider)
+            and self._provider.has_active_request
+        ):
+            # Do not claim unrelated work while an ambiguous remote request remains live.
+            return False
         self._store.expire_leases(
             evaluation_identity_sha256=self._contract.evaluation_identity_sha256
         )
@@ -307,7 +333,9 @@ class SubmissionWorker:
             max_running_per_user=self._contract.max_running_submissions_per_user,
         )
         if claim_attempt.claim is None:
-            if not claim_attempt.retry_later:
+            if claim_attempt.retry_later:
+                self._queue.nack(delivery)
+            else:
                 self._queue.ack(delivery)
             return False
         claim = claim_attempt.claim
@@ -329,19 +357,41 @@ class SubmissionWorker:
                 self._provider,
                 student_prompt=claim.student_prompt,
                 request_preflight=self._request_preflight,
+                deadline=JobDeadline.from_timestamp(claim.deadline_at),
             )
-        except TokenLimitExceeded:
+        except (TokenLimitExceeded, QwenTokenLimitExceeded):
             if not self._store.complete_rejected(claim):
                 self._store.expire_leases(
                     evaluation_identity_sha256=self._contract.evaluation_identity_sha256
                 )
             self._queue.ack(delivery)
             return True
-        except TimeoutError:
-            self._handle_failure(delivery, claim, "PROVIDER_TIMEOUT")
+        except JobDeadlineExceeded:
+            self._handle_failure(delivery, claim, "JOB_DEADLINE")
             return True
-        except ProviderTransportError:
-            self._handle_failure(delivery, claim, "PROVIDER_TRANSPORT")
+        except ProviderTimeoutError as error:
+            self._handle_failure(
+                delivery,
+                claim,
+                "PROVIDER_TIMEOUT",
+                retry_allowed=self._request_retry_allowed(error.termination_confirmed),
+            )
+            return True
+        except TimeoutError:
+            self._handle_failure(
+                delivery,
+                claim,
+                "PROVIDER_TIMEOUT",
+                retry_allowed=not self._require_termination_confirmation,
+            )
+            return True
+        except ProviderTransportError as error:
+            self._handle_failure(
+                delivery,
+                claim,
+                "PROVIDER_TRANSPORT",
+                retry_allowed=self._request_retry_allowed(error.termination_confirmed),
+            )
             return True
         except EvaluationPreflightError:
             self._handle_failure(delivery, claim, "DATASET_INTEGRITY")
@@ -378,12 +428,17 @@ class SubmissionWorker:
         delivery: JobDelivery,
         claim: ClaimedSubmission,
         code: str,
+        *,
+        retry_allowed: bool = True,
     ) -> None:
-        if code in self._contract.retryable_failure_codes and self._store.retry_submission(
-            claim,
-            max_attempts=self._contract.max_attempts,
+        if (
+            retry_allowed
+            and code in self._contract.retryable_failure_codes
+            and self._store.retry_submission(
+                claim,
+                max_attempts=self._contract.max_attempts,
+            )
         ):
-            # The synchronous provider call has returned, so no prior call remains in flight.
             self._queue.nack(delivery)
             return
         self._fail(claim, code, retryable=False)
@@ -401,3 +456,84 @@ class SubmissionWorker:
                 evaluation_identity_sha256=self._contract.evaluation_identity_sha256
             )
         return completed
+
+    def _request_retry_allowed(self, termination_confirmed: bool) -> bool:
+        return not self._require_termination_confirmation or termination_confirmed
+
+
+class SubmissionWorker(_SubmissionWorkerCore):
+    """Mock-only worker kept separate from the attested Qwen runtime."""
+
+    def __init__(
+        self,
+        *,
+        store: SubmissionStore,
+        queue: JobQueue,
+        contract: EvaluationContract,
+        artifacts: ChallengeArtifacts,
+        provider: ModelProvider,
+    ) -> None:
+        if not isinstance(provider, DeterministicMockProvider):
+            raise ValueError("the Mock submission slice requires DeterministicMockProvider")
+        if not contract.uses_mock_runtime:
+            raise ValueError("the deterministic Mock provider requires a mock evaluation identity")
+        identity = contract.evaluation_identity
+        if (
+            identity.get("model_identity") != deterministic_mock_model_identity()
+            or identity.get("generation_settings")
+            != deterministic_mock_generation_settings()
+            or identity.get("tokenizer_identity")
+            != deterministic_mock_tokenizer_identity()
+        ):
+            raise ValueError("challenge artifacts do not match the evaluation contract")
+        super().__init__(
+            store=store,
+            queue=queue,
+            contract=contract,
+            artifacts=artifacts,
+            provider=provider,
+            lease_seconds=min(30, contract.job_deadline_seconds),
+            request_preflight=MockRequestPreflight(contract),
+            require_termination_confirmation=False,
+        )
+
+
+class QwenSubmissionWorker(_SubmissionWorkerCore):
+    """Qwen worker that fails closed unless every pinned runtime identity matches."""
+
+    def __init__(
+        self,
+        *,
+        store: SubmissionStore,
+        queue: JobQueue,
+        contract: EvaluationContract,
+        artifacts: ChallengeArtifacts,
+        provider: OpenAICompatibleProvider,
+        tokenizer_snapshot_path: Path,
+        launch_evidence_path: Path,
+    ) -> None:
+        if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
+            raise ValueError("Qwen worker requires mvp-evaluation-v2")
+        if not contract.retry_requires_prior_request_terminated:
+            raise ValueError("Qwen retry policy must require prior request termination")
+        runtime = attest_qwen_runtime_from_snapshot(
+            contract,
+            provider,
+            tokenizer_snapshot_path=tokenizer_snapshot_path,
+            launch_evidence_path=launch_evidence_path,
+        )
+        request_preflight = QwenTokenizerPreflight(
+            contract,
+            runtime.tokenizer,
+            runtime.tokenizer_identity,
+        )
+        super().__init__(
+            store=store,
+            queue=queue,
+            contract=contract,
+            artifacts=artifacts,
+            provider=provider,
+            lease_seconds=contract.job_deadline_seconds,
+            request_preflight=request_preflight,
+            require_termination_confirmation=True,
+        )

@@ -98,12 +98,27 @@ immediate requeue loop. Redis must run without independent Stream trimming or
 key eviction; idempotent publication does self-heal when its tracked Stream entry
 is missing, but operational deletion of queue metadata remains unsupported.
 
+The Qwen worker is a separate fail-closed class rather than a relaxed Mock worker.
+It requires `mvp-evaluation-v2`, exact tokenizer artifact and chat-template hashes,
+deployment-owned model/runtime evidence, a 4,096-token runtime context,
+single-model concurrency, and contract-matching provider timeout and response
+limits before it can consume a job. This is configuration attestation within a
+trusted host boundary, not cryptographic verification of a vLLM process or model
+weights. Its database lease covers the complete 300-second deadline, so its queue
+visibility must be at least 315 seconds. This conservative MVP avoids a heartbeat
+race; a later deployment may replace it with fenced lease renewal.
+
 Only `PROVIDER_TIMEOUT` and `PROVIDER_TRANSPORT` can restart the complete job.
 The first failure atomically returns the same submission to `queued` and nacks the
 existing delivery. The next claim increments the attempt number without extending
 the original deadline. A second failure is terminal and owner feedback reports
 `retryable=false`. Mock calls are synchronous and have returned before retry; a
 real provider must additionally prove remote request termination or cancellation.
+An HTTP timeout or ambiguous disconnect is therefore terminal even though its
+failure code is generally retryable; an HTTP response such as `503` confirms that
+request ended and may use the second attempt. Every request timeout is clamped to
+the remaining absolute job deadline, and response bodies are bounded before JSON
+decoding.
 
 ## Submission flow
 
@@ -126,14 +141,18 @@ The offline runner implements artifact/sample loading, the safe provider
 boundary, mock and pinned self-hosted generation, fixed Prompt Envelope `1.0`,
 response parsing, scoring, and in-memory aggregation. The Mock service slice now
 adds API submission storage, explicit background execution, aggregate result
-persistence, idempotency, ownership checks, and leaderboard queries.
+persistence, idempotency, ownership checks, and leaderboard queries. The Qwen
+runtime layer adds pinned-tokenizer preflight for every fully rendered sample,
+deadline propagation, provider response bounds, and startup attestation checks.
 
-This slice is intentionally not the Qwen production worker. Mock scores use a
-separate `runtime=mock` identity and deterministic Unicode-code-point preflight;
-the worker rejects the frozen Qwen/vLLM identity. Production still requires the
-pinned Qwen tokenizer and chat-template counting, provider cancellation under the
-shared deadline, startup runtime attestation, production authentication,
-PostgreSQL, persistent Redis operations, and deployment-safe logging.
+Mock scores use a separate `runtime=mock` identity and deterministic
+Unicode-code-point preflight. Qwen uses the new `mvp-evaluation-v2` partition,
+whose tokenizer revision, files, chat template, and counting method are part of
+the canonical evaluation identity. `QwenSubmissionWorker` itself loads the
+verified local tokenizer snapshot and verifies the co-located vLLM deployment
+before it consumes work. Production still requires protected launch evidence,
+authentication, PostgreSQL, persistent Redis operations, and deployment-safe
+logging.
 
 ## Fairness and reproducibility
 
