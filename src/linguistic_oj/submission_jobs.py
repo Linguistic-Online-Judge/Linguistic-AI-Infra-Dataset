@@ -48,6 +48,7 @@ from .submission_store import (
 _CLAIM_PROCESSING_BUDGET_SECONDS = 5.0
 _VISIBILITY_SAFETY_SECONDS = 5.0
 _LEASE_SWEEP_INTERVAL_SECONDS = 5.0
+_RETRY_LATER_BACKOFF_SECONDS = 1.0
 QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS = int(
     SQLITE_LOCK_TIMEOUT_SECONDS + _CLAIM_PROCESSING_BUDGET_SECONDS + _VISIBILITY_SAFETY_SECONDS
 )
@@ -207,6 +208,9 @@ class OutboxDispatcher:
         """Rebuild queued deliveries and publish durable outbox work at startup."""
 
         with self._dispatch_lock:
+            self._store.expire_queued_deadlines(
+                evaluation_identity_sha256=self._evaluation_identity_sha256
+            )
             recovered = self.recover_published_queued()
             return recovered + self.dispatch_pending()
 
@@ -312,6 +316,7 @@ class _SubmissionWorkerCore:
         self._request_preflight = request_preflight
         self._require_termination_confirmation = require_termination_confirmation
         self._next_lease_sweep_at = 0.0
+        self._next_receive_at = 0.0
 
     def run_once(self) -> bool:
         if (
@@ -322,8 +327,13 @@ class _SubmissionWorkerCore:
             # Do not claim unrelated work while an ambiguous remote request remains live.
             return False
         now = monotonic()
+        if now < self._next_receive_at:
+            return False
         if now >= self._next_lease_sweep_at:
             self._store.expire_leases(
+                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
+            )
+            self._store.expire_queued_deadlines(
                 evaluation_identity_sha256=self._contract.evaluation_identity_sha256
             )
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
@@ -350,6 +360,7 @@ class _SubmissionWorkerCore:
         if claim_attempt.claim is None:
             if claim_attempt.retry_later:
                 self._queue.nack(delivery)
+                self._next_receive_at = monotonic() + _RETRY_LATER_BACKOFF_SECONDS
             else:
                 self._queue.ack(delivery)
             return False

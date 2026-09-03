@@ -947,6 +947,7 @@ def test_temporarily_unclaimable_job_is_requeued_behind_other_work(
             retryable=False,
         )
         assert queue.ack(first_delivery) is True
+        now[0] += 1
         assert worker.run_once() is True
         assert len(queue) == 0
 
@@ -1151,6 +1152,39 @@ def test_published_queued_job_is_recovered_after_in_memory_queue_restart(
     )
     assert restarted_worker.run_once() is True
     assert store.count_results() == 1
+
+
+def test_unpublished_outbox_job_is_dispatched_when_api_starts(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="startup-outbox",
+        student_prompt="Return JSON.",
+        contract=contract,
+    )
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    dispatcher = OutboxDispatcher(store, queue, contract)
+
+    create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    assert len(queue) == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+    delivery = queue.receive()
+    assert delivery is not None
+    assert delivery.message.submission_id == created.submission.submission_id
 
 
 def test_streaming_body_limit_rejects_chunked_oversize_before_route() -> None:

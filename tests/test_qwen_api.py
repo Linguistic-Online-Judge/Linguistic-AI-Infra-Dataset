@@ -58,6 +58,22 @@ def test_qwen_api_composes_v2_contract_and_matching_redis_queue(
     assert len(runtime.queue.published) == 1
 
 
+def test_qwen_api_production_cli_requires_postgres() -> None:
+    with pytest.raises(SystemExit):
+        qwen_api_module.parse_args(
+            [
+                "--root",
+                ".",
+                "--database",
+                "runtime/submissions.db",
+                "--redis-url",
+                "redis://127.0.0.1:6379/0",
+                "--authenticate",
+                "package.module:authenticate",
+            ]
+        )
+
+
 def test_qwen_api_rejects_inline_production_redis_password() -> None:
     with pytest.raises(SystemExit):
         qwen_api_module.parse_args(
