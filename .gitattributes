@@ -1,3 +1,6 @@
 Standard_Dataset/*.jsonl filter=lfs diff=lfs merge=lfs -text
 Standard_Dataset/by_language/*.jsonl filter=lfs diff=lfs merge=lfs -text
 prompts/reference/*.txt text eol=lf
+benchmarks/observations/*.json text eol=lf
+challenges/public/*.json text eol=lf
+config/**/*.json text eol=lf
