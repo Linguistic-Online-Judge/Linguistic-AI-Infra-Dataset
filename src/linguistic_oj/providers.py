@@ -15,6 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from pydantic import ValidationError
+
 from .model_inputs import (
     DependencyModelInput,
     SafeModelInput,
@@ -25,7 +27,7 @@ from .model_inputs import (
     model_input_matches_task,
     response_expectations,
 )
-from .responses import TaggingResponse, TaskType, parse_model_response, response_json_schema
+from .responses import RESPONSE_MODELS, TaskType, response_json_schema
 
 PROMPT_ENVELOPE_VERSION = "1.0"
 STRUCTURED_OUTPUT_CONTRACT_VERSION = "dynamic-response-constraint-v5"
@@ -567,10 +569,7 @@ class OpenAICompatibleProvider:
                 )
             array_schema["minItems"] = expected_count
             array_schema["maxItems"] = expected_count
-        return {
-            "json": schema,
-            "whitespace_pattern": "",
-        }
+        return {"json": schema}
 
     def served_model_ids(self) -> frozenset[str]:
         """Read the OpenAI-compatible model list during trusted worker startup."""
@@ -739,26 +738,31 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _validate_structured_content(request: ModelRequest, content: str) -> None:
-        expected_count, expected_token_ids = response_expectations(
-            request.task,
-            request.model_input,
-        )
-        parsed = parse_model_response(
-            request.task,
-            content,
-            expected_count=expected_count,
-            expected_token_ids=expected_token_ids,
-        )
-        if not parsed.is_valid:
+        constraint = OpenAICompatibleProvider._structured_outputs(request)
+        pattern = constraint.get("regex")
+        if isinstance(pattern, str):
+            if re.fullmatch(pattern, content) is None:
+                raise ProviderContractError(
+                    "model service did not satisfy the structured output constraint"
+                )
+            return
+
+        try:
+            payload = json.loads(content)
+            RESPONSE_MODELS[request.task].model_validate(payload)
+        except (json.JSONDecodeError, ValidationError):
             raise ProviderContractError(
                 "model service did not satisfy the structured output constraint"
-            )
-        xpos_inventory = _XPOS_TAG_INVENTORIES.get((request.language, request.treebank))
-        if request.task is TaskType.XPOS and xpos_inventory is not None:
-            value = parsed.value
-            if not isinstance(value, TaggingResponse) or any(
-                tag not in xpos_inventory for tag in value.tags
-            ):
+            ) from None
+        expected_count, _ = response_expectations(request.task, request.model_input)
+        if expected_count is not None:
+            field_name = {
+                TaskType.UPOS: "tags",
+                TaskType.XPOS: "tags",
+                TaskType.DEPENDENCY: "arcs",
+                TaskType.TRANSLITERATION: "transliterations",
+            }[request.task]
+            if len(payload[field_name]) != expected_count:
                 raise ProviderContractError(
                     "model service did not satisfy the structured output constraint"
                 )

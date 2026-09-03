@@ -8,7 +8,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import linguistic_oj.providers as providers_module
-from linguistic_oj.model_inputs import SegmentationModelInput, TaggingModelInput
+from linguistic_oj.model_inputs import (
+    DependencyModelInput,
+    DependencyTokenInput,
+    SegmentationModelInput,
+    TaggingModelInput,
+)
 from linguistic_oj.providers import (
     PROMPT_ENVELOPE_VERSION,
     GenerationSettings,
@@ -252,6 +257,79 @@ def test_openai_provider_rejects_structured_response_outside_xpos_inventory(
 
     with pytest.raises(ProviderContractError, match="structured output constraint"):
         provider.generate(_tagging_request())
+
+
+def test_openai_provider_rejects_xpos_response_outside_exact_regex(
+    fake_model_service: str,
+) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": '{ "tags": ["NN","PROAV"] }'}}]
+    }
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        structured_json=True,
+    )
+
+    with pytest.raises(ProviderContractError, match="structured output constraint"):
+        provider.generate(_tagging_request())
+
+
+def test_openai_provider_structured_schema_does_not_apply_scorer_semantics(
+    fake_model_service: str,
+) -> None:
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": '{ "tags": ["INVALID","NOUN"] }'}}]
+    }
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        structured_json=True,
+    )
+    request = ModelRequest(
+        task=TaskType.UPOS,
+        language="Test",
+        treebank="Tiny",
+        student_prompt="Tag every token.",
+        model_input=TaggingModelInput(tokens=("A", "B")),
+    )
+
+    generation = provider.generate(request)
+
+    assert generation.raw_text == '{ "tags": ["INVALID","NOUN"] }'
+    structured_outputs = _FakeModelHandler.requests[0]["payload"]["structured_outputs"]
+    assert "whitespace_pattern" not in structured_outputs
+
+
+def test_openai_provider_structured_dependency_schema_does_not_apply_graph_checks(
+    fake_model_service: str,
+) -> None:
+    content = (
+        '{"arcs":[{"token_id":1,"head_id":0,"deprel":"root"},'
+        '{"token_id":1,"head_id":9,"deprel":"dep"}]}'
+    )
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": content}}]
+    }
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        structured_json=True,
+    )
+    request = ModelRequest(
+        task=TaskType.DEPENDENCY,
+        language="Test",
+        treebank="Tiny",
+        student_prompt="Parse every token.",
+        model_input=DependencyModelInput(
+            tokens=(
+                DependencyTokenInput(token_id=1, form="A"),
+                DependencyTokenInput(token_id=2, form="B"),
+            )
+        ),
+    )
+
+    assert provider.generate(request).raw_text == content
 
 
 def test_xpos_inventory_mapping_is_read_only() -> None:
