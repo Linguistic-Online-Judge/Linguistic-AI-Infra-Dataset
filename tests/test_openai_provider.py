@@ -431,9 +431,12 @@ def test_openai_provider_timeout_is_unconfirmed(
         provider.generate(_request(), timeout_seconds=1)
 
     assert error.value.termination_confirmed is False
+    assert provider.has_active_request is True
+    with pytest.raises(ProviderTransportError, match="prior model request"):
+        provider.generate(_request(), timeout_seconds=1)
 
 
-def test_openai_provider_enforces_absolute_deadline_and_blocks_new_requests(
+def test_openai_provider_enforces_absolute_deadline_and_keeps_timeout_poisoned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     release = threading.Event()
@@ -460,7 +463,7 @@ def test_openai_provider_enforces_absolute_deadline_and_blocks_new_requests(
     while provider.has_active_request and time.monotonic() < deadline:
         time.sleep(0.01)
     assert elapsed < 0.2
-    assert provider.has_active_request is False
+    assert provider.has_active_request is True
 
 
 def test_openai_provider_does_not_start_a_request_after_caller_timeout(

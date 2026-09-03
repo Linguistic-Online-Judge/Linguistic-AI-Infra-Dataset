@@ -8,6 +8,7 @@ import re
 import socket
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from threading import Lock
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -24,6 +25,9 @@ _MESSAGE_FIELDS = {
     "evaluation_identity_sha256",
     "contract_snapshot_sha256",
 }
+_LOOPBACK_REDIS_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_MAX_REDIS_CREDENTIAL_BYTES = 4096
+_MINIMUM_REDIS_VERSION = (6, 2)
 _PUBLISH_SCRIPT = """
 local active_id = redis.call('HGET', KEYS[2], ARGV[1])
 if active_id then
@@ -119,6 +123,38 @@ class RedisQueueMessageError(RuntimeError):
     """Raised when a Redis Stream entry violates the queue message contract."""
 
 
+def resolve_redis_url(
+    *,
+    inline_url: str | None,
+    credential_file: Path | None,
+    allow_inline_credentials: bool,
+) -> str:
+    """Resolve a Redis URL without requiring secrets in process arguments."""
+
+    if (inline_url is None) == (credential_file is None):
+        raise ValueError("configure exactly one Redis URL source")
+    if credential_file is not None:
+        try:
+            if not credential_file.is_file():
+                raise ValueError("Redis credential path must be a regular file")
+            if credential_file.stat().st_size > _MAX_REDIS_CREDENTIAL_BYTES:
+                raise ValueError("Redis credential file is too large")
+            redis_url = credential_file.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as error:
+            raise ValueError("Redis credential file cannot be read") from error
+        if not redis_url or "\n" in redis_url or "\r" in redis_url:
+            raise ValueError("Redis credential file must contain exactly one URL")
+    else:
+        redis_url = inline_url
+    if not isinstance(redis_url, str) or not redis_url:
+        raise ValueError("Redis URL must not be empty")
+    if not allow_inline_credentials and inline_url is not None:
+        parsed = urlparse(redis_url)
+        if parsed.password is not None:
+            raise ValueError("production Redis credentials must use --redis-url-file")
+    return redis_url
+
+
 class RedisJobQueue:
     """At-least-once queue using one Redis Stream per contract snapshot."""
 
@@ -134,7 +170,12 @@ class RedisJobQueue:
     ) -> None:
         if not isinstance(redis_url, str) or not redis_url.strip():
             raise ValueError("redis_url must not be empty")
-        if "decode_responses" in parse_qs(urlparse(redis_url).query):
+        parsed_url = urlparse(redis_url)
+        if parsed_url.scheme not in {"redis", "rediss", "unix"}:
+            raise ValueError("redis_url must use redis, rediss, or unix")
+        if parsed_url.scheme == "redis" and parsed_url.hostname not in _LOOPBACK_REDIS_HOSTS:
+            raise ValueError("non-loopback Redis connections must use rediss")
+        if "decode_responses" in parse_qs(parsed_url.query):
             raise ValueError("redis_url must not configure decode_responses")
         if not isinstance(routing_key, str) or _SHA256.fullmatch(routing_key) is None:
             raise ValueError("routing_key must be a lowercase SHA-256 value")
@@ -189,6 +230,16 @@ class RedisJobQueue:
     def health_check(self) -> None:
         if not self._client.ping():
             raise RuntimeError("Redis health check failed")
+        server_info = self._client.info(section="server")
+        raw_version = server_info.get("redis_version")
+        try:
+            version = tuple(int(part) for part in raw_version.split(".")[:2])
+        except (AttributeError, TypeError, ValueError):
+            raise RuntimeError("Redis did not report a valid version") from None
+        if version < _MINIMUM_REDIS_VERSION:
+            raise RuntimeError("Redis 6.2 or later is required")
+        if self._client.eval("return 1", 0) != 1:
+            raise RuntimeError("Redis EVAL capability check failed")
 
     def _ensure_group(self) -> None:
         try:

@@ -260,13 +260,15 @@ def create_app(
         raise ValueError("unsupported deployment environment")
     if environment == "production" and allow_draft_submissions:
         raise ValueError("draft submission override is forbidden in production")
+    if environment == "production" and readiness_check is None:
+        raise ValueError("production requires a readiness check")
     if not dispatcher.matches(store, contract):
         raise ValueError("outbox dispatcher does not match the store and contract")
 
     app = FastAPI(title="Linguistic Online Judge API", version="0.1.0")
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=contract.api_request_body_bytes)
     app.add_middleware(SafeRequestLoggingMiddleware)
-    dispatcher.recover_published_queued()
+    dispatcher.recover()
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
