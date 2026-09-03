@@ -15,9 +15,9 @@ The API exposes unauthenticated, body-free operational endpoints:
 - `GET /health/live` returns `200 {"status":"live"}` whenever the API process
   can serve requests.
 - `GET /health/ready` returns `200 {"status":"ready"}` only when the API can
-  query its submission store and ping its configured Redis queue. It returns a
-  generic `503 {"detail":"Service not ready"}` without connection details when
-  either dependency fails.
+  query its submission store and verify the configured Redis version and EVAL
+  capability. It returns a generic `503 {"detail":"Service not ready"}` without
+  connection details when either dependency fails.
 
 The API intentionally does not probe vLLM in readiness. Submission durability
 depends on the database and Redis; Worker startup attestation owns vLLM validation.
@@ -31,6 +31,9 @@ and dependency error messages are excluded.
 
 - Run Redis 7.4 or later with ACL authentication, AOF persistence, a bounded
   `maxmemory` policy that never evicts queue keys, backups, and monitoring.
+- Pass authenticated Redis URLs through `--redis-url-file` (for example, a
+  systemd credential under `/run/credentials`) rather than process arguments.
+  Non-loopback Redis connections must use `rediss://`.
 - Use PostgreSQL for API and Worker persistence. SQLite remains unsupported for
   a multi-process or restart-tolerant deployment.
 - Keep dataset manifests, gold data, tokenizer snapshots, and vLLM launch evidence

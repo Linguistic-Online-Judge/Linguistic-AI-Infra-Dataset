@@ -230,6 +230,11 @@ def test_redis_queue_rejects_wrong_contract_route(monkeypatch: pytest.MonkeyPatc
             redis_url="redis://localhost:6379/0?decode_responses=true",
             routing_key=_routing_key("contract-a"),
         )
+    with pytest.raises(ValueError, match="must use rediss"):
+        RedisJobQueue(
+            redis_url="redis://redis.example:6379/0",
+            routing_key=_routing_key("contract-a"),
+        )
 
 
 def test_redis_publish_repairs_missing_active_entry(

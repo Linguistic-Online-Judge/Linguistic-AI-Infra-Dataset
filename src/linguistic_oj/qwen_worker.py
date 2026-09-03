@@ -10,7 +10,7 @@ from time import sleep
 from .challenge import load_challenge_artifacts
 from .mvp_contract import load_qwen_worker_contract
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
-from .redis_job_queue import RedisJobQueue
+from .redis_job_queue import RedisJobQueue, resolve_redis_url
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
 from .submission_store import SubmissionStore
 
@@ -26,7 +26,9 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         help="deployment root containing config/mvp_evaluation_v2.json",
     )
     parser.add_argument("--database", type=Path, required=True)
-    parser.add_argument("--redis-url", required=True)
+    redis = parser.add_mutually_exclusive_group(required=True)
+    redis.add_argument("--redis-url")
+    redis.add_argument("--redis-url-file", type=Path)
     parser.add_argument("--public-challenge", type=Path, required=True)
     parser.add_argument("--private-challenge", type=Path, required=True)
     parser.add_argument("--dataset", type=Path, required=True)
@@ -40,6 +42,14 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(arguments)
     if args.idle_sleep_seconds <= 0:
         parser.error("--idle-sleep-seconds must be positive")
+    try:
+        args.redis_url = resolve_redis_url(
+            inline_url=args.redis_url,
+            credential_file=args.redis_url_file,
+            allow_inline_credentials=False,
+        )
+    except ValueError as error:
+        parser.error(str(error))
     return args
 
 
