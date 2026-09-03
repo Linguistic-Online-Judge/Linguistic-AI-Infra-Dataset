@@ -145,6 +145,7 @@ def validate_postgres_url(database_url: str) -> str:
         parsed.hostname is not None
         or not query_host[0]
         or not query_host[0].startswith("/")
+        or "," in query_host[0]
     ):
         raise ValueError("PostgreSQL query host must be an unambiguous Unix socket")
     if parsed.hostname is None and not query_host:
