@@ -7,9 +7,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+build/
 
 # Local secrets and runtime data
 .env
 .env.*
 !.env.example
 runtime/
+config/.v1-catalog.lock

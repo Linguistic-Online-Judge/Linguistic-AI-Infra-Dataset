@@ -58,6 +58,22 @@ def test_qwen_api_composes_v2_contract_and_matching_redis_queue(
     assert len(runtime.queue.published) == 1
 
 
+def test_qwen_api_production_cli_requires_postgres() -> None:
+    with pytest.raises(SystemExit):
+        qwen_api_module.parse_args(
+            [
+                "--root",
+                ".",
+                "--database",
+                "runtime/submissions.db",
+                "--redis-url",
+                "redis://127.0.0.1:6379/0",
+                "--authenticate",
+                "package.module:authenticate",
+            ]
+        )
+
+
 def test_qwen_api_rejects_inline_production_redis_password() -> None:
     with pytest.raises(SystemExit):
         qwen_api_module.parse_args(
@@ -72,6 +88,45 @@ def test_qwen_api_rejects_inline_production_redis_password() -> None:
                 "package.module:authenticate",
             ]
         )
+
+
+def test_qwen_api_rejects_inline_production_postgres_password() -> None:
+    with pytest.raises(SystemExit):
+        qwen_api_module.parse_args(
+            [
+                "--root",
+                ".",
+                "--postgres-database-url",
+                "postgresql://api:secret@127.0.0.1/linguistic_oj",
+                "--redis-url",
+                "redis://127.0.0.1:6379/0",
+                "--authenticate",
+                "package.module:authenticate",
+            ]
+        )
+
+
+def test_qwen_api_reads_production_postgres_credential_file(tmp_path: Path) -> None:
+    credential = tmp_path / "postgres-url"
+    credential.write_text(
+        "postgresql://api:secret@db.example/linguistic_oj?sslmode=verify-full\n",
+        encoding="utf-8",
+    )
+
+    args = qwen_api_module.parse_args(
+        [
+            "--root",
+            ".",
+            "--postgres-database-url-file",
+            str(credential),
+            "--redis-url",
+            "redis://127.0.0.1:6379/0",
+            "--authenticate",
+            "package.module:authenticate",
+        ]
+    )
+
+    assert args.postgres_database_url.endswith("sslmode=verify-full")
 
 
 def test_safe_request_logging_has_an_explicit_non_propagating_handler() -> None:

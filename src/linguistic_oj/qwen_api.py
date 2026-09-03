@@ -14,12 +14,14 @@ from fastapi import FastAPI
 
 from .api import Authenticate, create_app
 from .mvp_contract import EvaluationContract, load_qwen_worker_contract
+from .postgres_migrations import resolve_postgres_url
 from .redis_job_queue import RedisJobQueue, resolve_redis_url
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
     OutboxDispatcher,
 )
-from .submission_store import SubmissionStore
+from .submission_store import SubmissionStoreProtocol
+from .submission_store_factory import build_submission_store
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +30,14 @@ class QwenApiRuntime:
     contract: EvaluationContract
     dispatcher: OutboxDispatcher
     queue: RedisJobQueue
-    store: SubmissionStore
+    store: SubmissionStoreProtocol
 
 
 def build_qwen_api(
     *,
     root: Path,
-    database_path: Path,
+    database_path: Path | None = None,
+    postgres_database_url: str | None = None,
     redis_url: str,
     authenticate: Authenticate,
     namespace: str = "linguistic-oj",
@@ -43,8 +46,13 @@ def build_qwen_api(
 ) -> QwenApiRuntime:
     """Compose API, store, and Redis queue for the Qwen v2 contract only."""
 
+    if environment == "production" and database_path is not None:
+        raise ValueError("production Qwen API requires PostgreSQL persistence")
     contract = load_qwen_worker_contract(root)
-    store = SubmissionStore(database_path)
+    store = build_submission_store(
+        database_path=database_path,
+        postgres_database_url=postgres_database_url,
+    )
     queue = RedisJobQueue(
         redis_url=redis_url,
         routing_key=contract.contract_snapshot_sha256,
@@ -87,7 +95,10 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="deployment root containing config/mvp_evaluation_v2.json",
     )
-    parser.add_argument("--database", type=Path, required=True)
+    storage = parser.add_mutually_exclusive_group(required=True)
+    storage.add_argument("--database", type=Path, help="SQLite database path")
+    storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
+    storage.add_argument("--postgres-database-url-file", type=Path)
     redis = parser.add_mutually_exclusive_group(required=True)
     redis.add_argument("--redis-url")
     redis.add_argument("--redis-url-file", type=Path)
@@ -108,7 +119,15 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(arguments)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if args.environment == "production" and args.database is not None:
+        parser.error("production Qwen API requires PostgreSQL persistence")
     try:
+        if args.database is None:
+            args.postgres_database_url = resolve_postgres_url(
+                inline_url=args.postgres_database_url,
+                credential_file=args.postgres_database_url_file,
+                allow_inline_credentials=args.environment != "production",
+            )
         args.redis_url = resolve_redis_url(
             inline_url=args.redis_url,
             credential_file=args.redis_url_file,
@@ -149,6 +168,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     runtime = build_qwen_api(
         root=args.root,
         database_path=args.database,
+        postgres_database_url=args.postgres_database_url,
         redis_url=args.redis_url,
         authenticate=_load_authenticate(args.authenticate),
         namespace=args.namespace,

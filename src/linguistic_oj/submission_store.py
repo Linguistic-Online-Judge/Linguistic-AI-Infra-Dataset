@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -12,11 +13,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .mvp_contract import EvaluationContract, canonical_json
 
 SQLITE_LOCK_TIMEOUT_SECONDS = 5.0
+SQLITE_SCHEMA_VERSION = 2
 
 
 class SubmissionStatus(StrEnum):
@@ -32,11 +34,26 @@ class IdempotencyConflictError(ValueError):
 
 
 class SubmissionQuotaError(ValueError):
-    pass
+    def __init__(
+        self,
+        *,
+        code: str,
+        limit: int,
+        current: int,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.limit = limit
+        self.current = current
+        self.retry_after_seconds = retry_after_seconds
 
 
 class GlobalQueueFullError(ValueError):
-    pass
+    def __init__(self, *, limit: int, current: int) -> None:
+        super().__init__("GLOBAL_QUEUE_FULL")
+        self.limit = limit
+        self.current = current
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +68,7 @@ class SubmissionRecord:
     submission_id: str
     user_id: str
     challenge_id: str
+    evaluation_identity_sha256: str
     status: SubmissionStatus
     created_at: str
     started_at: str | None
@@ -92,6 +110,17 @@ class OwnerResultRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class OwnerSubmissionRecord:
+    submission_id: str
+    challenge_id: str
+    evaluation_identity_sha256: str
+    status: SubmissionStatus
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class LeaderboardEntry:
     evaluation_identity_sha256: str
     public_handle: str
@@ -114,6 +143,91 @@ class LeaderboardEntry:
             "score": self.score,
             "succeeded_at": self.succeeded_at,
         }
+
+
+class SubmissionStoreProtocol(Protocol):
+    """Persistence operations shared by SQLite and PostgreSQL stores."""
+
+    def health_check(self) -> None: ...
+
+    def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord: ...
+
+    def user_by_subject(self, auth_subject: str) -> UserRecord | None: ...
+
+    def create_submission(
+        self,
+        *,
+        user: UserRecord,
+        idempotency_key: str,
+        student_prompt: str,
+        contract: EvaluationContract,
+    ) -> CreatedSubmission: ...
+
+    def unpublished_submission_ids(
+        self, evaluation_identity_sha256: str, contract_snapshot_sha256: str
+    ) -> tuple[str, ...]: ...
+
+    def mark_outbox_published(self, submission_id: str) -> None: ...
+
+    def published_queued_submission_ids(
+        self, evaluation_identity_sha256: str, contract_snapshot_sha256: str
+    ) -> tuple[str, ...]: ...
+
+    def claim_submission(
+        self,
+        submission_id: str,
+        *,
+        evaluation_identity_sha256: str,
+        contract_snapshot_sha256: str,
+        lease_seconds: int,
+        max_attempts: int,
+        max_running_per_user: int,
+    ) -> ClaimAttempt: ...
+
+    def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool: ...
+
+    def expire_leases(self) -> int: ...
+
+    def expire_queued_deadlines(self) -> int: ...
+
+    def complete_success(
+        self, claim: ClaimedSubmission, *, owner_result: dict[str, Any]
+    ) -> bool: ...
+
+    def retry_submission(self, claim: ClaimedSubmission, *, max_attempts: int) -> bool: ...
+
+    def complete_failure(
+        self,
+        claim: ClaimedSubmission,
+        *,
+        failure_contract_version: str,
+        code: str,
+        retryable: bool,
+    ) -> bool: ...
+
+    def complete_rejected(self, claim: ClaimedSubmission) -> bool: ...
+
+    def submission_for_owner(self, submission_id: str, user_id: str) -> SubmissionRecord | None: ...
+
+    def submissions_for_owner(
+        self,
+        user_id: str,
+        *,
+        limit: int,
+        before_created_at: str | None = None,
+        before_submission_id: str | None = None,
+    ) -> tuple[OwnerSubmissionRecord, ...]: ...
+
+    def owner_result(self, submission_id: str, user_id: str) -> OwnerResultRecord | None: ...
+
+    def leaderboard(
+        self,
+        evaluation_identity_sha256: str,
+        *,
+        limit: int = 100,
+        as_of: str | None = None,
+        after_rank: int = 0,
+    ) -> tuple[LeaderboardEntry, ...]: ...
 
 
 _SCHEMA_V1 = """
@@ -180,6 +294,29 @@ CREATE INDEX IF NOT EXISTS idx_results_leaderboard
 ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC);
 """
 
+_SCHEMA_V2 = """
+CREATE INDEX IF NOT EXISTS idx_submissions_owner_history
+ON submissions(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_submissions_user_challenge_created
+ON submissions(user_id, challenge_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_submissions_user_status
+ON submissions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_submissions_running_lease
+ON submissions(evaluation_identity_sha256, lease_expires_at)
+WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_submission_outbox_unpublished
+ON submission_outbox(id)
+WHERE published_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_results_leaderboard_v2
+ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC, submission_id ASC);
+"""
+
+_SQLITE_MIGRATIONS = {
+    1: _SCHEMA_V1,
+    2: _SCHEMA_V2,
+}
+_EXPECTED_SQLITE_SCHEMA_VERSIONS = tuple(range(1, SQLITE_SCHEMA_VERSION + 1))
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -212,11 +349,35 @@ def _submission_from_row(row: sqlite3.Row) -> SubmissionRecord:
         submission_id=row["id"],
         user_id=row["user_id"],
         challenge_id=row["challenge_id"],
+        evaluation_identity_sha256=row["evaluation_identity_sha256"],
         status=SubmissionStatus(row["status"]),
         created_at=row["created_at"],
         started_at=row["started_at"],
         completed_at=row["completed_at"],
     )
+
+
+def _owner_submission_from_row(row: sqlite3.Row) -> OwnerSubmissionRecord:
+    return OwnerSubmissionRecord(
+        submission_id=row["id"],
+        challenge_id=row["challenge_id"],
+        evaluation_identity_sha256=row["evaluation_identity_sha256"],
+        status=SubmissionStatus(row["status"]),
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        completed_at=row["completed_at"],
+    )
+
+
+def _validate_migration_prefix(versions: tuple[int, ...], expected: tuple[int, ...]) -> None:
+    if versions != expected[: len(versions)]:
+        raise RuntimeError(f"unsupported SQLite schema versions: {versions}")
+
+
+def _execute_sqlite_migration(connection: sqlite3.Connection, script: str) -> None:
+    for statement in script.split(";"):
+        if statement.strip():
+            connection.execute(statement)
 
 
 class SubmissionStore:
@@ -242,15 +403,46 @@ class SubmissionStore:
 
     def _migrate(self) -> None:
         with self._connect() as connection:
-            connection.executescript(_SCHEMA_V1)
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ?)",
-                (_timestamp(_utc_now()),),
+            connection.execute("BEGIN IMMEDIATE")
+            exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+            ).fetchone()
+            versions: tuple[int, ...] = ()
+            if exists is not None:
+                versions = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall()
+                )
+                _validate_migration_prefix(versions, _EXPECTED_SQLITE_SCHEMA_VERSIONS)
+            for version in _EXPECTED_SQLITE_SCHEMA_VERSIONS[len(versions) :]:
+                _execute_sqlite_migration(connection, _SQLITE_MIGRATIONS[version])
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (version, _timestamp(_utc_now())),
+                )
+            migrated = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
             )
+            if migrated != _EXPECTED_SQLITE_SCHEMA_VERSIONS:
+                connection.rollback()
+                raise RuntimeError(f"SQLite schema migration is incomplete: {migrated}")
+            connection.commit()
 
     def health_check(self) -> None:
         with self._connect() as connection:
-            connection.execute("SELECT 1").fetchone()
+            versions = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            )
+            if versions != _EXPECTED_SQLITE_SCHEMA_VERSIONS:
+                raise RuntimeError(f"unsupported SQLite schema versions: {versions}")
 
     def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord:
         if not auth_subject or not public_handle or "@" in public_handle:
@@ -301,8 +493,8 @@ class SubmissionStore:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 """
-                SELECT id, user_id, challenge_id, status, created_at, started_at, completed_at,
-                       request_sha256
+                SELECT id, user_id, challenge_id, evaluation_identity_sha256, status,
+                       created_at, started_at, completed_at, request_sha256
                 FROM submissions
                 WHERE user_id = ? AND idempotency_key = ?
                 """,
@@ -317,16 +509,28 @@ class SubmissionStore:
                 connection.commit()
                 return CreatedSubmission(_submission_from_row(existing), replayed=True)
 
-            accepted_count = connection.execute(
+            accepted_quota = connection.execute(
                 """
-                SELECT COUNT(*) FROM submissions
+                SELECT COUNT(*) AS accepted_count, MIN(created_at) AS oldest_created_at
+                FROM submissions
                 WHERE user_id = ? AND challenge_id = ? AND created_at >= ?
                 """,
                 (user.user_id, contract.challenge_id, cutoff),
-            ).fetchone()[0]
+            ).fetchone()
+            accepted_count = accepted_quota["accepted_count"]
             if accepted_count >= contract.submissions_per_user_per_challenge_per_24h:
                 connection.rollback()
-                raise SubmissionQuotaError("submission rate limit exceeded")
+                oldest = datetime.fromisoformat(accepted_quota["oldest_created_at"])
+                retry_after = max(
+                    1,
+                    math.ceil((oldest + timedelta(hours=24) - now).total_seconds()),
+                )
+                raise SubmissionQuotaError(
+                    code="SUBMISSION_RATE_LIMIT",
+                    limit=contract.submissions_per_user_per_challenge_per_24h,
+                    current=accepted_count,
+                    retry_after_seconds=retry_after,
+                )
 
             outstanding_count = connection.execute(
                 """
@@ -337,14 +541,21 @@ class SubmissionStore:
             ).fetchone()[0]
             if outstanding_count >= contract.max_outstanding_submissions_per_user:
                 connection.rollback()
-                raise SubmissionQuotaError("outstanding submission limit exceeded")
+                raise SubmissionQuotaError(
+                    code="OUTSTANDING_SUBMISSION_LIMIT",
+                    limit=contract.max_outstanding_submissions_per_user,
+                    current=outstanding_count,
+                )
 
             global_count = connection.execute(
                 "SELECT COUNT(*) FROM submissions WHERE status IN ('queued', 'running')"
             ).fetchone()[0]
             if global_count >= contract.global_queue_depth:
                 connection.rollback()
-                raise GlobalQueueFullError("global submission queue is full")
+                raise GlobalQueueFullError(
+                    limit=contract.global_queue_depth,
+                    current=global_count,
+                )
 
             submission_id = uuid.uuid4().hex
             prompt_sha256 = hashlib.sha256(prompt_utf8).hexdigest()
@@ -385,6 +596,7 @@ class SubmissionStore:
                 submission_id=submission_id,
                 user_id=user.user_id,
                 challenge_id=contract.challenge_id,
+                evaluation_identity_sha256=contract.evaluation_identity_sha256,
                 status=SubmissionStatus.QUEUED,
                 created_at=now_text,
                 started_at=None,
@@ -405,7 +617,7 @@ class SubmissionStore:
                 FROM submission_outbox AS o
                 JOIN submissions AS s ON s.id = o.submission_id
                 WHERE o.published_at IS NULL AND s.evaluation_identity_sha256 = ?
-                      AND s.contract_snapshot_sha256 = ?
+                      AND s.contract_snapshot_sha256 = ? AND s.status = 'queued'
                 ORDER BY o.id
                 """,
                 (evaluation_identity_sha256, contract_snapshot_sha256),
@@ -544,7 +756,7 @@ class SubmissionStore:
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool:
         return claim.deadline_at <= _timestamp(_utc_now())
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_leases(self) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -559,9 +771,24 @@ class SubmissionStore:
                     END,
                     failure_retryable = 0
                 WHERE status = 'running' AND lease_expires_at <= ?
-                      AND evaluation_identity_sha256 = ?
                 """,
-                (now_text, now_text, now_text, evaluation_identity_sha256),
+                (now_text, now_text, now_text),
+            )
+            connection.commit()
+        return updated.rowcount
+
+    def expire_queued_deadlines(self) -> int:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            now_text = _timestamp(_utc_now())
+            updated = connection.execute(
+                """
+                UPDATE submissions
+                SET status = 'failed', completed_at = ?, failure_code = 'JOB_DEADLINE',
+                    failure_retryable = 0
+                WHERE status = 'queued' AND deadline_at <= ?
+                """,
+                (now_text, now_text),
             )
             connection.commit()
         return updated.rowcount
@@ -770,7 +997,8 @@ class SubmissionStore:
                 """
                 UPDATE submissions
                 SET status = 'rejected', completed_at = ?, lease_token = NULL,
-                    lease_expires_at = NULL
+                    lease_expires_at = NULL, failure_code = 'TOKEN_LIMIT_EXCEEDED',
+                    failure_retryable = 0
                 WHERE id = ? AND status = 'running' AND attempt_number = ? AND lease_token = ?
                 """,
                 (
@@ -790,12 +1018,49 @@ class SubmissionStore:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, user_id, challenge_id, status, created_at, started_at, completed_at
+                SELECT id, user_id, challenge_id, evaluation_identity_sha256, status,
+                       created_at, started_at, completed_at
                 FROM submissions WHERE id = ? AND user_id = ?
                 """,
                 (submission_id, user_id),
             ).fetchone()
         return None if row is None else _submission_from_row(row)
+
+    def submissions_for_owner(
+        self,
+        user_id: str,
+        *,
+        limit: int,
+        before_created_at: str | None = None,
+        before_submission_id: str | None = None,
+    ) -> tuple[OwnerSubmissionRecord, ...]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if (before_created_at is None) != (before_submission_id is None):
+            raise ValueError("history cursor fields must be provided together")
+        with self._connect() as connection:
+            if before_created_at is None:
+                rows = connection.execute(
+                    "SELECT id, challenge_id, evaluation_identity_sha256, status, created_at, "
+                    "started_at, completed_at FROM submissions WHERE user_id = ? "
+                    "ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (user_id, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id, challenge_id, evaluation_identity_sha256, status, created_at, "
+                    "started_at, completed_at FROM submissions WHERE user_id = ? AND "
+                    "(created_at < ? OR (created_at = ? AND id < ?)) "
+                    "ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (
+                        user_id,
+                        before_created_at,
+                        before_created_at,
+                        before_submission_id,
+                        limit,
+                    ),
+                ).fetchall()
+        return tuple(_owner_submission_from_row(row) for row in rows)
 
     def owner_result(self, submission_id: str, user_id: str) -> OwnerResultRecord | None:
         with self._connect() as connection:
@@ -827,7 +1092,17 @@ class SubmissionStore:
             contract_snapshot_json=row["contract_snapshot_json"],
         )
 
-    def leaderboard(self, evaluation_identity_sha256: str) -> tuple[LeaderboardEntry, ...]:
+    def leaderboard(
+        self,
+        evaluation_identity_sha256: str,
+        *,
+        limit: int = 100,
+        as_of: str | None = None,
+        after_rank: int = 0,
+    ) -> tuple[LeaderboardEntry, ...]:
+        if limit <= 0 or after_rank < 0:
+            raise ValueError("leaderboard pagination values are invalid")
+        as_of = _timestamp(_utc_now()) if as_of is None else as_of
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -843,17 +1118,23 @@ class SubmissionStore:
                     JOIN submissions AS s ON s.id = r.submission_id
                     JOIN users AS u ON u.id = s.user_id
                     WHERE r.evaluation_identity_sha256 = ? AND s.status = 'succeeded'
+                          AND r.succeeded_at <= ?
+                ), ranked AS (
+                    SELECT *, ROW_NUMBER() OVER (
+                        ORDER BY score DESC, succeeded_at ASC, public_handle ASC
+                    ) AS leaderboard_rank
+                    FROM candidates WHERE user_choice = 1
                 )
-                SELECT * FROM candidates WHERE user_choice = 1
-                ORDER BY score DESC, succeeded_at ASC, public_handle ASC
+                SELECT * FROM ranked WHERE leaderboard_rank > ?
+                ORDER BY leaderboard_rank LIMIT ?
                 """,
-                (evaluation_identity_sha256,),
+                (evaluation_identity_sha256, as_of, after_rank, limit),
             ).fetchall()
         return tuple(
             LeaderboardEntry(
                 evaluation_identity_sha256=row["evaluation_identity_sha256"],
                 public_handle=row["public_handle"],
-                rank=rank,
+                rank=row["leaderboard_rank"],
                 samples_invalid=row["samples_invalid"],
                 samples_total=row["samples_total"],
                 samples_valid=row["samples_valid"],
@@ -861,7 +1142,7 @@ class SubmissionStore:
                 succeeded_at=row["succeeded_at"],
                 contract_snapshot_json=row["contract_snapshot_json"],
             )
-            for rank, row in enumerate(rows, start=1)
+            for row in rows
         )
 
     def count_submissions(self) -> int:

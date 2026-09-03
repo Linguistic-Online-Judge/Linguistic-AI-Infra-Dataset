@@ -947,6 +947,7 @@ def test_temporarily_unclaimable_job_is_requeued_behind_other_work(
             retryable=False,
         )
         assert queue.ack(first_delivery) is True
+        now[0] += 1
         assert worker.run_once() is True
         assert len(queue) == 0
 
@@ -1153,6 +1154,39 @@ def test_published_queued_job_is_recovered_after_in_memory_queue_restart(
     assert store.count_results() == 1
 
 
+def test_unpublished_outbox_job_is_dispatched_when_api_starts(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="startup-outbox",
+        student_prompt="Return JSON.",
+        contract=contract,
+    )
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    dispatcher = OutboxDispatcher(store, queue, contract)
+
+    create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    assert len(queue) == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+    delivery = queue.receive()
+    assert delivery is not None
+    assert delivery.message.submission_id == created.submission.submission_id
+
+
 def test_streaming_body_limit_rejects_chunked_oversize_before_route() -> None:
     downstream_called = False
 
@@ -1233,7 +1267,7 @@ def test_external_activation_requires_safe_complete_provenance(
     assert EvaluationContract.from_mapping(ready).external_activation_ready is False
 
 
-def test_lease_expiration_is_fenced_and_scoped_by_identity(
+def test_lease_expiration_is_fenced_and_globally_swept(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1258,7 +1292,7 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
             created.submission.submission_id,
             evaluation_identity_sha256=contract.evaluation_identity_sha256,
             contract_snapshot_sha256=contract.contract_snapshot_sha256,
-            lease_seconds=30,
+            lease_seconds=30 if index == 1 else 300,
             max_attempts=contract.max_attempts,
             max_running_per_user=10,
         )
@@ -1272,9 +1306,7 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
         code="PROVIDER_TIMEOUT",
         retryable=True,
     ) is False
-    assert store.expire_leases(
-        evaluation_identity_sha256=contracts[0].evaluation_identity_sha256
-    ) == 1
+    assert store.expire_leases() == 1
     first = store.owner_result(claims[0].submission_id, user.user_id)
     second = store.owner_result(claims[1].submission_id, user.user_id)
     assert first is not None and first.failure is not None
@@ -1294,6 +1326,37 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
         assert expired is not None and expired.failure is not None
         assert expired.failure["code"] == "JOB_DEADLINE"
         assert expired.failure["retryable"] is False
+
+
+def test_queued_deadline_sweep_crosses_identity_partitions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [datetime(2026, 8, 30, tzinfo=UTC)]
+    monkeypatch.setattr(submission_store_module, "_utc_now", lambda: now[0])
+    artifacts = _artifacts(tmp_path)
+    contracts = [
+        _mock_contract(artifacts, contract_version=f"mock-evaluation-v{version}")
+        for version in (1, 2)
+    ]
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    submission_ids = []
+    for index, contract in enumerate(contracts, start=1):
+        created = store.create_submission(
+            user=user,
+            idempotency_key=f"queued-deadline-{index}",
+            student_prompt="Return JSON.",
+            contract=contract,
+        )
+        submission_ids.append(created.submission.submission_id)
+
+    now[0] += timedelta(seconds=301)
+    assert store.expire_queued_deadlines() == 2
+    for submission_id in submission_ids:
+        expired = store.owner_result(submission_id, user.user_id)
+        assert expired is not None and expired.failure is not None
+        assert expired.failure["code"] == "JOB_DEADLINE"
 
 
 def test_terminal_timestamp_is_sampled_after_sqlite_write_lock(
@@ -1349,6 +1412,4 @@ def test_terminal_timestamp_is_sampled_after_sqlite_write_lock(
 
     assert thread.is_alive() is False
     assert result == [False]
-    assert store.expire_leases(
-        evaluation_identity_sha256=contract.evaluation_identity_sha256
-    ) == 1
+    assert store.expire_leases() == 1

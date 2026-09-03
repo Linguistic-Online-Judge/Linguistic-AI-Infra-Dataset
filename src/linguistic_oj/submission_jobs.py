@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from time import monotonic
 from typing import Protocol
 
@@ -42,11 +42,13 @@ from .runner import (
 from .submission_store import (
     SQLITE_LOCK_TIMEOUT_SECONDS,
     ClaimedSubmission,
-    SubmissionStore,
+    SubmissionStoreProtocol,
 )
 
 _CLAIM_PROCESSING_BUDGET_SECONDS = 5.0
 _VISIBILITY_SAFETY_SECONDS = 5.0
+_LEASE_SWEEP_INTERVAL_SECONDS = 5.0
+_RETRY_LATER_BACKOFF_SECONDS = 1.0
 QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS = int(
     SQLITE_LOCK_TIMEOUT_SECONDS + _CLAIM_PROCESSING_BUDGET_SECONDS + _VISIBILITY_SAFETY_SECONDS
 )
@@ -165,7 +167,7 @@ class InMemoryJobQueue:
 class OutboxDispatcher:
     def __init__(
         self,
-        store: SubmissionStore,
+        store: SubmissionStoreProtocol,
         queue: JobQueue,
         contract: EvaluationContract,
     ) -> None:
@@ -175,8 +177,9 @@ class OutboxDispatcher:
         self._queue = queue
         self._evaluation_identity_sha256 = contract.evaluation_identity_sha256
         self._contract_snapshot_sha256 = contract.contract_snapshot_sha256
+        self._dispatch_lock = RLock()
 
-    def matches(self, store: SubmissionStore, contract: EvaluationContract) -> bool:
+    def matches(self, store: SubmissionStoreProtocol, contract: EvaluationContract) -> bool:
         return (
             self._store is store
             and self._evaluation_identity_sha256 == contract.evaluation_identity_sha256
@@ -184,37 +187,47 @@ class OutboxDispatcher:
         )
 
     def dispatch_pending(self) -> int:
-        dispatched = 0
-        for submission_id in self._store.unpublished_submission_ids(
-            self._evaluation_identity_sha256,
-            self._contract_snapshot_sha256,
-        ):
-            self._queue.publish(
-                JobMessage(
-                    submission_id,
-                    self._evaluation_identity_sha256,
-                    self._contract_snapshot_sha256,
+        with self._dispatch_lock:
+            dispatched = 0
+            for submission_id in self._store.unpublished_submission_ids(
+                self._evaluation_identity_sha256,
+                self._contract_snapshot_sha256,
+            ):
+                self._queue.publish(
+                    JobMessage(
+                        submission_id,
+                        self._evaluation_identity_sha256,
+                        self._contract_snapshot_sha256,
+                    )
                 )
-            )
-            self._store.mark_outbox_published(submission_id)
-            dispatched += 1
-        return dispatched
+                self._store.mark_outbox_published(submission_id)
+                dispatched += 1
+            return dispatched
+
+    def recover(self) -> int:
+        """Rebuild queued deliveries and publish durable outbox work at startup."""
+
+        with self._dispatch_lock:
+            self._store.expire_queued_deadlines()
+            recovered = self.recover_published_queued()
+            return recovered + self.dispatch_pending()
 
     def recover_published_queued(self) -> int:
-        recovered = 0
-        for submission_id in self._store.published_queued_submission_ids(
-            self._evaluation_identity_sha256,
-            self._contract_snapshot_sha256,
-        ):
-            self._queue.publish(
-                JobMessage(
-                    submission_id,
-                    self._evaluation_identity_sha256,
-                    self._contract_snapshot_sha256,
+        with self._dispatch_lock:
+            recovered = 0
+            for submission_id in self._store.published_queued_submission_ids(
+                self._evaluation_identity_sha256,
+                self._contract_snapshot_sha256,
+            ):
+                self._queue.publish(
+                    JobMessage(
+                        submission_id,
+                        self._evaluation_identity_sha256,
+                        self._contract_snapshot_sha256,
+                    )
                 )
-            )
-            recovered += 1
-        return recovered
+                recovered += 1
+            return recovered
 
 
 class TokenLimitExceeded(ValueError):
@@ -268,7 +281,7 @@ class _SubmissionWorkerCore:
     def __init__(
         self,
         *,
-        store: SubmissionStore,
+        store: SubmissionStoreProtocol,
         queue: JobQueue,
         contract: EvaluationContract,
         artifacts: ChallengeArtifacts,
@@ -300,6 +313,8 @@ class _SubmissionWorkerCore:
         self._lease_seconds = lease_seconds
         self._request_preflight = request_preflight
         self._require_termination_confirmation = require_termination_confirmation
+        self._next_lease_sweep_at = 0.0
+        self._next_receive_at = 0.0
 
     def run_once(self) -> bool:
         if (
@@ -309,9 +324,13 @@ class _SubmissionWorkerCore:
         ):
             # Do not claim unrelated work while an ambiguous remote request remains live.
             return False
-        self._store.expire_leases(
-            evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-        )
+        now = monotonic()
+        if now < self._next_receive_at:
+            return False
+        if now >= self._next_lease_sweep_at:
+            self._store.expire_leases()
+            self._store.expire_queued_deadlines()
+            self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
         if delivery is None:
             return False
@@ -335,6 +354,7 @@ class _SubmissionWorkerCore:
         if claim_attempt.claim is None:
             if claim_attempt.retry_later:
                 self._queue.nack(delivery)
+                self._next_receive_at = monotonic() + _RETRY_LATER_BACKOFF_SECONDS
             else:
                 self._queue.ack(delivery)
             return False
@@ -361,9 +381,7 @@ class _SubmissionWorkerCore:
             )
         except (TokenLimitExceeded, QwenTokenLimitExceeded):
             if not self._store.complete_rejected(claim):
-                self._store.expire_leases(
-                    evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-                )
+                self._store.expire_leases()
             self._queue.ack(delivery)
             return True
         except JobDeadlineExceeded:
@@ -452,9 +470,7 @@ class _SubmissionWorkerCore:
             retryable=retryable,
         )
         if not completed:
-            self._store.expire_leases(
-                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-            )
+            self._store.expire_leases()
         return completed
 
     def _request_retry_allowed(self, termination_confirmed: bool) -> bool:
@@ -467,7 +483,7 @@ class SubmissionWorker(_SubmissionWorkerCore):
     def __init__(
         self,
         *,
-        store: SubmissionStore,
+        store: SubmissionStoreProtocol,
         queue: JobQueue,
         contract: EvaluationContract,
         artifacts: ChallengeArtifacts,
@@ -504,7 +520,7 @@ class QwenSubmissionWorker(_SubmissionWorkerCore):
     def __init__(
         self,
         *,
-        store: SubmissionStore,
+        store: SubmissionStoreProtocol,
         queue: JobQueue,
         contract: EvaluationContract,
         artifacts: ChallengeArtifacts,
