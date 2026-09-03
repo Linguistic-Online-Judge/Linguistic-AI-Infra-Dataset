@@ -840,7 +840,7 @@ def test_qwen_worker_does_not_retry_ambiguous_remote_timeout(
         }
 
 
-def test_temporarily_unclaimable_job_waits_for_visibility(
+def test_temporarily_unclaimable_job_is_requeued_behind_other_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -878,8 +878,9 @@ def test_temporarily_unclaimable_job_waits_for_visibility(
         assert claimed is not None
 
         assert worker.run_once() is False
-        assert len(queue) == 0
+        assert len(queue) == 1
         assert worker.run_once() is False
+        assert len(queue) == 1
         queued = client.get(
             f"/v1/submissions/{second['submission_id']}",
             headers=_headers("subject-alice"),
@@ -893,7 +894,6 @@ def test_temporarily_unclaimable_job_waits_for_visibility(
             retryable=False,
         )
         assert queue.ack(first_delivery) is True
-        now[0] += queue.visibility_timeout_seconds
         assert worker.run_once() is True
         assert len(queue) == 0
 

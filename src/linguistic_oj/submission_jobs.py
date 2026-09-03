@@ -333,7 +333,9 @@ class _SubmissionWorkerCore:
             max_running_per_user=self._contract.max_running_submissions_per_user,
         )
         if claim_attempt.claim is None:
-            if not claim_attempt.retry_later:
+            if claim_attempt.retry_later:
+                self._queue.nack(delivery)
+            else:
                 self._queue.ack(delivery)
             return False
         claim = claim_attempt.claim
