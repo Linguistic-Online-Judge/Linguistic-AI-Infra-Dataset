@@ -305,7 +305,7 @@ def test_openai_provider_structured_dependency_schema_does_not_apply_graph_check
     fake_model_service: str,
 ) -> None:
     content = (
-        '{"arcs":[{"token_id":1,"head_id":0,"deprel":"root"},'
+        '{"arcs":[{"token_id":1.0,"head_id":0,"deprel":"root"},'
         '{"token_id":1,"head_id":9,"deprel":"dep"}]}'
     )
     _FakeModelHandler.response_payload = {

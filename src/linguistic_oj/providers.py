@@ -15,8 +15,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from pydantic import ValidationError
-
 from .model_inputs import (
     DependencyModelInput,
     SafeModelInput,
@@ -27,7 +25,7 @@ from .model_inputs import (
     model_input_matches_task,
     response_expectations,
 )
-from .responses import RESPONSE_MODELS, TaskType, response_json_schema
+from .responses import TaskType, response_json_schema
 
 PROMPT_ENVELOPE_VERSION = "1.0"
 STRUCTURED_OUTPUT_CONTRACT_VERSION = "dynamic-response-constraint-v5"
@@ -99,6 +97,105 @@ _hdt_inventory_sha256 = hashlib.sha256(
 ).hexdigest()
 if _hdt_inventory_sha256 != HDT_XPOS_TAG_INVENTORY_SHA256:
     raise RuntimeError("HDT XPOS inventory does not match its frozen identity")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _json_value_matches_schema(
+    value: object,
+    schema: dict[str, Any],
+    root_schema: dict[str, Any],
+) -> bool:
+    reference = schema.get("$ref")
+    if isinstance(reference, str):
+        if not reference.startswith("#/"):
+            return False
+        target: object = root_schema
+        for raw_part in reference[2:].split("/"):
+            part = raw_part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or part not in target:
+                return False
+            target = target[part]
+        return isinstance(target, dict) and _json_value_matches_schema(
+            value,
+            target,
+            root_schema,
+        )
+
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if type(value) is not dict:
+            return False
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            return False
+        if any(key not in value for key in required):
+            return False
+        if schema.get("additionalProperties") is False and any(
+            key not in properties for key in value
+        ):
+            return False
+        return all(
+            key not in value
+            or (
+                isinstance(property_schema, dict)
+                and _json_value_matches_schema(value[key], property_schema, root_schema)
+            )
+            for key, property_schema in properties.items()
+        )
+    if schema_type == "array":
+        if type(value) is not list:
+            return False
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        item_schema = schema.get("items")
+        return isinstance(item_schema, dict) and all(
+            _json_value_matches_schema(item, item_schema, root_schema) for item in value
+        )
+    if schema_type == "string":
+        if type(value) is not str:
+            return False
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        pattern = schema.get("pattern")
+        return not isinstance(pattern, str) or re.search(pattern, value) is not None
+    if schema_type == "integer":
+        if type(value) is int:
+            number = value
+        elif type(value) is float and math.isfinite(value) and value.is_integer():
+            number = value
+        else:
+            return False
+        minimum = schema.get("minimum")
+        exclusive_minimum = schema.get("exclusiveMinimum")
+        maximum = schema.get("maximum")
+        exclusive_maximum = schema.get("exclusiveMaximum")
+        return (
+            (not isinstance(minimum, (int, float)) or number >= minimum)
+            and (
+                not isinstance(exclusive_minimum, (int, float))
+                or number > exclusive_minimum
+            )
+            and (not isinstance(maximum, (int, float)) or number <= maximum)
+            and (
+                not isinstance(exclusive_maximum, (int, float))
+                or number < exclusive_maximum
+            )
+        )
+    return False
+
+
 _PINNED_REVISION = re.compile(r"[0-9a-f]{40}")
 _SAFE_FINISH_REASONS = frozenset(
     {
@@ -748,24 +845,20 @@ class OpenAICompatibleProvider:
             return
 
         try:
-            payload = json.loads(content)
-            RESPONSE_MODELS[request.task].model_validate(payload)
-        except (json.JSONDecodeError, ValidationError):
+            payload = json.loads(content, parse_constant=_reject_json_constant)
+        except (json.JSONDecodeError, ValueError):
             raise ProviderContractError(
                 "model service did not satisfy the structured output constraint"
             ) from None
-        expected_count, _ = response_expectations(request.task, request.model_input)
-        if expected_count is not None:
-            field_name = {
-                TaskType.UPOS: "tags",
-                TaskType.XPOS: "tags",
-                TaskType.DEPENDENCY: "arcs",
-                TaskType.TRANSLITERATION: "transliterations",
-            }[request.task]
-            if len(payload[field_name]) != expected_count:
-                raise ProviderContractError(
-                    "model service did not satisfy the structured output constraint"
-                )
+        schema = constraint.get("json")
+        if not isinstance(schema, dict) or not _json_value_matches_schema(
+            payload,
+            schema,
+            schema,
+        ):
+            raise ProviderContractError(
+                "model service did not satisfy the structured output constraint"
+            )
 
     def _read_response_body(self, response: object) -> bytes:
         headers = getattr(response, "headers", None)
