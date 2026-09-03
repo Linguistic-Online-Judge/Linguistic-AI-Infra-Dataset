@@ -115,7 +115,13 @@ def validate_postgres_url(database_url: str) -> str:
     if parsed.scheme not in {"postgres", "postgresql"} or parsed.path in {"", "/"}:
         raise ValueError("database URL must be a PostgreSQL URL with a database name")
     query = parse_qs(parsed.query, keep_blank_values=True)
+    if "service" in query:
+        raise ValueError("PostgreSQL service indirection is not supported")
+    if len(query.get("host", [])) > 1 or len(query.get("hostaddr", [])) > 1:
+        raise ValueError("PostgreSQL URL must not repeat host parameters")
     host_parameters = [*query.get("host", []), *query.get("hostaddr", [])]
+    if parsed.hostname is None and not host_parameters:
+        raise ValueError("PostgreSQL URL must specify an explicit host or Unix socket")
     if any(
         not _is_loopback_postgres_host(host)
         for parameter in host_parameters

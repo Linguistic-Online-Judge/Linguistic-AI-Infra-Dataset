@@ -1267,7 +1267,7 @@ def test_external_activation_requires_safe_complete_provenance(
     assert EvaluationContract.from_mapping(ready).external_activation_ready is False
 
 
-def test_lease_expiration_is_fenced_and_scoped_by_identity(
+def test_lease_expiration_is_fenced_and_globally_swept(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1292,7 +1292,7 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
             created.submission.submission_id,
             evaluation_identity_sha256=contract.evaluation_identity_sha256,
             contract_snapshot_sha256=contract.contract_snapshot_sha256,
-            lease_seconds=30,
+            lease_seconds=30 if index == 1 else 300,
             max_attempts=contract.max_attempts,
             max_running_per_user=10,
         )
@@ -1306,9 +1306,7 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
         code="PROVIDER_TIMEOUT",
         retryable=True,
     ) is False
-    assert store.expire_leases(
-        evaluation_identity_sha256=contracts[0].evaluation_identity_sha256
-    ) == 1
+    assert store.expire_leases() == 1
     first = store.owner_result(claims[0].submission_id, user.user_id)
     second = store.owner_result(claims[1].submission_id, user.user_id)
     assert first is not None and first.failure is not None
@@ -1414,6 +1412,4 @@ def test_terminal_timestamp_is_sampled_after_sqlite_write_lock(
 
     assert thread.is_alive() is False
     assert result == [False]
-    assert store.expire_leases(
-        evaluation_identity_sha256=contract.evaluation_identity_sha256
-    ) == 1
+    assert store.expire_leases() == 1
