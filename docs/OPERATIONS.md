@@ -35,7 +35,9 @@ and dependency error messages are excluded.
   systemd credential under `/run/credentials`) rather than process arguments.
   Non-loopback Redis connections must use `rediss://`.
 - Use PostgreSQL for API and Worker persistence. SQLite remains unsupported for
-  a multi-process or restart-tolerant deployment.
+  a multi-process or restart-tolerant deployment. Pass authenticated URLs through
+  `--postgres-database-url-file`; non-loopback connections must set `sslmode` to
+  `require`, `verify-ca`, or `verify-full`.
 - Keep dataset manifests, gold data, tokenizer snapshots, and vLLM launch evidence
   on server-owned volumes that are unreadable by web users and tenants.
 - Provide an authentication callback backed by a server-verified identity provider.

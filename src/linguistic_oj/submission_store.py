@@ -188,7 +188,7 @@ class SubmissionStoreProtocol(Protocol):
 
     def expire_leases(self, *, evaluation_identity_sha256: str) -> int: ...
 
-    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int: ...
+    def expire_queued_deadlines(self) -> int: ...
 
     def complete_success(
         self, claim: ClaimedSubmission, *, owner_result: dict[str, Any]
@@ -778,7 +778,7 @@ class SubmissionStore:
             connection.commit()
         return updated.rowcount
 
-    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_queued_deadlines(self) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -788,9 +788,8 @@ class SubmissionStore:
                 SET status = 'failed', completed_at = ?, failure_code = 'JOB_DEADLINE',
                     failure_retryable = 0
                 WHERE status = 'queued' AND deadline_at <= ?
-                      AND evaluation_identity_sha256 = ?
                 """,
-                (now_text, now_text, evaluation_identity_sha256),
+                (now_text, now_text),
             )
             connection.commit()
         return updated.rowcount

@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from .api import Authenticate, create_app
 from .mvp_contract import EvaluationContract, load_qwen_worker_contract
+from .postgres_migrations import resolve_postgres_url
 from .redis_job_queue import RedisJobQueue, resolve_redis_url
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
@@ -97,6 +98,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
     storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
+    storage.add_argument("--postgres-database-url-file", type=Path)
     redis = parser.add_mutually_exclusive_group(required=True)
     redis.add_argument("--redis-url")
     redis.add_argument("--redis-url-file", type=Path)
@@ -120,6 +122,12 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     if args.environment == "production" and args.database is not None:
         parser.error("production Qwen API requires PostgreSQL persistence")
     try:
+        if args.database is None:
+            args.postgres_database_url = resolve_postgres_url(
+                inline_url=args.postgres_database_url,
+                credential_file=args.postgres_database_url_file,
+                allow_inline_credentials=args.environment != "production",
+            )
         args.redis_url = resolve_redis_url(
             inline_url=args.redis_url,
             credential_file=args.redis_url_file,

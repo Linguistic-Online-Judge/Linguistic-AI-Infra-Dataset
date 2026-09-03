@@ -208,9 +208,7 @@ class OutboxDispatcher:
         """Rebuild queued deliveries and publish durable outbox work at startup."""
 
         with self._dispatch_lock:
-            self._store.expire_queued_deadlines(
-                evaluation_identity_sha256=self._evaluation_identity_sha256
-            )
+            self._store.expire_queued_deadlines()
             recovered = self.recover_published_queued()
             return recovered + self.dispatch_pending()
 
@@ -333,9 +331,7 @@ class _SubmissionWorkerCore:
             self._store.expire_leases(
                 evaluation_identity_sha256=self._contract.evaluation_identity_sha256
             )
-            self._store.expire_queued_deadlines(
-                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-            )
+            self._store.expire_queued_deadlines()
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
         if delivery is None:
