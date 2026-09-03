@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -306,6 +307,50 @@ def _headers(subject: str, idempotency_key: str | None = None) -> dict[str, str]
     return headers
 
 
+def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path, caplog) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, dispatcher, _, _, _ = _components(tmp_path, artifacts, contract)
+
+    def unavailable_dependency() -> None:
+        raise RuntimeError("redis password must not be exposed")
+
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        readiness_check=unavailable_dependency,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+    with caplog.at_level(logging.INFO, logger="linguistic_oj.http"):
+        with TestClient(app) as client:
+            live = client.get(
+                "/health/live",
+                headers={
+                    "Authorization": "Bearer top-secret",
+                    "X-Request-ID": "health-check-1",
+                },
+            )
+            ready = client.get("/health/ready")
+
+    assert live.status_code == 200
+    assert live.json() == {"status": "live"}
+    assert live.headers["x-request-id"] == "health-check-1"
+    assert ready.status_code == 503
+    assert ready.json() == {"detail": "Service not ready"}
+    records = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "linguistic_oj.http"
+    ]
+    assert [record["status_code"] for record in records] == [200, 503]
+    assert records[0]["request_id"] == "health-check-1"
+    assert all("top-secret" not in record.message for record in caplog.records)
+    assert all("redis password" not in record.message for record in caplog.records)
+
+
 def _assert_no_private_fields(value: object) -> None:
     forbidden = {
         "answers",
@@ -497,6 +542,14 @@ def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path
             contract=contract,
             authenticate=_authenticate,
             allow_draft_submissions=True,
+            environment="production",
+        )
+    with pytest.raises(ValueError, match="requires a readiness check"):
+        create_app(
+            store=store,
+            dispatcher=dispatcher,
+            contract=contract,
+            authenticate=_authenticate,
             environment="production",
         )
 

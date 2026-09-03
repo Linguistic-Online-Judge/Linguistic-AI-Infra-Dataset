@@ -248,6 +248,10 @@ class SubmissionStore:
                 (_timestamp(_utc_now()),),
             )
 
+    def health_check(self) -> None:
+        with self._connect() as connection:
+            connection.execute("SELECT 1").fetchone()
+
     def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord:
         if not auth_subject or not public_handle or "@" in public_handle:
             raise ValueError("user subject and non-email public handle are required")

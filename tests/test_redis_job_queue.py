@@ -225,9 +225,34 @@ def test_redis_queue_rejects_wrong_contract_route(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(ValueError, match="routing key"):
         queue.publish(_message(_routing_key("contract-b")))
 
-    with pytest.raises(ValueError, match="decode_responses"):
+    with pytest.raises(ValueError, match="unsupported query parameters"):
         RedisJobQueue(
             redis_url="redis://localhost:6379/0?decode_responses=true",
+            routing_key=_routing_key("contract-a"),
+        )
+    with pytest.raises(ValueError, match="unsupported query parameters"):
+        RedisJobQueue(
+            redis_url="rediss://redis.example:6379/0?ssl_cert_reqs=none",
+            routing_key=_routing_key("contract-a"),
+        )
+    with pytest.raises(ValueError, match="unsupported query parameters"):
+        RedisJobQueue(
+            redis_url="redis://localhost:6379/0?socket_timeout=300",
+            routing_key=_routing_key("contract-a"),
+        )
+    with pytest.raises(ValueError, match="unsupported query parameters"):
+        RedisJobQueue(
+            redis_url="redis://localhost:6379/0?password=secret",
+            routing_key=_routing_key("contract-a"),
+        )
+    with pytest.raises(ValueError, match="protocol query parameter"):
+        RedisJobQueue(
+            redis_url="redis://localhost:6379/0?protocol=3&protocol=2",
+            routing_key=_routing_key("contract-a"),
+        )
+    with pytest.raises(ValueError, match="must use rediss"):
+        RedisJobQueue(
+            redis_url="redis://redis.example:6379/0",
             routing_key=_routing_key("contract-a"),
         )
 
