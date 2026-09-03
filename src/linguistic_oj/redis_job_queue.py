@@ -26,6 +26,7 @@ _MESSAGE_FIELDS = {
     "contract_snapshot_sha256",
 }
 _LOOPBACK_REDIS_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_ALLOWED_REDIS_URL_QUERY_PARAMETERS = frozenset({"db", "protocol"})
 _MAX_REDIS_CREDENTIAL_BYTES = 4096
 _MINIMUM_REDIS_VERSION = (6, 2)
 _PUBLISH_SCRIPT = """
@@ -175,8 +176,21 @@ class RedisJobQueue:
             raise ValueError("redis_url must use redis, rediss, or unix")
         if parsed_url.scheme == "redis" and parsed_url.hostname not in _LOOPBACK_REDIS_HOSTS:
             raise ValueError("non-loopback Redis connections must use rediss")
-        if "decode_responses" in parse_qs(parsed_url.query):
-            raise ValueError("redis_url must not configure decode_responses")
+        query = parse_qs(parsed_url.query, keep_blank_values=True)
+        unsupported_parameters = set(query) - _ALLOWED_REDIS_URL_QUERY_PARAMETERS
+        if unsupported_parameters:
+            raise ValueError(
+                "redis_url contains unsupported query parameters: "
+                + ", ".join(sorted(unsupported_parameters))
+            )
+        if "db" in query and (
+            len(query["db"]) != 1 or not query["db"][0].isdigit()
+        ):
+            raise ValueError("redis_url db query parameter must be a non-negative integer")
+        if "protocol" in query and (
+            len(query["protocol"]) != 1 or query["protocol"][0] not in {"2", "3"}
+        ):
+            raise ValueError("redis_url protocol query parameter must be 2 or 3")
         if not isinstance(routing_key, str) or _SHA256.fullmatch(routing_key) is None:
             raise ValueError("routing_key must be a lowercase SHA-256 value")
         if (
