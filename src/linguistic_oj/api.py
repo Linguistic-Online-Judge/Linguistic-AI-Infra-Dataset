@@ -26,6 +26,7 @@ from .submission_store import (
     SubmissionStatus,
     SubmissionStore,
     UserRecord,
+    UserRole,
 )
 
 
@@ -57,6 +58,14 @@ class SubmissionResponse(BaseModel):
     created_at: str
     started_at: str | None
     completed_at: str | None
+
+
+class CurrentUserResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    user_id: str
+    public_handle: str
+    role: UserRole
 
 
 class GenerationSettingsResponse(BaseModel):
@@ -303,6 +312,16 @@ def create_app(
         return user
 
     current_user_dependency = Depends(current_user)
+
+    @app.get("/v1/users/me", response_model=CurrentUserResponse)
+    def get_current_user(
+        user: UserRecord = current_user_dependency,
+    ) -> CurrentUserResponse:
+        return CurrentUserResponse(
+            user_id=user.user_id,
+            public_handle=user.public_handle,
+            role=user.role,
+        )
 
     @app.post(
         "/v1/submissions",

@@ -22,7 +22,8 @@
 | OpenAI-compatible 自托管模型 Provider | 已完成 |
 | GPU 模型部署与 4B/9B 真实基准 | 已完成 |
 | FastAPI、SQLite、Redis Streams、Mock/Qwen Worker | 已完成 MVP 纵向切片 |
-| 前端、生产认证、PostgreSQL 迁移 | 未完成 |
+| 普通用户与管理员两级账号基础 | 已完成角色存储与当前用户接口 |
+| 前端、生产认证与生产数据库升级 | 未完成 |
 
 当前评测流程：
 

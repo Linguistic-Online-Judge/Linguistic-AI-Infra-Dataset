@@ -8,7 +8,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-POSTGRES_SCHEMA_VERSION = 2
+POSTGRES_SCHEMA_VERSION = 3
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
 POSTGRES_SESSION_OPTIONS = (
     "-c timezone=UTC "
@@ -97,9 +97,15 @@ CREATE INDEX IF NOT EXISTS idx_results_leaderboard_v2
 ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC, submission_id ASC);
 """
 
+_SCHEMA_V3 = """
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
+CHECK (role IN ('user', 'admin'));
+"""
+
 _POSTGRES_MIGRATIONS = {
     1: _SCHEMA_V1,
     2: _SCHEMA_V2,
+    3: _SCHEMA_V3,
 }
 
 
