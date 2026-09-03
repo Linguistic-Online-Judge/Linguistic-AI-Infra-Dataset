@@ -332,6 +332,35 @@ def test_openai_provider_structured_dependency_schema_does_not_apply_graph_check
     assert provider.generate(request).raw_text == content
 
 
+def test_openai_provider_structured_schema_preserves_numeric_precision(
+    fake_model_service: str,
+) -> None:
+    content = (
+        '{"arcs":[{"token_id":100000000000000000000.1,'
+        '"head_id":0,"deprel":"root"}]}'
+    )
+    _FakeModelHandler.response_payload = {
+        "choices": [{"message": {"content": content}}]
+    }
+    provider = OpenAICompatibleProvider(
+        base_url=fake_model_service,
+        identity=_identity(),
+        structured_json=True,
+    )
+    request = ModelRequest(
+        task=TaskType.DEPENDENCY,
+        language="Test",
+        treebank="Tiny",
+        student_prompt="Parse every token.",
+        model_input=DependencyModelInput(
+            tokens=(DependencyTokenInput(token_id=1, form="A"),)
+        ),
+    )
+
+    with pytest.raises(ProviderContractError, match="structured output constraint"):
+        provider.generate(request)
+
+
 def test_xpos_inventory_mapping_is_read_only() -> None:
     with pytest.raises(TypeError):
         providers_module._XPOS_TAG_INVENTORIES[("German", "HDT")] = ("PAV",)

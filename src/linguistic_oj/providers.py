@@ -7,6 +7,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from threading import Event, Lock, Thread
 from time import monotonic
 from types import MappingProxyType
@@ -173,7 +174,7 @@ def _json_value_matches_schema(
     if schema_type == "integer":
         if type(value) is int:
             number = value
-        elif type(value) is float and math.isfinite(value) and value.is_integer():
+        elif isinstance(value, Decimal) and value.is_finite() and value == value.to_integral():
             number = value
         else:
             return False
@@ -845,7 +846,11 @@ class OpenAICompatibleProvider:
             return
 
         try:
-            payload = json.loads(content, parse_constant=_reject_json_constant)
+            payload = json.loads(
+                content,
+                parse_float=Decimal,
+                parse_constant=_reject_json_constant,
+            )
         except (json.JSONDecodeError, ValueError):
             raise ProviderContractError(
                 "model service did not satisfy the structured output constraint"
