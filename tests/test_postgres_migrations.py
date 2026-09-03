@@ -30,7 +30,7 @@ def test_validate_postgres_url_requires_remote_tls(sslmode: str) -> None:
 
 
 def test_validate_postgres_url_cannot_bypass_tls_with_query_host() -> None:
-    with pytest.raises(ValueError, match="secure sslmode"):
+    with pytest.raises(ValueError, match="Unix socket"):
         validate_postgres_url(
             "postgresql://judge@/linguistic_oj?host=db.example&sslmode=disable"
         )
@@ -55,6 +55,21 @@ def test_validate_postgres_url_rejects_multihost_authority() -> None:
         validate_postgres_url(
             "postgresql://judge@127.0.0.1:5432,db.example:5432/linguistic_oj"
         )
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "postgresql:///linguistic_oj?host=&sslmode=require",
+        "postgresql://judge@127.0.0.1/expected?dbname=",
+        "postgresql://judge@127.0.0.1/linguistic_oj?host=db.example&sslmode=require",
+        "postgresql://judge@127.0.0.1/linguistic_oj?hostaddr=203.0.113.10",
+        "postgresql://judge@127.0.0.1/linguistic_oj?port=6432",
+    ),
+)
+def test_validate_postgres_url_rejects_target_overrides(database_url: str) -> None:
+    with pytest.raises(ValueError, match="target parameters|Unix socket"):
+        validate_postgres_url(database_url)
 
 
 def test_validate_postgres_url_rejects_libpq_environment(

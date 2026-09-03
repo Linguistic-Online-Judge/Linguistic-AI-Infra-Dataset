@@ -19,6 +19,7 @@ POSTGRES_SESSION_OPTIONS = (
 _MAX_POSTGRES_CREDENTIAL_BYTES = 4096
 _SECURE_POSTGRES_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
 _LIBPQ_CONNECTION_ENVIRONMENT = re.compile(r"PG[A-Z0-9_]+")
+_POSTGRES_TARGET_QUERY_PARAMETERS = frozenset({"dbname", "hostaddr", "port", "user"})
 
 _EXPECTED_SCHEMA_VERSIONS = tuple(range(1, POSTGRES_SCHEMA_VERSION + 1))
 
@@ -128,24 +129,27 @@ def validate_postgres_url(database_url: str) -> str:
     query = parse_qs(parsed.query, keep_blank_values=True)
     if "service" in query:
         raise ValueError("PostgreSQL service indirection is not supported")
+    if any(len(values) != 1 for values in query.values()):
+        raise ValueError("PostgreSQL URL must not repeat query parameters")
+    target_overrides = set(query) & _POSTGRES_TARGET_QUERY_PARAMETERS
+    if target_overrides:
+        raise ValueError(
+            "PostgreSQL URL contains unsupported target parameters: "
+            + ", ".join(sorted(target_overrides))
+        )
     authority = unquote(parsed.netloc.rpartition("@")[2])
-    query_has_multiple_hosts = any(
-        "," in value
-        for key in ("host", "hostaddr")
-        for value in query.get(key, [])
-    )
-    if "," in authority or query_has_multiple_hosts:
+    if "," in authority:
         raise ValueError("PostgreSQL URL must specify exactly one host")
-    if len(query.get("host", [])) > 1 or len(query.get("hostaddr", [])) > 1:
-        raise ValueError("PostgreSQL URL must not repeat host parameters")
-    host_parameters = [*query.get("host", []), *query.get("hostaddr", [])]
-    if parsed.hostname is None and not host_parameters:
+    query_host = query.get("host", [])
+    if query_host and (
+        parsed.hostname is not None
+        or not query_host[0]
+        or not query_host[0].startswith("/")
+    ):
+        raise ValueError("PostgreSQL query host must be an unambiguous Unix socket")
+    if parsed.hostname is None and not query_host:
         raise ValueError("PostgreSQL URL must specify an explicit host or Unix socket")
-    if any(
-        not _is_loopback_postgres_host(host)
-        for parameter in host_parameters
-        for host in parameter.split(",")
-    ) or (not host_parameters and not _is_loopback_postgres_host(parsed.hostname)):
+    if not query_host and not _is_loopback_postgres_host(parsed.hostname):
         ssl_modes = query.get("sslmode", [])
         if len(ssl_modes) != 1 or ssl_modes[0] not in _SECURE_POSTGRES_SSL_MODES:
             raise ValueError(
