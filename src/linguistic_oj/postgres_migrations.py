@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import re
 from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 POSTGRES_SCHEMA_VERSION = 2
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
@@ -16,6 +18,7 @@ POSTGRES_SESSION_OPTIONS = (
 )
 _MAX_POSTGRES_CREDENTIAL_BYTES = 4096
 _SECURE_POSTGRES_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
+_LIBPQ_CONNECTION_ENVIRONMENT = re.compile(r"PG[A-Z0-9_]+")
 
 _EXPECTED_SCHEMA_VERSIONS = tuple(range(1, POSTGRES_SCHEMA_VERSION + 1))
 
@@ -114,9 +117,25 @@ def validate_postgres_url(database_url: str) -> str:
     parsed = urlparse(database_url)
     if parsed.scheme not in {"postgres", "postgresql"} or parsed.path in {"", "/"}:
         raise ValueError("database URL must be a PostgreSQL URL with a database name")
+    ambient_parameters = sorted(
+        key for key in os.environ if _LIBPQ_CONNECTION_ENVIRONMENT.fullmatch(key)
+    )
+    if ambient_parameters:
+        raise ValueError(
+            "libpq PG* connection environment is not supported: "
+            + ", ".join(ambient_parameters)
+        )
     query = parse_qs(parsed.query, keep_blank_values=True)
     if "service" in query:
         raise ValueError("PostgreSQL service indirection is not supported")
+    authority = unquote(parsed.netloc.rpartition("@")[2])
+    query_has_multiple_hosts = any(
+        "," in value
+        for key in ("host", "hostaddr")
+        for value in query.get(key, [])
+    )
+    if "," in authority or query_has_multiple_hosts:
+        raise ValueError("PostgreSQL URL must specify exactly one host")
     if len(query.get("host", [])) > 1 or len(query.get("hostaddr", [])) > 1:
         raise ValueError("PostgreSQL URL must not repeat host parameters")
     host_parameters = [*query.get("host", []), *query.get("hostaddr", [])]
@@ -163,7 +182,14 @@ def resolve_postgres_url(
     parsed = urlparse(database_url)
     query = parse_qs(parsed.query, keep_blank_values=True)
     if not allow_inline_credentials and inline_url is not None and (
-        parsed.password is not None or "password" in query
+        parsed.password is not None
+        or any(
+            key == "password"
+            or key.endswith("password")
+            or "secret" in key
+            or (key.startswith("scram_") and key.endswith("_key"))
+            for key in query
+        )
     ):
         raise ValueError(
             "production PostgreSQL credentials must use --postgres-database-url-file"
