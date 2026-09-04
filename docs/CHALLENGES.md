@@ -45,6 +45,46 @@ The builder rejects duplicate IDs in the matching candidate pool and requests
 larger than that pool. Selected IDs are sorted before hashing and storage so
 output is stable.
 
+## Challenge registry validation
+
+The challenge registry is a small index of public challenge descriptions and
+their optional evaluation contracts. A registry document has this shape:
+
+```json
+{
+  "schema_version": "challenge-contract-registry-v1",
+  "entries": [
+    {
+      "public_descriptor_path": "challenges/public/example-v1.json",
+      "evaluation_contract_path": "config/example-evaluation-v1.json"
+    }
+  ]
+}
+```
+
+Call `load_challenge_contract_registry()` during trusted server startup, before
+accepting work. The loader performs all checks immediately:
+
+1. Every referenced path must be a relative POSIX path below the project root.
+2. Public descriptor paths and evaluation contract paths must not be repeated.
+3. Every public description must have a unique challenge ID and valid task,
+   metric, response-schema, version, status, and SHA-256 metadata.
+4. When an evaluation contract is present, its challenge ID, status, security
+   level, dataset and selection hashes, task, response schema, scorer version,
+   and aggregation version must match the public description.
+5. The returned maps are read-only, so later application code cannot replace a
+   validated entry by accident.
+
+An entry may set `evaluation_contract_path` to `null` when it is public catalog
+metadata only. Such an entry appears in `public_challenges` but not in
+`contracts`. A mismatch or malformed entry raises an exception; a startup caller
+must fail closed instead of serving a partly validated registry.
+
+The registry does not read private manifests, selected sample IDs, gold answers,
+or datasets. Those remain separate server-side inputs. Registry tests create all
+descriptions and contracts in temporary directories and do not register held or
+production data.
+
 ## First challenge
 
 The initial development challenge is:

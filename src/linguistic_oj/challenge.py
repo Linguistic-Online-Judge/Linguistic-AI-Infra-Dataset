@@ -243,6 +243,34 @@ def _is_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
+def validate_public_challenge(public: PublicChallenge) -> None:
+    """Validate public metadata without requiring private challenge artifacts."""
+
+    if not isinstance(public, PublicChallenge):
+        raise TypeError("public must be a PublicChallenge")
+    task = TaskType(public.task)
+    expected_primary, expected_secondary = TASK_METRICS[task]
+    if public.primary_metric != expected_primary or public.secondary_metrics != expected_secondary:
+        raise ValueError("public metrics do not match the task contract")
+    if public.response_schema_version != RESPONSE_SCHEMA_VERSIONS[task]:
+        raise ValueError("response schema version does not match the task contract")
+    versions = (public.scorer_version, public.aggregation_version)
+    if versions not in {(None, None), (SCORER_VERSION, AGGREGATION_VERSION)}:
+        raise ValueError("public scorer and aggregation versions do not match the runtime")
+    if public.security_level != ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value:
+        raise ValueError("unsupported challenge security level")
+    if public.status != ChallengeStatus.DRAFT.value:
+        raise ValueError("unsupported challenge status")
+    if public.sample_count <= 0:
+        raise ValueError("public sample count must be positive")
+    if public.challenge_id != make_challenge_id(
+        public.language, public.treebank, task, public.version
+    ):
+        raise ValueError("challenge_id does not match challenge metadata")
+    if not _is_sha256(public.dataset_sha256) or not _is_sha256(public.selection_sha256):
+        raise ValueError("challenge fingerprints must be lowercase SHA-256 values")
+
+
 def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
     """Validate the complete public/private challenge identity and manifest."""
 
@@ -253,12 +281,7 @@ def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
     ):
         raise TypeError("artifacts must contain PublicChallenge and PrivateChallengeManifest")
 
-    task = TaskType(public.task)
-    expected_primary, expected_secondary = TASK_METRICS[task]
-    if public.primary_metric != expected_primary or public.secondary_metrics != expected_secondary:
-        raise ValueError("public metrics do not match the task contract")
-    if public.response_schema_version != RESPONSE_SCHEMA_VERSIONS[task]:
-        raise ValueError("response schema version does not match the task contract")
+    validate_public_challenge(public)
     if public.scorer_version != SCORER_VERSION or private.scorer_version != SCORER_VERSION:
         raise ValueError("challenge scorer version does not match the runtime")
     if (
@@ -266,11 +289,6 @@ def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
         or private.aggregation_version != AGGREGATION_VERSION
     ):
         raise ValueError("challenge aggregation version does not match the runtime")
-    if public.security_level != ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value:
-        raise ValueError("unsupported challenge security level")
-    if public.status != ChallengeStatus.DRAFT.value:
-        raise ValueError("unsupported challenge status")
-
     matching_fields = (
         "challenge_id",
         "version",
@@ -282,13 +300,6 @@ def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
     )
     if any(getattr(public, field) != getattr(private, field) for field in matching_fields):
         raise ValueError("public challenge and private manifest do not match")
-    if public.challenge_id != make_challenge_id(
-        public.language, public.treebank, task, public.version
-    ):
-        raise ValueError("challenge_id does not match challenge metadata")
-    if not _is_sha256(public.dataset_sha256) or not _is_sha256(public.selection_sha256):
-        raise ValueError("challenge fingerprints must be lowercase SHA-256 values")
-
     sample_ids = private.sample_ids
     if (
         not sample_ids
