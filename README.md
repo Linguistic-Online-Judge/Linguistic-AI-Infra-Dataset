@@ -7,7 +7,7 @@
 
 一句话说明当前进度：**现在可以用 Mock Provider 或 OpenAI-compatible
 自托管模型跑完整评测，并已具备 FastAPI、SQLite、Redis Streams 和 Qwen Worker
-的后端纵向切片；前端与生产认证/数据库迁移仍未完成。**
+的后端纵向切片以及公开题目浏览网页；生产认证、网页提交与数据库迁移仍未完成。**
 
 ## 当前能做什么
 
@@ -24,7 +24,8 @@
 | FastAPI、SQLite、Redis Streams、Mock/Qwen Worker | 已完成 MVP 纵向切片 |
 | 普通用户与管理员两级账号基础 | 已完成角色存储与当前用户接口 |
 | 匿名题目列表与题目详情 API | 已完成安全公开元数据接口 |
-| 前端、生产认证与生产数据库升级 | 未完成 |
+| 公开题目目录与详情网页 | 已完成桌面和手机界面 |
+| 生产认证、网页提交与生产数据库升级 | 未完成 |
 
 当前评测流程：
 
@@ -65,6 +66,33 @@ python -m venv .venv
 
 测试通过说明数据读取、回答解析、单样本评分、挑战汇总和离线 Runner
 可以协同工作。
+
+## 运行公开题目网页
+
+网页需要 Node.js 24.15 或更高版本。先启动配置好题目登记表的 API，然后在
+`web/` 目录安装依赖并启动开发服务器：
+
+```powershell
+Set-Location web
+npm ci
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+浏览器访问 `http://localhost:3000/challenges`。`LINGUISTIC_OJ_API_URL`
+只供 Next.js 服务端读取，不会作为公开环境变量发送到浏览器。
+
+提交前运行完整前端检查：
+
+```powershell
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+网页的视觉方向、信息架构、文案规则和无障碍要求见
+[`docs/WEB_DESIGN.md`](docs/WEB_DESIGN.md)。
 
 ## 运行一次 Mock 评测
 
@@ -224,12 +252,13 @@ src/linguistic_oj/qwen_runtime.py   固定 tokenizer 预检和 Qwen 运行时身
 src/linguistic_oj/qwen_api.py      多题目 API、数据库与独立 Redis 队列装配
 src/linguistic_oj/qwen_worker.py   按登记表题目标识启动单合同 Qwen Worker
 src/linguistic_oj/api.py          FastAPI 提交、状态、结果和排行榜接口
+web/                              Next.js 公开题目目录与详情网页
 tests/                            自动化测试
 ```
 
 ## 下一步
 
-当前阶段先验证固定真实模型，不急着开发网页。
+当前阶段已完成固定真实模型验证、后端纵向切片与第一段公开网页流程。
 
 1. 已用一张 RTX 3090、vLLM 和 Qwen3.5-4B/9B 跑通可复现的分词和中英文 UPOS 基准。
 2. 9B 在已测任务上均优于 4B，暂定为优先候选，但 UPOS 输出合法率仍不够稳定。
@@ -242,7 +271,8 @@ tests/                            自动化测试
 7. 已实现并在真实 GPU Worker/API 链路验证 Qwen v2 固定 tokenizer/chat-template 身份、
    全样本预检、共享 deadline、Provider 响应上限、终止确认和 runtime attestation。
 8. 已实现登记表驱动的多题目 API 路由；每个合同使用独立队列，每个 Worker 固定一个题目。
-9. 下一阶段是持久 Redis 7+、PostgreSQL、生产认证、健康监控和重启/并发验证；完成前不
+9. 已实现中文为主的公开题目目录与详情网页，覆盖响应式布局、页面状态和安全 API 解析。
+10. 下一阶段是持久 Redis 7+、PostgreSQL、生产认证、健康监控和重启/并发验证；完成前不
    对学生开放提交。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和
