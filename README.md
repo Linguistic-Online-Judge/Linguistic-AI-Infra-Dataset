@@ -220,6 +220,8 @@ src/linguistic_oj/submission_store.py SQLite 提交、outbox、结果和排行�
 src/linguistic_oj/submission_jobs.py 进程内队列、outbox dispatcher 和 Mock Worker
 src/linguistic_oj/redis_job_queue.py Redis Streams 队列和 visibility recovery
 src/linguistic_oj/qwen_runtime.py   固定 tokenizer 预检和 Qwen 运行时身份核验
+src/linguistic_oj/qwen_api.py      多题目 API、数据库与独立 Redis 队列装配
+src/linguistic_oj/qwen_worker.py   按登记表题目标识启动单合同 Qwen Worker
 src/linguistic_oj/api.py          FastAPI 提交、状态、结果和排行榜接口
 tests/                            自动化测试
 ```
@@ -238,7 +240,8 @@ tests/                            自动化测试
    旧 receipt 隔离和最多两次的完整 Job 重试。
 7. 已实现并在真实 GPU Worker/API 链路验证 Qwen v2 固定 tokenizer/chat-template 身份、
    全样本预检、共享 deadline、Provider 响应上限、终止确认和 runtime attestation。
-8. 下一阶段是持久 Redis 7+、PostgreSQL、生产认证、健康监控和重启/并发验证；完成前不
+8. 已实现登记表驱动的多题目 API 路由；每个合同使用独立队列，每个 Worker 固定一个题目。
+9. 下一阶段是持久 Redis 7+、PostgreSQL、生产认证、健康监控和重启/并发验证；完成前不
    对学生开放提交。
 
 这样安排的原因是：模型速度和显存需求会直接决定任务并发、超时、队列和

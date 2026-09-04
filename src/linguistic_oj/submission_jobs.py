@@ -28,10 +28,10 @@ from .providers import (
     deterministic_mock_tokenizer_identity,
 )
 from .qwen_runtime import (
-    QWEN_EVALUATION_CONTRACT_VERSION,
     QwenTokenizerPreflight,
     QwenTokenLimitExceeded,
     attest_qwen_runtime_from_snapshot,
+    validate_qwen_evaluation_contract,
 )
 from .runner import (
     EvaluationPreflightError,
@@ -528,10 +528,7 @@ class QwenSubmissionWorker(_SubmissionWorkerCore):
         tokenizer_snapshot_path: Path,
         launch_evidence_path: Path,
     ) -> None:
-        if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
-            raise ValueError("Qwen worker requires mvp-evaluation-v2")
-        if not contract.retry_requires_prior_request_terminated:
-            raise ValueError("Qwen retry policy must require prior request termination")
+        validate_qwen_evaluation_contract(contract)
         runtime = attest_qwen_runtime_from_snapshot(
             contract,
             provider,

@@ -18,8 +18,9 @@ runtime:
 | Context length | 4,096 tokens |
 | Model mode | text-only, non-thinking |
 
-The online worker uses `config/mvp_evaluation_v2.json`. Its pinned 9B tokenizer
-evidence at the model revision above is:
+Each online Worker selects one `mvp-evaluation-v2` contract from a
+deployment-owned challenge registry. The pinned 9B tokenizer evidence at the
+model revision above is:
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -35,13 +36,14 @@ artifacts.
 
 ## Online worker attestation
 
-`load_qwen_worker_contract(root)` loads the only contract accepted by
-`QwenSubmissionWorker`: `mvp-evaluation-v2`. At startup it loads the tokenizer
-from a deployment-owned local model directory with Transformers in offline mode,
-rehashes the two tokenizer files and template, and verifies the local vLLM
-`/v1/models` response before it claims a job. The directory name is not treated
-as revision evidence; the pinned tokenizer file hashes are. The Worker accepts
-only a loopback hostname:
+At startup the Worker loads the complete registry, selects the required challenge
+ID, and accepts only an `mvp-evaluation-v2` contract whose public description also
+matches the explicitly configured challenge artifacts. It then loads the
+tokenizer from a deployment-owned local model directory with Transformers in
+offline mode, rehashes the two tokenizer files and template, and verifies the
+local vLLM `/v1/models` response before it claims a job. The directory name is not
+treated as revision evidence; the pinned tokenizer file hashes are. The Worker
+accepts only a loopback hostname:
 `127.0.0.1`, `::1`, or `localhost`. An SSH tunnel can also bind to a loopback
 address and cannot be distinguished by the HTTP client, so deployment network
 policy must prohibit tunnels and remote port forwarding for online evaluation.
@@ -74,20 +76,47 @@ local service. It does not accept a caller-supplied identity assertion. Every
 chat-completions request explicitly sends `add_generation_prompt: true` and
 `enable_thinking: false`, matching local token preflight.
 
-Install the Worker with `pip install '.[qwen-worker]'`. Run it from a deployment
-root containing `config/mvp_evaluation_v2.json`, for example
-`python -m linguistic_oj.qwen_worker --root /srv/linguistic-oj ...`. It requires
-the SQLite database, Redis URL, challenge artifacts, dataset, localhost vLLM URL,
-tokenizer snapshot, and launch-evidence paths as explicit command-line arguments.
-Use `--once` for a single operational smoke delivery; otherwise it polls the
-contract-specific Redis Stream continuously.
+Install the Worker with `pip install '.[qwen-worker]'`. Run it with a
+deployment-owned registry and one selected challenge, for example:
 
-Run the paired API with `python -m linguistic_oj.qwen_api --root /srv/linguistic-oj
---database ... --redis-url ... --authenticate package.module:callback`. The
-authentication callback receives a FastAPI request and must return
+```bash
+python -m linguistic_oj.qwen_worker \
+  --root /srv/linguistic-oj \
+  --challenge-registry config/deployment-challenges.json \
+  --challenge-id en-example-upos-v1 \
+  --postgres-database-url-file /run/credentials/postgres-url \
+  --redis-url-file /run/credentials/redis-url \
+  --public-challenge challenges/public/en-example-upos-v1.json \
+  --private-challenge runtime/private/challenges/en-example-upos-v1.json \
+  --dataset runtime/private/datasets/english.jsonl \
+  --vllm-base-url http://127.0.0.1:8000/v1 \
+  --tokenizer-snapshot /srv/models/qwen3.5-9b \
+  --launch-evidence /run/linguistic-oj/qwen-launch.json
+```
+
+Run these commands from the deployment root when using relative artifact paths,
+or pass absolute paths for the public challenge, private challenge, dataset,
+tokenizer snapshot, and launch evidence.
+
+Use `--once` for a single operational smoke delivery; otherwise it polls the
+selected contract's Redis Stream continuously.
+
+Run the paired API with the same registry:
+
+```bash
+python -m linguistic_oj.qwen_api \
+  --root /srv/linguistic-oj \
+  --challenge-registry config/deployment-challenges.json \
+  --postgres-database-url-file /run/credentials/postgres-url \
+  --redis-url-file /run/credentials/redis-url \
+  --authenticate package.module:callback
+```
+
+The authentication callback receives a FastAPI request and must return
 `linguistic_oj.api.Principal`; it is deployment-owned rather than a built-in
-header-based fallback. Both API and Worker derive the same v2 contract snapshot
-and Redis routing key. Development smoke tests may opt in to draft submissions;
+header-based fallback. The API creates one contract-snapshot Redis route per
+executable registry entry. A Worker selects one of those same snapshots by
+challenge ID. Development smoke tests may opt in to draft submissions;
 production cannot.
 
 The model files were downloaded from `https://hf-mirror.com` at the pinned

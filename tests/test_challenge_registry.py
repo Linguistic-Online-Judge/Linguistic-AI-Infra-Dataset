@@ -3,8 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from linguistic_oj.challenge_registry import load_challenge_contract_registry
-from linguistic_oj.mvp_contract import canonical_sha256
+from linguistic_oj.challenge import PublicChallenge
+from linguistic_oj.challenge_registry import (
+    ChallengeContractRegistry,
+    load_challenge_contract_registry,
+)
+from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -176,6 +180,58 @@ def test_registry_loads_two_synthetic_challenges_as_read_only_maps(tmp_path: Pat
         ]
     with pytest.raises(TypeError):
         registry.contracts["new-challenge"] = registry.contracts["en-synthetic-upos-v1"]
+
+
+def test_direct_registry_construction_rejects_mismatched_public_key() -> None:
+    public_mapping = _public_challenge(
+        language="English",
+        treebank="Synthetic",
+        task="upos",
+        challenge_id="en-synthetic-upos-v1",
+        fingerprint="a",
+    )
+    public = PublicChallenge.model_validate_json(json.dumps(public_mapping))
+
+    with pytest.raises(ValueError, match="public challenge registry key"):
+        ChallengeContractRegistry(
+            public_challenges={"wrong-id": public},
+            contracts={},
+        )
+
+
+def test_direct_registry_construction_rejects_contract_without_public_descriptor() -> None:
+    public_mapping = _public_challenge(
+        language="English",
+        treebank="Synthetic",
+        task="upos",
+        challenge_id="en-synthetic-upos-v1",
+        fingerprint="a",
+    )
+    contract = EvaluationContract.from_mapping(_evaluation_contract(public_mapping))
+
+    with pytest.raises(ValueError, match="has no public challenge descriptor"):
+        ChallengeContractRegistry(
+            public_challenges={},
+            contracts={contract.challenge_id: contract},
+        )
+
+
+def test_direct_registry_construction_rejects_mismatched_contract_key() -> None:
+    public_mapping = _public_challenge(
+        language="English",
+        treebank="Synthetic",
+        task="upos",
+        challenge_id="en-synthetic-upos-v1",
+        fingerprint="a",
+    )
+    public = PublicChallenge.model_validate_json(json.dumps(public_mapping))
+    contract = EvaluationContract.from_mapping(_evaluation_contract(public_mapping))
+
+    with pytest.raises(ValueError, match="evaluation contract registry key"):
+        ChallengeContractRegistry(
+            public_challenges={public.challenge_id: public},
+            contracts={"wrong-id": contract},
+        )
 
 
 def test_registry_rejects_duplicate_challenge_ids(tmp_path: Path) -> None:

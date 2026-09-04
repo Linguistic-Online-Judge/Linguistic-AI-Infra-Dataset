@@ -5,16 +5,18 @@ from __future__ import annotations
 import argparse
 import importlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal, cast
 
 from fastapi import FastAPI
 
 from .api import Authenticate, create_app
-from .mvp_contract import EvaluationContract, load_qwen_worker_contract
+from .challenge_registry import ChallengeContractRegistry, load_challenge_contract_registry
 from .postgres_migrations import resolve_postgres_url
+from .qwen_runtime import validate_qwen_evaluation_contract
 from .redis_job_queue import RedisJobQueue, resolve_redis_url
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
@@ -27,15 +29,20 @@ from .submission_store_factory import build_submission_store
 @dataclass(frozen=True, slots=True)
 class QwenApiRuntime:
     app: FastAPI
-    contract: EvaluationContract
-    dispatcher: OutboxDispatcher
-    queue: RedisJobQueue
+    registry: ChallengeContractRegistry
+    dispatchers: Mapping[str, OutboxDispatcher]
+    queues: Mapping[str, RedisJobQueue]
     store: SubmissionStoreProtocol
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dispatchers", MappingProxyType(dict(self.dispatchers)))
+        object.__setattr__(self, "queues", MappingProxyType(dict(self.queues)))
 
 
 def build_qwen_api(
     *,
     root: Path,
+    challenge_registry_path: Path,
     database_path: Path | None = None,
     postgres_database_url: str | None = None,
     redis_url: str,
@@ -44,33 +51,42 @@ def build_qwen_api(
     allow_draft_submissions: bool = False,
     environment: Literal["development", "test", "production"] = "production",
 ) -> QwenApiRuntime:
-    """Compose API, store, and Redis queue for the Qwen v2 contract only."""
+    """Compose one API with an isolated Redis queue for each Qwen contract."""
 
     if environment == "production" and database_path is not None:
         raise ValueError("production Qwen API requires PostgreSQL persistence")
-    contract = load_qwen_worker_contract(root)
+    registry = load_challenge_contract_registry(root, challenge_registry_path)
+    for contract in registry.contracts.values():
+        validate_qwen_evaluation_contract(contract)
     store = build_submission_store(
         database_path=database_path,
         postgres_database_url=postgres_database_url,
     )
-    queue = RedisJobQueue(
-        redis_url=redis_url,
-        routing_key=contract.contract_snapshot_sha256,
-        visibility_timeout_seconds=(
-            contract.job_deadline_seconds + QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS
-        ),
-        namespace=namespace,
-    )
-    dispatcher = OutboxDispatcher(store, queue, contract)
+    queues = {
+        challenge_id: RedisJobQueue(
+            redis_url=redis_url,
+            routing_key=contract.contract_snapshot_sha256,
+            visibility_timeout_seconds=(
+                contract.job_deadline_seconds + QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS
+            ),
+            namespace=namespace,
+        )
+        for challenge_id, contract in registry.contracts.items()
+    }
+    dispatchers = {
+        challenge_id: OutboxDispatcher(store, queues[challenge_id], contract)
+        for challenge_id, contract in registry.contracts.items()
+    }
 
     def readiness_check() -> None:
         store.health_check()
-        queue.health_check()
+        for queue in queues.values():
+            queue.health_check()
 
     app = create_app(
         store=store,
-        dispatcher=dispatcher,
-        contract=contract,
+        registry=registry,
+        dispatchers=dispatchers,
         authenticate=authenticate,
         readiness_check=readiness_check,
         allow_draft_submissions=allow_draft_submissions,
@@ -78,9 +94,9 @@ def build_qwen_api(
     )
     return QwenApiRuntime(
         app=app,
-        contract=contract,
-        dispatcher=dispatcher,
-        queue=queue,
+        registry=registry,
+        dispatchers=dispatchers,
+        queues=queues,
         store=store,
     )
 
@@ -93,7 +109,13 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         "--root",
         type=Path,
         required=True,
-        help="deployment root containing config/mvp_evaluation_v2.json",
+        help="deployment root containing registry-referenced files",
+    )
+    parser.add_argument(
+        "--challenge-registry",
+        type=Path,
+        required=True,
+        help="root-relative challenge registry path",
     )
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
@@ -167,6 +189,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     _configure_safe_request_logging()
     runtime = build_qwen_api(
         root=args.root,
+        challenge_registry_path=args.challenge_registry,
         database_path=args.database,
         postgres_database_url=args.postgres_database_url,
         redis_url=args.redis_url,

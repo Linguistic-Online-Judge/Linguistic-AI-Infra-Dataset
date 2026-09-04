@@ -125,7 +125,9 @@ owner-scoped submission/status/result routes, transactional idempotency and
 outbox, identity-routed in-memory and Redis Streams queues, explicit fenced Mock
 Worker execution, bounded complete-job retries, aggregate-only results, safe
 failure DTOs, version-isolated leaderboards, explicit `user`/`admin` account roles,
-and an owner-safe current-user endpoint. The integration suite covers
+an owner-safe current-user endpoint, and registry-driven multi-challenge routing.
+One API process now owns one queue/outbox dispatcher per executable contract while
+each Worker remains bound to one selected challenge. The integration suite covers
 `202 queued`, replay/conflict behavior, cross-owner `404`, preflight rejection,
 duplicate delivery, visibility recovery, retry success/exhaustion, safe platform
 failure, and Mock/Qwen identity separation. CI validates Redis behavior against a

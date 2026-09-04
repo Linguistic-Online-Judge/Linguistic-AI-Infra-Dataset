@@ -62,8 +62,8 @@ their optional evaluation contracts. A registry document has this shape:
 }
 ```
 
-Call `load_challenge_contract_registry()` during trusted server startup, before
-accepting work. The loader performs all checks immediately:
+The Qwen API and Worker call `load_challenge_contract_registry()` during trusted
+startup, before accepting work. The loader performs all checks immediately:
 
 1. Every referenced path must be a relative POSIX path below the project root.
 2. Public descriptor paths and evaluation contract paths must not be repeated.
@@ -77,13 +77,25 @@ accepting work. The loader performs all checks immediately:
 
 An entry may set `evaluation_contract_path` to `null` when it is public catalog
 metadata only. Such an entry appears in `public_challenges` but not in
-`contracts`. A mismatch or malformed entry raises an exception; a startup caller
-must fail closed instead of serving a partly validated registry.
+`contracts`. The API returns `403` if a client tries to submit to that entry and
+`404` for an unknown challenge ID. A mismatch or malformed entry raises an
+exception; startup fails instead of serving a partly validated registry.
+
+The API creates one contract-routed outbox dispatcher and Redis Stream for each
+executable entry. All executable contracts must share the platform-wide request
+body, outstanding submission, running submission, and global queue limits. Each
+Worker selects one challenge ID at startup and remains bound to that public
+description, contract snapshot, private manifest, dataset, and queue. It never
+selects a contract from an untrusted job message.
 
 The registry does not read private manifests, selected sample IDs, gold answers,
 or datasets. Those remain separate server-side inputs. Registry tests create all
 descriptions and contracts in temporary directories and do not register held or
 production data.
+
+No production registry is committed yet. Deployment must supply the registry
+path explicitly after its entries have passed source-rights and activation
+review.
 
 ## First challenge
 
@@ -107,9 +119,9 @@ The current builder only emits `public_reproducible` and `draft`; private-data
 security validation and challenge activation are future backend workflows.
 
 `micro_f1` declares the metric this challenge uses, and the deterministic
-aggregation and offline runner implement it. Submission persistence is not
-implemented yet, so the current file remains a reproducible development artifact
-rather than an active competition.
+aggregation and offline runner implement it. Submission persistence and
+multi-challenge routing are implemented, but this challenge remains a reproducible
+development artifact rather than an active competition.
 
 Build it from the smaller per-language file:
 

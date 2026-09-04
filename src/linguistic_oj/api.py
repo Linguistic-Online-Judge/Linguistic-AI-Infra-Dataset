@@ -1,4 +1,4 @@
-"""FastAPI boundary for the asynchronous Mock submission slice."""
+"""FastAPI boundary for asynchronous contract-routed submissions."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Annotated, Literal
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from .challenge_registry import ChallengeContractRegistry
 from .mvp_contract import EvaluationContract
 from .submission_jobs import OutboxDispatcher
 from .submission_store import (
@@ -24,7 +25,7 @@ from .submission_store import (
     SubmissionQuotaError,
     SubmissionRecord,
     SubmissionStatus,
-    SubmissionStore,
+    SubmissionStoreProtocol,
     UserRecord,
     UserRole,
 )
@@ -40,6 +41,12 @@ ReadinessCheck = Callable[[], None]
 
 _REQUEST_ID_HEADER = b"x-request-id"
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_SHARED_ADMISSION_LIMITS = (
+    "api_request_body_bytes",
+    "global_queue_depth",
+    "max_outstanding_submissions_per_user",
+    "max_running_submissions_per_user",
+)
 
 
 class CreateSubmissionRequest(BaseModel):
@@ -255,11 +262,43 @@ def _submission_response(submission: SubmissionRecord) -> SubmissionResponse:
     )
 
 
+def _validate_runtime_registry(
+    store: SubmissionStoreProtocol,
+    registry: ChallengeContractRegistry,
+    dispatchers: Mapping[str, OutboxDispatcher],
+) -> int:
+    contracts = registry.contracts
+    if not contracts:
+        raise ValueError("API requires at least one executable challenge contract")
+    if set(dispatchers) != set(contracts):
+        raise ValueError("outbox dispatchers must exactly match executable challenges")
+    for challenge_id, contract in contracts.items():
+        if not dispatchers[challenge_id].matches(store, contract):
+            raise ValueError(
+                f"outbox dispatcher does not match challenge contract: {challenge_id}"
+            )
+    for field in _SHARED_ADMISSION_LIMITS:
+        if len({getattr(contract, field) for contract in contracts.values()}) != 1:
+            raise ValueError(f"registered contracts must share {field}")
+
+    expected_owner_result = frozenset(OwnerResultResponse.model_fields)
+    expected_owner_failure = frozenset(OwnerFailureResponse.model_fields)
+    expected_leaderboard = frozenset(LeaderboardRowResponse.model_fields)
+    for challenge_id, contract in contracts.items():
+        if frozenset(contract.owner_result_fields) != expected_owner_result:
+            raise ValueError(f"owner result fields do not match the API: {challenge_id}")
+        if frozenset(contract.owner_failure_fields) != expected_owner_failure:
+            raise ValueError(f"owner failure fields do not match the API: {challenge_id}")
+        if frozenset(contract.public_leaderboard_fields) != expected_leaderboard:
+            raise ValueError(f"leaderboard fields do not match the API: {challenge_id}")
+    return next(iter(contracts.values())).api_request_body_bytes
+
+
 def create_app(
     *,
-    store: SubmissionStore,
-    dispatcher: OutboxDispatcher,
-    contract: EvaluationContract,
+    store: SubmissionStoreProtocol,
+    registry: ChallengeContractRegistry,
+    dispatchers: Mapping[str, OutboxDispatcher],
     authenticate: Authenticate,
     readiness_check: ReadinessCheck | None = None,
     allow_draft_submissions: bool = False,
@@ -271,13 +310,14 @@ def create_app(
         raise ValueError("draft submission override is forbidden in production")
     if environment == "production" and readiness_check is None:
         raise ValueError("production requires a readiness check")
-    if not dispatcher.matches(store, contract):
-        raise ValueError("outbox dispatcher does not match the store and contract")
+    runtime_dispatchers = dict(dispatchers)
+    request_body_limit = _validate_runtime_registry(store, registry, runtime_dispatchers)
 
     app = FastAPI(title="Linguistic Online Judge API", version="0.1.0")
-    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=contract.api_request_body_bytes)
+    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=request_body_limit)
     app.add_middleware(SafeRequestLoggingMiddleware)
-    dispatcher.recover()
+    for dispatcher in runtime_dispatchers.values():
+        dispatcher.recover()
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
@@ -333,13 +373,19 @@ def create_app(
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
         user: UserRecord = current_user_dependency,
     ) -> SubmissionResponse:
+        if payload.challenge_id not in registry.public_challenges:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Challenge not found")
+        contract = registry.contracts.get(payload.challenge_id)
+        if contract is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Challenge is not open for submissions",
+            )
         if not contract.external_activation_ready and not allow_draft_submissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Challenge is not open for submissions",
             )
-        if payload.challenge_id != contract.challenge_id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Challenge not found")
         if not payload.student_prompt.strip():
             raise HTTPException(
                 status_code=422,
@@ -376,7 +422,7 @@ def create_app(
                 detail=str(error),
             ) from None
 
-        dispatcher.dispatch_pending()
+        runtime_dispatchers[payload.challenge_id].dispatch_pending()
         return _submission_response(created.submission)
 
     @app.get("/v1/submissions/{submission_id}", response_model=SubmissionResponse)
