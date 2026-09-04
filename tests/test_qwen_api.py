@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,8 @@ from fastapi.testclient import TestClient
 
 import linguistic_oj.qwen_api as qwen_api_module
 from linguistic_oj.api import Principal
+from linguistic_oj.mvp_contract import canonical_sha256
+from linguistic_oj.qwen_runtime import QwenRuntimeAttestationError
 
 ROOT = Path(__file__).parents[1]
 
@@ -23,13 +26,75 @@ class _Queue:
         self.health_checks += 1
 
 
-def test_qwen_api_composes_v2_contract_and_matching_redis_queue(
+def _write_qwen_registry(root: Path, *, count: int = 1) -> tuple[Path, tuple[str, ...]]:
+    entries = []
+    challenge_ids = []
+    for index in range(count):
+        suffix = chr(ord("a") + index)
+        challenge_id = f"en-synthetic-{suffix}-upos-v1"
+        public = json.loads(
+            (ROOT / "challenges" / "public" / "en-ewt-upos-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        public.update(
+            {
+                "challenge_id": challenge_id,
+                "dataset_sha256": suffix * 64,
+                "selection_sha256": f"{suffix * 63}0",
+                "title": f"Synthetic Qwen challenge {suffix}",
+                "treebank": f"Synthetic {suffix}",
+            }
+        )
+        contract = json.loads(
+            (ROOT / "config" / "mvp_evaluation_v2.json").read_text(encoding="utf-8")
+        )
+        contract["catalog"]["challenge_id"] = challenge_id
+        contract["evaluation_identity"].update(
+            {
+                "challenge_id": challenge_id,
+                "dataset_sha256": public["dataset_sha256"],
+                "selection_sha256": public["selection_sha256"],
+            }
+        )
+        contract["leaderboard_partition"]["expected_sha256"] = canonical_sha256(
+            contract["evaluation_identity"]
+        )
+        public_path = root / "public" / f"{challenge_id}.json"
+        contract_path = root / "contracts" / f"{challenge_id}.json"
+        public_path.parent.mkdir(parents=True, exist_ok=True)
+        contract_path.parent.mkdir(parents=True, exist_ok=True)
+        public_path.write_text(json.dumps(public), encoding="utf-8")
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        entries.append(
+            {
+                "public_descriptor_path": f"public/{challenge_id}.json",
+                "evaluation_contract_path": f"contracts/{challenge_id}.json",
+            }
+        )
+        challenge_ids.append(challenge_id)
+    registry_path = root / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "challenge-contract-registry-v1",
+                "entries": entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return registry_path, tuple(challenge_ids)
+
+
+def test_qwen_api_composes_registry_with_one_queue_per_contract(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(qwen_api_module, "RedisJobQueue", _Queue)
+    registry_path, challenge_ids = _write_qwen_registry(tmp_path, count=2)
     runtime = qwen_api_module.build_qwen_api(
-        root=ROOT,
+        root=tmp_path,
+        challenge_registry_path=registry_path,
         database_path=tmp_path / "submissions.db",
         redis_url="redis://127.0.0.1:6379/0",
         authenticate=lambda request: Principal("subject-alice"),
@@ -41,21 +106,72 @@ def test_qwen_api_composes_v2_contract_and_matching_redis_queue(
     with TestClient(runtime.app) as client:
         assert client.get("/health/live").json() == {"status": "live"}
         assert client.get("/health/ready").json() == {"status": "ready"}
-        response = client.post(
-            "/v1/submissions",
-            headers={"Idempotency-Key": "qwen-api-composition"},
-            json={
-                "challenge_id": runtime.contract.challenge_id,
-                "student_prompt": "Return JSON.",
-            },
-        )
+        responses = [
+            client.post(
+                "/v1/submissions",
+                headers={"Idempotency-Key": f"qwen-api-composition-{index}"},
+                json={"challenge_id": challenge_id, "student_prompt": "Return JSON."},
+            )
+            for index, challenge_id in enumerate(challenge_ids)
+        ]
 
-    assert response.status_code == 202
-    assert runtime.contract.contract_version == "mvp-evaluation-v2"
-    assert runtime.queue.routing_key == runtime.contract.contract_snapshot_sha256
-    assert runtime.queue.visibility_timeout_seconds == 315
-    assert runtime.queue.health_checks == 1
-    assert len(runtime.queue.published) == 1
+    assert [response.status_code for response in responses] == [202, 202]
+    assert set(runtime.queues) == set(challenge_ids)
+    assert set(runtime.dispatchers) == set(challenge_ids)
+    for challenge_id in challenge_ids:
+        contract = runtime.registry.contracts[challenge_id]
+        queue = runtime.queues[challenge_id]
+        assert contract.contract_version == "mvp-evaluation-v2"
+        assert queue.routing_key == contract.contract_snapshot_sha256
+        assert queue.visibility_timeout_seconds == 315
+        assert queue.health_checks == 1
+        assert len(queue.published) == 1
+
+
+@pytest.mark.parametrize(
+    ("case", "error"),
+    [
+        ("prompt-envelope", "prompt envelope"),
+        ("missing-generation-setting", "generation settings are incomplete"),
+        ("generation-prompt", "enable the generation prompt"),
+        ("thinking-control", "thinking controls do not match"),
+    ],
+)
+def test_qwen_api_rejects_contract_worker_cannot_execute(
+    tmp_path: Path,
+    monkeypatch,
+    case: str,
+    error: str,
+) -> None:
+    registry_path, challenge_ids = _write_qwen_registry(tmp_path)
+    contract_path = tmp_path / "contracts" / f"{challenge_ids[0]}.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if case == "prompt-envelope":
+        contract["evaluation_identity"]["prompt_envelope_version"] = "unsupported"
+    elif case == "missing-generation-setting":
+        contract["evaluation_identity"]["generation_settings"].pop("seed")
+    elif case == "generation-prompt":
+        contract["evaluation_identity"]["tokenizer_identity"][
+            "add_generation_prompt"
+        ] = False
+    else:
+        contract["evaluation_identity"]["tokenizer_identity"]["enable_thinking"] = True
+    contract["leaderboard_partition"]["expected_sha256"] = canonical_sha256(
+        contract["evaluation_identity"]
+    )
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    monkeypatch.setattr(qwen_api_module, "RedisJobQueue", _Queue)
+
+    with pytest.raises(QwenRuntimeAttestationError, match=error):
+        qwen_api_module.build_qwen_api(
+            root=tmp_path,
+            challenge_registry_path=registry_path,
+            database_path=tmp_path / "submissions.db",
+            redis_url="redis://127.0.0.1:6379/0",
+            authenticate=lambda request: Principal("subject-alice"),
+            allow_draft_submissions=True,
+            environment="development",
+        )
 
 
 def test_qwen_api_production_cli_requires_postgres() -> None:
@@ -64,6 +180,8 @@ def test_qwen_api_production_cli_requires_postgres() -> None:
             [
                 "--root",
                 ".",
+                "--challenge-registry",
+                "config/registry.json",
                 "--database",
                 "runtime/submissions.db",
                 "--redis-url",
@@ -80,6 +198,8 @@ def test_qwen_api_rejects_inline_production_redis_password() -> None:
             [
                 "--root",
                 ".",
+                "--challenge-registry",
+                "config/registry.json",
                 "--database",
                 "runtime/submissions.db",
                 "--redis-url",
@@ -96,6 +216,8 @@ def test_qwen_api_rejects_inline_production_postgres_password() -> None:
             [
                 "--root",
                 ".",
+                "--challenge-registry",
+                "config/registry.json",
                 "--postgres-database-url",
                 "postgresql://api:secret@127.0.0.1/linguistic_oj",
                 "--redis-url",
@@ -117,6 +239,8 @@ def test_qwen_api_reads_production_postgres_credential_file(tmp_path: Path) -> N
         [
             "--root",
             ".",
+            "--challenge-registry",
+            "config/registry.json",
             "--postgres-database-url-file",
             str(credential),
             "--redis-url",

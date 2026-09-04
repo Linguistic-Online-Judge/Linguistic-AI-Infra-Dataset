@@ -33,12 +33,29 @@ class ChallengeContractRegistry:
     contracts: Mapping[str, EvaluationContract]
 
     def __post_init__(self) -> None:
+        public_challenges = dict(self.public_challenges)
+        contracts = dict(self.contracts)
+        for challenge_id, public in public_challenges.items():
+            if not isinstance(public, PublicChallenge):
+                raise TypeError("registry public values must be PublicChallenge instances")
+            if challenge_id != public.challenge_id:
+                raise ValueError("public challenge registry key does not match challenge ID")
+            validate_public_challenge(public)
+        for challenge_id, contract in contracts.items():
+            if not isinstance(contract, EvaluationContract):
+                raise TypeError("registry contract values must be EvaluationContract instances")
+            if challenge_id != contract.challenge_id:
+                raise ValueError("evaluation contract registry key does not match challenge ID")
+            public = public_challenges.get(challenge_id)
+            if public is None:
+                raise ValueError("evaluation contract has no public challenge descriptor")
+            validate_contract_matches_public(contract, public)
         object.__setattr__(
             self,
             "public_challenges",
-            MappingProxyType(dict(self.public_challenges)),
+            MappingProxyType(public_challenges),
         )
-        object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
+        object.__setattr__(self, "contracts", MappingProxyType(contracts))
 
 
 def _project_path(root: Path, value: str, name: str) -> Path:

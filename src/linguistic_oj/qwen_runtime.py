@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 
 from .mvp_contract import EvaluationContract
 from .providers import (
+    PROMPT_ENVELOPE_VERSION,
+    GenerationSettings,
     ModelIdentity,
     ModelRequest,
     OpenAICompatibleProvider,
@@ -38,6 +40,53 @@ class QwenRuntimeAttestationError(RuntimeError):
 
 class QwenTokenLimitExceeded(ValueError):
     """Raised before provider calls when pinned-tokenizer limits are exceeded."""
+
+
+def validate_qwen_evaluation_contract(contract: EvaluationContract) -> None:
+    """Validate static Qwen requirements before API or Worker startup."""
+
+    if not isinstance(contract, EvaluationContract):
+        raise TypeError("contract must be an EvaluationContract")
+    if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
+        raise QwenRuntimeAttestationError("Qwen worker requires mvp-evaluation-v2")
+    if contract.uses_mock_runtime:
+        raise QwenRuntimeAttestationError("Qwen worker cannot use a Mock contract")
+    if not contract.retry_requires_prior_request_terminated:
+        raise QwenRuntimeAttestationError(
+            "Qwen retry policy must require prior request termination"
+        )
+
+    identity = contract.evaluation_identity
+    if identity.get("prompt_envelope_version") != PROMPT_ENVELOPE_VERSION:
+        raise QwenRuntimeAttestationError("Qwen contract uses an unsupported prompt envelope")
+    model_identity = identity.get("model_identity")
+    generation_settings = identity.get("generation_settings")
+    if not isinstance(model_identity, dict) or not isinstance(generation_settings, dict):
+        raise QwenRuntimeAttestationError("Qwen contract lacks model configuration")
+    if set(generation_settings) != {
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "seed",
+        "enable_thinking",
+    }:
+        raise QwenRuntimeAttestationError("Qwen contract generation settings are incomplete")
+    try:
+        model = ModelIdentity(**model_identity)
+        generation = GenerationSettings(**generation_settings)
+    except (TypeError, ValueError) as error:
+        raise QwenRuntimeAttestationError("Qwen contract model configuration is invalid") from error
+    if model.runtime != "vllm":
+        raise QwenRuntimeAttestationError("Qwen contract requires the vLLM runtime")
+    tokenizer = _contract_tokenizer_identity(contract)
+    if not tokenizer.add_generation_prompt:
+        raise QwenRuntimeAttestationError(
+            "Qwen contract must enable the generation prompt"
+        )
+    if tokenizer.enable_thinking != generation.enable_thinking:
+        raise QwenRuntimeAttestationError(
+            "Qwen contract thinking controls do not match"
+        )
 
 
 @runtime_checkable

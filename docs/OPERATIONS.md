@@ -15,9 +15,10 @@ The API exposes unauthenticated, body-free operational endpoints:
 - `GET /health/live` returns `200 {"status":"live"}` whenever the API process
   can serve requests.
 - `GET /health/ready` returns `200 {"status":"ready"}` only when the API can
-  query its submission store and verify the configured Redis version and EVAL
-  capability. It returns a generic `503 {"detail":"Service not ready"}` without
-  connection details when either dependency fails.
+  query its submission store and verify the Redis version and EVAL capability for
+  every executable registry entry. It returns a generic
+  `503 {"detail":"Service not ready"}` without connection details when any
+  dependency fails.
 
 The API intentionally does not probe vLLM in readiness. Submission durability
 depends on the database and Redis; Worker startup attestation owns vLLM validation.
@@ -40,6 +41,14 @@ and dependency error messages are excluded.
   `require`, `verify-ca`, or `verify-full`.
 - Keep dataset manifests, gold data, tokenizer snapshots, and vLLM launch evidence
   on server-owned volumes that are unreadable by web users and tenants.
+- Keep the challenge registry deployment-owned. Never replace a contract snapshot
+  under an existing challenge ID. Assign any changed contract a new versioned
+  challenge ID, keep the previous entry and Worker running, and remove them only
+  after their outbox and queue have drained.
+- The API cannot run old and new contracts with different platform-wide admission
+  limits at the same time. A change to one of those shared limits requires a
+  maintenance window: stop new submissions, drain every old outbox and queue,
+  verify the drain, then start the replacement registry and Workers.
 - Provide an authentication callback backed by a server-verified identity provider.
   The smoke-test static callback must never be deployed.
 - Run API, Worker, and vLLM under a supervisor that restarts failed processes and

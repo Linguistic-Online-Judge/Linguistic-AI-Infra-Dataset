@@ -8,9 +8,10 @@ from pathlib import Path
 from time import sleep
 
 from .challenge import load_challenge_artifacts
-from .mvp_contract import load_qwen_worker_contract
+from .challenge_registry import load_challenge_contract_registry
 from .postgres_migrations import resolve_postgres_url
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
+from .qwen_runtime import validate_qwen_evaluation_contract
 from .redis_job_queue import RedisJobQueue, resolve_redis_url
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
 from .submission_store_factory import build_submission_store
@@ -24,8 +25,15 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         "--root",
         type=Path,
         required=True,
-        help="deployment root containing config/mvp_evaluation_v2.json",
+        help="deployment root containing registry-referenced files",
     )
+    parser.add_argument(
+        "--challenge-registry",
+        type=Path,
+        required=True,
+        help="root-relative challenge registry path",
+    )
+    parser.add_argument("--challenge-id", required=True)
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
     storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
@@ -75,17 +83,26 @@ def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
 
     if args.environment == "production" and args.database is not None:
         raise ValueError("production Qwen Worker requires PostgreSQL persistence")
-    contract = load_qwen_worker_contract(args.root)
-    identity = contract.evaluation_identity
-    model_identity = identity.get("model_identity")
-    generation_settings = identity.get("generation_settings")
-    if not isinstance(model_identity, dict) or not isinstance(generation_settings, dict):
-        raise ValueError("Qwen evaluation contract lacks model configuration")
+    registry = load_challenge_contract_registry(args.root, args.challenge_registry)
+    public = registry.public_challenges.get(args.challenge_id)
+    if public is None:
+        raise ValueError(f"challenge is not registered: {args.challenge_id}")
+    contract = registry.contracts.get(args.challenge_id)
+    if contract is None:
+        raise ValueError(f"challenge has no evaluation contract: {args.challenge_id}")
+    validate_qwen_evaluation_contract(contract)
     artifacts = load_challenge_artifacts(
         args.public_challenge,
         args.private_challenge,
         dataset_path=args.dataset,
     )
+    if artifacts.public != public:
+        raise ValueError("configured public challenge does not match the registry")
+    identity = contract.evaluation_identity
+    model_identity = identity.get("model_identity")
+    generation_settings = identity.get("generation_settings")
+    if not isinstance(model_identity, dict) or not isinstance(generation_settings, dict):
+        raise ValueError("Qwen evaluation contract lacks model configuration")
     provider = OpenAICompatibleProvider(
         base_url=args.vllm_base_url,
         identity=ModelIdentity(**model_identity),

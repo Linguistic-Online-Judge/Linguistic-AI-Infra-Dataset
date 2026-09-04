@@ -50,6 +50,7 @@ class ChallengeSecurityLevel(StrEnum):
 
 class ChallengeStatus(StrEnum):
     DRAFT = "draft"
+    ACTIVE = "active"
 
 
 class PublicChallenge(BaseModel):
@@ -259,7 +260,7 @@ def validate_public_challenge(public: PublicChallenge) -> None:
         raise ValueError("public scorer and aggregation versions do not match the runtime")
     if public.security_level != ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value:
         raise ValueError("unsupported challenge security level")
-    if public.status != ChallengeStatus.DRAFT.value:
+    if public.status not in {status.value for status in ChallengeStatus}:
         raise ValueError("unsupported challenge status")
     if public.sample_count <= 0:
         raise ValueError("public sample count must be positive")

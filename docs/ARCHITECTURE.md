@@ -76,9 +76,13 @@ cross-process delivery; production still needs persistent Redis deployment,
 credentials, monitoring, and recovery operations.
 
 The current development slice implements an injected FastAPI app, SQLite schema
-migration, transactional submission/outbox creation, identity-routed in-memory
-and Redis Streams queues, and an explicitly invoked Mock worker. The API returns
-`202 queued`; model evaluation never runs in the request handler. Owner queries
+migration, transactional submission/outbox creation, an immutable challenge
+registry, identity-routed in-memory and Redis Streams queues, and explicitly
+invoked workers. The API loads every registry entry before serving, selects the
+contract by client-supplied challenge ID, and owns one dispatcher and queue route
+per executable contract. Each Worker remains bound to one trusted challenge and
+contract snapshot. The API returns `202 queued`; model evaluation never runs in
+the request handler. Owner queries
 bind both authenticated user and submission ID, while leaderboards read only
 version-partitioned aggregate rows. Redis uses a Consumer Group, pending-entry
 visibility recovery, per-claim receipt tokens, and an active-submission map for
@@ -123,19 +127,24 @@ decoding.
 ## Submission flow
 
 1. A student chooses a language and task and submits one prompt.
-2. The API stores an immutable submission with the complete evaluation-contract
+2. The API finds that challenge in its validated registry and selects the matching
+   contract-specific outbox dispatcher. Unknown and public-only entries cannot
+   create submissions.
+3. The API stores an immutable submission with the complete evaluation-contract
    snapshot and its canonical identity SHA-256.
-3. The worker validates the paired public/private artifacts, then loads the fixed
+4. The selected single-contract Worker validates the paired public/private
+   artifacts, then loads the fixed
    server-side sample IDs and trusted gold denominators for that challenge.
-4. For each sample, the worker combines the student's prompt with the platform's
+5. For each sample, the worker combines the student's prompt with the platform's
    fixed task envelope and requests strict JSON output from the model.
-5. The response parser validates the schema. Malformed output receives a
+6. The response parser validates the schema. Malformed output receives a
    deterministic zero for that sample; no LLM repair judge is used.
-6. The scorer computes segmentation F1, tag accuracy, UAS/LAS, or token-level
+7. The scorer computes segmentation F1, tag accuracy, UAS/LAS, or token-level
    transliteration accuracy with sentence exact match.
-7. The worker stores aggregate metrics and safe error categories, then marks the
+8. The worker stores aggregate metrics and safe error categories, then marks the
    submission `rejected`, `succeeded`, or `failed`.
-8. The leaderboard reads persisted scores; it does not rerun evaluations.
+9. The leaderboard reads persisted scores and their stored contract snapshots; it
+   does not reinterpret old results through the current registry or rerun evaluations.
 
 The offline runner implements artifact/sample loading, the safe provider
 boundary, mock and pinned self-hosted generation, fixed Prompt Envelope `1.0`,
