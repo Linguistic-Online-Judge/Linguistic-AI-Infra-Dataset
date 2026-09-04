@@ -198,6 +198,10 @@ class EvaluationContract:
         )
 
     @property
+    def catalog(self) -> dict[str, Any]:
+        return _mapping(json.loads(self.snapshot_json)["catalog"], "catalog")
+
+    @property
     def uses_mock_runtime(self) -> bool:
         model_identity = _mapping(
             self.evaluation_identity.get("model_identity"),

@@ -215,6 +215,7 @@ src/linguistic_oj/evaluation.py   单样本确定性评分
 src/linguistic_oj/aggregation.py  挑战级指标汇总
 src/linguistic_oj/runner.py       离线端到端评测流程
 src/linguistic_oj/mvp_contract.py 读取和验证冻结评测合同
+src/linguistic_oj/challenge_registry.py 启动前验证题目登记表与评测合同
 src/linguistic_oj/submission_store.py SQLite 提交、outbox、结果和排行榜
 src/linguistic_oj/submission_jobs.py 进程内队列、outbox dispatcher 和 Mock Worker
 src/linguistic_oj/redis_job_queue.py Redis Streams 队列和 visibility recovery
