@@ -346,6 +346,138 @@ def _headers(subject: str, idempotency_key: str | None = None) -> dict[str, str]
     return headers
 
 
+def test_anonymous_challenge_catalog_is_sorted_and_allowlisted(tmp_path: Path) -> None:
+    executable = _artifacts(
+        tmp_path,
+        treebank="Zeta",
+        dataset_name="zeta.jsonl",
+    )
+    public_only = _artifacts(
+        tmp_path,
+        treebank="Alpha",
+        dataset_name="alpha.jsonl",
+    )
+    public_only_description = public_only.public.model_copy(
+        update={"scorer_version": None, "aggregation_version": None}
+    )
+    contract = _mock_contract(executable)
+    store = SubmissionStore(tmp_path / "catalog.db")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    registry = ChallengeContractRegistry(
+        public_challenges={
+            executable.public.challenge_id: executable.public,
+            public_only_description.challenge_id: public_only_description,
+        },
+        contracts={contract.challenge_id: contract},
+    )
+    app = create_app(
+        store=store,
+        registry=registry,
+        dispatchers={contract.challenge_id: OutboxDispatcher(store, queue, contract)},
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/v1/challenges")
+        detail = client.get(f"/v1/challenges/{executable.public.challenge_id}")
+        public_only_detail = client.get(
+            f"/v1/challenges/{public_only_description.challenge_id}"
+        )
+        missing = client.get("/v1/challenges/test-missing-upos-v1")
+        unauthenticated_submission = client.post(
+            "/v1/submissions",
+            json={
+                "challenge_id": executable.public.challenge_id,
+                "student_prompt": "Prompt.",
+            },
+        )
+
+    assert response.status_code == 200
+    catalog = response.json()
+    assert [item["challenge_id"] for item in catalog] == sorted(
+        [executable.public.challenge_id, public_only_description.challenge_id]
+    )
+    summary_fields = {
+        "challenge_id",
+        "language",
+        "primary_metric",
+        "sample_count",
+        "security_level",
+        "status",
+        "submissions_open",
+        "task",
+        "title",
+        "treebank",
+        "version",
+    }
+    assert all(set(item) == summary_fields for item in catalog)
+    availability = {item["challenge_id"]: item["submissions_open"] for item in catalog}
+    assert availability == {
+        executable.public.challenge_id: True,
+        public_only_description.challenge_id: False,
+    }
+    _assert_no_private_fields(catalog)
+
+    assert detail.status_code == 200
+    assert set(detail.json()) == {
+        "aggregation_version",
+        "challenge_id",
+        "dataset_sha256",
+        "language",
+        "primary_metric",
+        "response_schema_version",
+        "sample_count",
+        "scorer_version",
+        "secondary_metrics",
+        "security_level",
+        "selection_sha256",
+        "status",
+        "submissions_open",
+        "task",
+        "title",
+        "treebank",
+        "version",
+    }
+    assert detail.json()["dataset_sha256"] == executable.public.dataset_sha256
+    assert detail.json()["selection_sha256"] == executable.public.selection_sha256
+    _assert_no_private_fields(detail.json())
+    assert public_only_detail.status_code == 200
+    assert set(public_only_detail.json()) == set(detail.json())
+    assert public_only_detail.json()["scorer_version"] is None
+    assert public_only_detail.json()["aggregation_version"] is None
+    assert public_only_detail.json()["submissions_open"] is False
+    _assert_no_private_fields(public_only_detail.json())
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "Challenge not found"}
+    assert unauthenticated_submission.status_code == 401
+    assert unauthenticated_submission.json() == {"detail": "Authentication required"}
+
+
+def test_catalog_reports_draft_closed_without_override(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "closed-catalog.db")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    app = create_app(
+        store=store,
+        registry=ChallengeContractRegistry(
+            public_challenges={artifacts.public.challenge_id: artifacts.public},
+            contracts={contract.challenge_id: contract},
+        ),
+        dispatchers={contract.challenge_id: OutboxDispatcher(store, queue, contract)},
+        authenticate=_authenticate,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(f"/v1/challenges/{contract.challenge_id}")
+
+    assert response.status_code == 200
+    assert response.json()["submissions_open"] is False
+
+
 def test_one_api_routes_two_challenges_to_isolated_workers(tmp_path: Path) -> None:
     first_artifacts = _artifacts(tmp_path, dataset_name="first.jsonl")
     second_artifacts = _artifacts(
@@ -521,12 +653,15 @@ def test_active_reviewed_challenge_can_accept_production_submission(tmp_path: Pa
     )
 
     with TestClient(app) as client:
+        detail = client.get(f"/v1/challenges/{contract.challenge_id}")
         response = client.post(
             "/v1/submissions",
             headers=_headers("subject-alice", "active-reviewed"),
             json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
         )
 
+    assert detail.status_code == 200
+    assert detail.json()["submissions_open"] is True
     assert response.status_code == 202
     assert len(queue) == 1
 

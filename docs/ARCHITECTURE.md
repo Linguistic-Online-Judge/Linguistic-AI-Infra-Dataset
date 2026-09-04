@@ -56,8 +56,10 @@ Redis job queue ---- Python evaluation worker
 
 - **Web client**: task selection, prompt editor, submission status, score report,
   history, and leaderboard.
-- **API**: authentication, safe problem metadata, submission creation, status,
-  results, and leaderboard queries.
+- **API**: anonymous allowlisted challenge summaries/details, authentication,
+  submission creation, status, results, and leaderboard queries. The public
+  catalog is copied field by field from the validated registry; submission
+  creation remains authenticated.
 - **Worker**: builds prompts, calls the pinned model, parses JSON responses, runs
   deterministic scorers, and persists aggregate results.
 - **Model provider**: one adapter interface. Start with a mock adapter in tests,

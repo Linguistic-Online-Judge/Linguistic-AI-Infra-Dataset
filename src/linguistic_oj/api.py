@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from .challenge import PublicChallenge
 from .challenge_registry import ChallengeContractRegistry
 from .mvp_contract import EvaluationContract
 from .submission_jobs import OutboxDispatcher
@@ -73,6 +74,31 @@ class CurrentUserResponse(BaseModel):
     user_id: str
     public_handle: str
     role: UserRole
+
+
+class ChallengeSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    challenge_id: str
+    title: str
+    version: str
+    language: str
+    treebank: str
+    task: str
+    sample_count: int
+    primary_metric: str
+    security_level: str
+    status: str
+    submissions_open: bool
+
+
+class ChallengeDetailResponse(ChallengeSummaryResponse):
+    secondary_metrics: tuple[str, ...]
+    response_schema_version: str
+    scorer_version: str | None
+    aggregation_version: str | None
+    dataset_sha256: str
+    selection_sha256: str
 
 
 class GenerationSettingsResponse(BaseModel):
@@ -262,6 +288,45 @@ def _submission_response(submission: SubmissionRecord) -> SubmissionResponse:
     )
 
 
+def _challenge_summary_response(
+    public: PublicChallenge,
+    *,
+    submissions_open: bool,
+) -> ChallengeSummaryResponse:
+    return ChallengeSummaryResponse(
+        challenge_id=public.challenge_id,
+        title=public.title,
+        version=public.version,
+        language=public.language,
+        treebank=public.treebank,
+        task=public.task,
+        sample_count=public.sample_count,
+        primary_metric=public.primary_metric,
+        security_level=public.security_level,
+        status=public.status,
+        submissions_open=submissions_open,
+    )
+
+
+def _challenge_detail_response(
+    public: PublicChallenge,
+    *,
+    submissions_open: bool,
+) -> ChallengeDetailResponse:
+    return ChallengeDetailResponse(
+        **_challenge_summary_response(
+            public,
+            submissions_open=submissions_open,
+        ).model_dump(),
+        secondary_metrics=public.secondary_metrics,
+        response_schema_version=public.response_schema_version,
+        scorer_version=public.scorer_version,
+        aggregation_version=public.aggregation_version,
+        dataset_sha256=public.dataset_sha256,
+        selection_sha256=public.selection_sha256,
+    )
+
+
 def _validate_runtime_registry(
     store: SubmissionStoreProtocol,
     registry: ChallengeContractRegistry,
@@ -319,6 +384,12 @@ def create_app(
     for dispatcher in runtime_dispatchers.values():
         dispatcher.recover()
 
+    def submissions_open(challenge_id: str) -> bool:
+        contract = registry.contracts.get(challenge_id)
+        return contract is not None and (
+            contract.external_activation_ready or allow_draft_submissions
+        )
+
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
         return {"status": "live"}
@@ -334,6 +405,26 @@ def create_app(
                 detail="Service not ready",
             ) from None
         return {"status": "ready"}
+
+    @app.get("/v1/challenges", response_model=list[ChallengeSummaryResponse])
+    def list_challenges() -> list[ChallengeSummaryResponse]:
+        return [
+            _challenge_summary_response(
+                registry.public_challenges[challenge_id],
+                submissions_open=submissions_open(challenge_id),
+            )
+            for challenge_id in sorted(registry.public_challenges)
+        ]
+
+    @app.get("/v1/challenges/{challenge_id}", response_model=ChallengeDetailResponse)
+    def get_challenge(challenge_id: str) -> ChallengeDetailResponse:
+        public = registry.public_challenges.get(challenge_id)
+        if public is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Challenge not found")
+        return _challenge_detail_response(
+            public,
+            submissions_open=submissions_open(challenge_id),
+        )
 
     def current_user(request: Request) -> UserRecord:
         principal = authenticate(request)
