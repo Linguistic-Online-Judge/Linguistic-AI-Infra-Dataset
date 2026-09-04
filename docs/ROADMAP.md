@@ -145,6 +145,13 @@ one test when `REDIS_TEST_URL` is not configured.
 
 Exit criterion: a new user can complete the MVP flow without direct API use.
 
+Implemented first slice: a Chinese-first Next.js application now provides the
+anonymous challenge index and challenge detail routes. It validates API data
+before rendering, exposes no private evaluation fields, and includes loading,
+empty, service-failure, and not-found states. Component accessibility tests and
+visual checks cover desktop and mobile layouts. Authentication, prompt editing,
+submission progress, history, results, and leaderboards remain future slices.
+
 ## Phase 6: deployment and fairness validation
 
 - Containerize API, worker, model runtime, database, Redis, and web client.
