@@ -97,6 +97,31 @@ No production registry is committed yet. Deployment must supply the registry
 path explicitly after its entries have passed source-rights and activation
 review.
 
+## Public challenge catalog API
+
+The API exposes the validated public registry without authentication:
+
+- `GET /v1/challenges` returns summaries sorted by `challenge_id`.
+- `GET /v1/challenges/{challenge_id}` returns the full public description and
+  returns `404` for an unknown challenge ID.
+
+List summaries contain only the challenge ID, title, version, language,
+treebank, task, sample count, primary metric, security level, publication
+status, and `submissions_open`. Details additionally contain public secondary
+metrics, response/scorer/aggregation versions, and dataset/selection hashes.
+Both responses are copied field by field into dedicated response models; the
+API never serializes an evaluation contract directly.
+
+`submissions_open` reports whether this deployment has an executable contract
+that passes its activation policy. It is not an authentication decision:
+creating a submission still requires a registered user. Public-only entries
+remain visible with `submissions_open: false`. A development or test process
+that explicitly enables draft submissions reports an executable draft as open,
+matching submission preflight behavior.
+
+The catalog never includes private manifests, selected sample IDs, gold
+answers, prompts, model configuration, queue routes, or contract snapshots.
+
 ## First challenge
 
 The initial development challenge is:
