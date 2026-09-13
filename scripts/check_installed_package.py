@@ -16,7 +16,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path, required=True)
     args = parser.parse_args()
-    python = args.python.resolve(strict=True)
+    # On Linux, resolving a venv's Python symlink selects the base interpreter
+    # and bypasses that environment's installed wheel.
+    python = args.python.absolute()
+    if not python.is_file():
+        parser.error('--python must point to an existing interpreter')
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='loj-wheel-') as temporary:
         home = Path(temporary)
