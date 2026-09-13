@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 from .admin_store import ADMIN_SCHEMA_V4
 from .auth_store import AUTH_SCHEMA_V3
+from .connection_config import validate_postgres_connection_url
 
 POSTGRES_SCHEMA_VERSION = 4
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
@@ -101,12 +100,7 @@ _POSTGRES_MIGRATIONS = {
 
 
 def validate_postgres_url(database_url: str) -> str:
-    if not isinstance(database_url, str) or not database_url.strip():
-        raise ValueError("PostgreSQL database URL must not be empty")
-    parsed = urlparse(database_url)
-    if parsed.scheme not in {"postgres", "postgresql"} or parsed.path in {"", "/"}:
-        raise ValueError("database URL must be a PostgreSQL URL with a database name")
-    return database_url
+    return validate_postgres_connection_url(database_url)
 
 
 def migrate_postgres(database_url: str, *, applied_at: str) -> None:

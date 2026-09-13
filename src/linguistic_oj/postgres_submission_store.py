@@ -45,6 +45,7 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
         self._database_url = validate_postgres_url(database_url)
 
     def _connect(self):
+        validate_postgres_url(self._database_url)
         try:
             import psycopg
         except ImportError as error:

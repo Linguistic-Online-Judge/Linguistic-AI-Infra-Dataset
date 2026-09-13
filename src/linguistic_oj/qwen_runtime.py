@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 
 from .mvp_contract import EvaluationContract
 from .providers import (
+    PROMPT_ENVELOPE_VERSION,
+    GenerationSettings,
     ModelIdentity,
     ModelRequest,
     OpenAICompatibleProvider,
@@ -38,6 +40,35 @@ class QwenRuntimeAttestationError(RuntimeError):
 
 class QwenTokenLimitExceeded(ValueError):
     """Raised before provider calls when pinned-tokenizer limits are exceeded."""
+
+
+def validate_qwen_evaluation_contract(contract: EvaluationContract) -> None:
+    """Check static Qwen requirements before constructing stores or queues."""
+    if not isinstance(contract, EvaluationContract):
+        raise TypeError('contract must be an EvaluationContract')
+    if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
+        raise ValueError('Qwen runtime requires mvp-evaluation-v2')
+    if contract.uses_mock_runtime:
+        raise ValueError('Qwen runtime cannot use a Mock contract')
+    if not contract.retry_requires_prior_request_terminated:
+        raise ValueError('Qwen retry policy must require prior request termination')
+    identity = contract.evaluation_identity
+    if identity.get('prompt_envelope_version') != PROMPT_ENVELOPE_VERSION:
+        raise ValueError('unsupported Qwen prompt envelope')
+    settings = identity.get('generation_settings')
+    if not isinstance(settings, dict) or set(settings) != {
+        'temperature', 'top_p', 'max_tokens', 'seed', 'enable_thinking'
+    }:
+        raise ValueError('Qwen generation settings are incomplete')
+    try:
+        model = ModelIdentity(**identity['model_identity'])
+        generation = GenerationSettings(**settings)
+        tokenizer = _contract_tokenizer_identity(contract)
+    except (TypeError, KeyError, ValueError):
+        raise ValueError('invalid static Qwen configuration') from None
+    if (model.runtime != 'vllm' or not tokenizer.add_generation_prompt
+            or tokenizer.enable_thinking != generation.enable_thinking):
+        raise ValueError('Qwen runtime/tokenizer/generation settings do not match')
 
 
 @runtime_checkable

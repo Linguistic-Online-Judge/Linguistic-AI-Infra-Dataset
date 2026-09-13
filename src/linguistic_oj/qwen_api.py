@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,8 +22,9 @@ from .challenge_registry import (
     load_challenge_contract_registry,
     validate_contract_matches_public,
 )
+from .connection_config import resolve_connection_url
 from .mvp_contract import EvaluationContract
-from .qwen_runtime import QWEN_EVALUATION_CONTRACT_VERSION
+from .qwen_runtime import validate_qwen_evaluation_contract
 from .redis_job_queue import RedisJobQueue
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
@@ -108,8 +110,7 @@ def _load_runtime_registry(
             public_challenges[public.challenge_id] = public
 
     for contract in contracts.values():
-        if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
-            raise ValueError("Qwen API requires mvp-evaluation-v2 contracts")
+        validate_qwen_evaluation_contract(contract)
     return contracts, public_challenges
 
 
@@ -228,7 +229,10 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
     storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
-    parser.add_argument("--redis-url", required=True)
+    storage.add_argument("--postgres-database-url-file", type=Path)
+    redis = parser.add_mutually_exclusive_group(required=True)
+    redis.add_argument("--redis-url")
+    redis.add_argument("--redis-url-file", type=Path)
     routing = parser.add_mutually_exclusive_group()
     routing.add_argument(
         "--registry",
@@ -270,6 +274,17 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("production Qwen API requires PostgreSQL persistence")
     if args.environment == "production" and args.auth_config_file is None:
         parser.error("production Qwen API requires --auth-config-file; callbacks are forbidden")
+    try:
+        if args.database is None:
+            args.postgres_database_url = resolve_connection_url(
+                'postgres', inline_url=args.postgres_database_url,
+                credential_file=args.postgres_database_url_file,
+                production=args.environment == 'production')
+        args.redis_url = resolve_connection_url(
+            'redis', inline_url=args.redis_url, credential_file=args.redis_url_file,
+            production=args.environment == 'production')
+    except ValueError as error:
+        parser.error(str(error))
     return args
 
 
@@ -289,6 +304,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         import uvicorn
     except ImportError as error:
         raise RuntimeError("install the api extra to run the Qwen API") from error
+    logger = logging.getLogger('linguistic_oj.http')
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
     runtime = build_qwen_api(
         root=args.root,
         database_path=args.database,

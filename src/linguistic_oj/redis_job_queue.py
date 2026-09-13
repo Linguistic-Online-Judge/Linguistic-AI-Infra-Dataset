@@ -10,11 +10,11 @@ import uuid
 from collections.abc import Mapping
 from threading import Lock
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 from redis import Redis
 from redis.exceptions import ResponseError
 
+from .connection_config import validate_redis_connection_url
 from .submission_jobs import JobDelivery, JobMessage
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -132,10 +132,7 @@ class RedisJobQueue:
         namespace: str = "linguistic-oj",
         group_name: str = "submission-workers-v1",
     ) -> None:
-        if not isinstance(redis_url, str) or not redis_url.strip():
-            raise ValueError("redis_url must not be empty")
-        if "decode_responses" in parse_qs(urlparse(redis_url).query):
-            raise ValueError("redis_url must not configure decode_responses")
+        validate_redis_connection_url(redis_url)
         if not isinstance(routing_key, str) or _SHA256.fullmatch(routing_key) is None:
             raise ValueError("routing_key must be a lowercase SHA-256 value")
         if (
@@ -189,6 +186,15 @@ class RedisJobQueue:
     def health_check(self) -> None:
         if not self._client.ping():
             raise RuntimeError("Redis health check failed")
+        info = self._client.info(section="server")
+        try:
+            version = tuple(int(part) for part in info["redis_version"].split(".")[:2])
+            if len(version) != 2 or version < (6, 2):
+                raise ValueError
+        except (KeyError, TypeError, AttributeError, ValueError):
+            raise RuntimeError("Redis 6.2 or later is required") from None
+        if self._client.eval("return 1", 0) != 1:
+            raise RuntimeError("Redis EVAL capability check failed")
 
     def _ensure_group(self) -> None:
         try:

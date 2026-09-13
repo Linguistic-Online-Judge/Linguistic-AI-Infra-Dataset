@@ -13,6 +13,36 @@ from linguistic_oj.submission_store import SubmissionStore
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize('mutation', ['envelope', 'generation', 'tokenizer', 'runtime'])
+def test_invalid_static_contract_is_rejected_before_store_or_queue(tmp_path, monkeypatch, mutation):
+    config = json.loads((ROOT / 'config/mvp_evaluation_v2.json').read_text(encoding='utf-8'))
+    identity = config['evaluation_identity']
+    if mutation == 'envelope':
+        identity['prompt_envelope_version'] = 'unsupported'
+    elif mutation == 'generation':
+        del identity['generation_settings']['seed']
+    elif mutation == 'tokenizer':
+        identity['tokenizer_identity']['add_generation_prompt'] = False
+    else:
+        identity['model_identity']['runtime'] = 'unsupported'
+    config['leaderboard_partition']['expected_sha256'] = canonical_sha256(identity)
+    path = tmp_path / 'invalid.json'
+    path.write_text(json.dumps(config), encoding='utf-8')
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('invalid static configuration reached persistence or queue setup')
+
+    monkeypatch.setattr(qwen_api_module, 'build_submission_store', forbidden)
+    monkeypatch.setattr(qwen_api_module, 'RedisJobQueue', forbidden)
+    with pytest.raises(ValueError):
+        qwen_api_module.build_qwen_api(
+            root=ROOT, database_path=tmp_path / 'never-created.db',
+            redis_url='redis://127.0.0.1/0', contract_paths=(path,),
+            authenticate=lambda request: Principal('fixture'), environment='development',
+        )
+    assert not (tmp_path / 'never-created.db').exists()
+
+
 class _Queue:
     def __init__(self, **kwargs) -> None:
         self.routing_key = kwargs["routing_key"]

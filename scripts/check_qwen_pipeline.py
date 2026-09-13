@@ -248,7 +248,7 @@ class OwnedPostgres:
                 return scoped_connect()
 
         # The base URL is validation-only; every connection uses the local factory above.
-        store = IsolatedPostgresStore("postgresql:///qwen_acceptance_factory_only")
+        store = IsolatedPostgresStore("postgresql://127.0.0.1/qwen_acceptance_factory_only")
         store.health_check()
         return store
 

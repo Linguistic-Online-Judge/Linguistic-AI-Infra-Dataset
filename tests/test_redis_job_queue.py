@@ -24,6 +24,13 @@ class _FakeRedis:
         self.closed = False
         self.resp3 = resp3
 
+    def ping(self):
+        return True
+
+    def info(self, *, section):
+        assert section == 'server'
+        return {'redis_version': '7.4.0'}
+
     def xgroup_create(self, stream, group, *, id, mkstream):
         if self.group_created:
             raise ResponseError("BUSYGROUP Consumer Group name already exists")
@@ -62,6 +69,9 @@ class _FakeRedis:
         return [(next(iter(streams)), [entry])]
 
     def eval(self, script, key_count, *args):
+        if script == 'return 1':
+            assert key_count == 0 and not args
+            return 1
         if script == redis_queue_module._PUBLISH_SCRIPT:
             stream, _, submission_id, identity, contract = args
             active_id = self.active.get(submission_id)
@@ -139,6 +149,26 @@ class _FakeRedis:
 
 def _routing_key(label: str) -> str:
     return hashlib.sha256(label.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize('version', ['6.0.20', '6', 'invalid', None])
+def test_health_rejects_missing_stream_capabilities(monkeypatch, version):
+    client = _FakeRedis()
+    monkeypatch.setattr(Redis, 'from_url', lambda *args, **kwargs: client)
+    queue = RedisJobQueue(redis_url='redis://localhost/0', routing_key=_routing_key('health'))
+    queue.health_check()
+    monkeypatch.setattr(client, 'info', lambda **kwargs: {'redis_version': version})
+    with pytest.raises(RuntimeError, match='6.2'):
+        queue.health_check()
+
+
+def test_health_rejects_unusable_lua(monkeypatch):
+    client = _FakeRedis()
+    monkeypatch.setattr(Redis, 'from_url', lambda *args, **kwargs: client)
+    queue = RedisJobQueue(redis_url='redis://localhost/0', routing_key=_routing_key('health'))
+    monkeypatch.setattr(client, 'eval', lambda *args: 0)
+    with pytest.raises(RuntimeError, match='EVAL'):
+        queue.health_check()
 
 
 def _message(routing_key: str) -> JobMessage:

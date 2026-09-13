@@ -8,8 +8,10 @@ from pathlib import Path
 from time import sleep
 
 from .challenge import load_challenge_artifacts
+from .connection_config import resolve_connection_url
 from .mvp_contract import EvaluationContract, load_qwen_worker_contract
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
+from .qwen_runtime import validate_qwen_evaluation_contract
 from .redis_job_queue import RedisJobQueue
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
 from .submission_store_factory import build_submission_store
@@ -28,7 +30,10 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
     storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
-    parser.add_argument("--redis-url", required=True)
+    storage.add_argument("--postgres-database-url-file", type=Path)
+    redis = parser.add_mutually_exclusive_group(required=True)
+    redis.add_argument("--redis-url")
+    redis.add_argument("--redis-url-file", type=Path)
     parser.add_argument(
         "--contract",
         type=Path,
@@ -54,6 +59,17 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--idle-sleep-seconds must be positive")
     if args.environment == "production" and args.database is not None:
         parser.error("production Qwen Worker requires PostgreSQL persistence")
+    try:
+        if args.database is None:
+            args.postgres_database_url = resolve_connection_url(
+                'postgres', inline_url=args.postgres_database_url,
+                credential_file=args.postgres_database_url_file,
+                production=args.environment == 'production')
+        args.redis_url = resolve_connection_url(
+            'redis', inline_url=args.redis_url, credential_file=args.redis_url_file,
+            production=args.environment == 'production')
+    except ValueError as error:
+        parser.error(str(error))
     return args
 
 
@@ -67,6 +83,7 @@ def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
     else:
         contract_path = args.contract if args.contract.is_absolute() else args.root / args.contract
         contract = EvaluationContract.from_path(contract_path)
+    validate_qwen_evaluation_contract(contract)
     identity = contract.evaluation_identity
     model_identity = identity.get("model_identity")
     generation_settings = identity.get("generation_settings")

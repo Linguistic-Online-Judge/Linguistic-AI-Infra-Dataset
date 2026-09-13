@@ -42,6 +42,18 @@ present planned work or skipped checks as completed results.
   installed-wheel acceptance. The main branch stayed at `b69d3ff`. This Git push
   did not redeploy the school app or create a public website endpoint.
 
+- Production preparation now has `config/production.example.json` and
+  `scripts/prepare_public_deployment.py`: offline templates only, new output under
+  ignored runtime, never automatic service activation. Domain stays null until
+  confirmed. All 70 current contracts pass static Qwen checks but none satisfies
+  existing public-activation gates. See `docs/PRODUCTION_PREPARATION.md` for inputs,
+  private connection files, proxy/service templates and actual verification scope.
+  The first main comparison ported connection/Redis/static-contract protections and
+  the provider's uncertain-transport latch. Main merge and the remaining structured
+  calibration/frontend/data differences are separate; preserve schema v4 and old
+  contract identities. Local regression: 620 passes / 32 skips, 8 Node contracts,
+  32 student and 16 admin browser groups. This source change has not been deployed.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
