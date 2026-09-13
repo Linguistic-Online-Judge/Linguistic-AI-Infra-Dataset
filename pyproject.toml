@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Deterministic evaluation core for the Linguistic Online Judge"
 requires-python = ">=3.11"
 dependencies = [
+    "argon2-cffi>=25.1,<26",
+    "email-validator>=2.2,<3",
     "fastapi>=0.141,<0.142",
     "pydantic>=2.10,<3",
     "redis>=6.4,<7",
@@ -19,7 +21,7 @@ api = [
     "uvicorn>=0.34,<1",
 ]
 qwen-worker = [
-    "transformers>=4.57,<5",
+    "transformers==5.15.1",
 ]
 postgres = [
     "psycopg[binary]>=3.2,<4",
@@ -33,6 +35,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+
+[tool.setuptools.package-data]
+linguistic_oj = ["web/*.html", "web/assets/*.html", "web/assets/*.css", "web/assets/*.js", "web/assets/*.svg"]
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "hu-szeged-dependency-foundation-v1",
+  "dataset_sha256": "ef75d88de80a06a845b833845619201e8d9d8d8b396f9a77eb91ac0a41f942e0",
+  "language": "Hungarian",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "a64eb4d7515a7037a62a185e9695842756c01e9d220b586e30cd8e4baf8f6fd1",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "Hungarian Szeged dependency challenge",
+  "treebank": "Szeged",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

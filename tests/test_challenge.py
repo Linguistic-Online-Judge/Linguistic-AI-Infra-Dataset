@@ -14,6 +14,7 @@ from linguistic_oj.challenge import (
     build_challenge,
     load_challenge_artifacts,
     make_challenge_id,
+    validate_public_challenge,
     write_challenge,
 )
 
@@ -43,6 +44,13 @@ def _write_jsonl(path: Path, samples: list[dict]) -> None:
         "".join(f"{json.dumps(sample, ensure_ascii=False)}\n" for sample in samples),
         encoding="utf-8",
     )
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except (NotImplementedError, OSError) as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
 
 
 def _build(dataset_path: Path, *, seed: int = 2026, count: int = 5):
@@ -190,6 +198,53 @@ def test_semantically_identical_json_formatting_is_allowed(tmp_path: Path) -> No
     )
 
 
+def test_challenge_writer_rejects_dangling_output_symlinks(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    _write_jsonl(dataset_path, [_sample(index) for index in range(10)])
+    artifacts = _build(dataset_path)
+    public_dir = tmp_path / "public"
+    private_dir = tmp_path / "private"
+    public_dir.mkdir()
+    public_path = public_dir / f"{artifacts.public.challenge_id}.json"
+    _symlink_or_skip(public_path, tmp_path / "missing-public.json")
+
+    with pytest.raises(ChallengeExistsError, match="must not be a symbolic link"):
+        write_challenge(
+            artifacts,
+            public_dir=public_dir,
+            private_dir=private_dir,
+        )
+
+    assert public_path.is_symlink()
+    assert not private_dir.exists()
+
+
+def test_public_challenge_rejects_ntfs_alternate_data_stream_sources() -> None:
+    public = PublicChallenge.model_validate_json(
+        json.dumps(
+            {
+                **json.loads(
+                    (
+                        Path(__file__).parents[1]
+                        / "challenges"
+                        / "public"
+                        / "en-ewt-upos-v1.json"
+                    ).read_text(encoding="utf-8")
+                ),
+                "source_file_sha256s": [
+                    {
+                        "path": "data/source.jsonl:descriptor",
+                        "sha256": "0" * 64,
+                    }
+                ],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="source-file fingerprints are invalid"):
+        validate_public_challenge(public)
+
+
 def test_conflicting_challenge_version_cannot_be_overwritten(tmp_path: Path) -> None:
     dataset_path = tmp_path / "samples.jsonl"
     _write_jsonl(dataset_path, [_sample(index) for index in range(20)])
@@ -314,6 +369,46 @@ def test_upos_gold_tags_must_use_ud_inventory(tmp_path: Path) -> None:
             language="Chinese",
             treebank="GSDSimp",
             task="upos",
+            count=1,
+            seed=2026,
+            version="v1",
+        )
+
+
+def test_missing_form_markers_are_not_valid_segmentation_gold(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    sample = _sample(1, tasks=["upos"])
+    sample["answers"]["segmentation"] = ["_", "句子1"]
+    _write_jsonl(dataset_path, [sample])
+
+    with pytest.raises(InvalidGoldAnswerError, match="segmentation gold list"):
+        build_challenge(
+            dataset_path,
+            language="Chinese",
+            treebank="GSDSimp",
+            task="upos",
+            count=1,
+            seed=2026,
+            version="v1",
+        )
+
+
+@pytest.mark.parametrize("task", ["xpos", "transliteration"])
+def test_missing_markers_are_not_valid_fixed_token_gold(
+    tmp_path: Path,
+    task: str,
+) -> None:
+    dataset_path = tmp_path / "samples.jsonl"
+    sample = _sample(1, tasks=[task])
+    sample["answers"][task] = ["_", "value"]
+    _write_jsonl(dataset_path, [sample])
+
+    with pytest.raises(InvalidGoldAnswerError, match=f"invalid {task}"):
+        build_challenge(
+            dataset_path,
+            language="Chinese",
+            treebank="GSDSimp",
+            task=task,
             count=1,
             seed=2026,
             version="v1",

@@ -1,0 +1,62 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "zh-gsdsimp-transliteration-v1",
+  "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+  "errors": {},
+  "generation_diagnostics": {
+    "execution_seconds": 194.45909044519067,
+    "finish_reasons": {
+      "stop": 50
+    },
+    "generated_tokens": {
+      "maximum": 426,
+      "mean_observed": 181.8,
+      "missing_count": 0,
+      "observed_count": 50,
+      "total": 9090
+    },
+    "parse_errors": {},
+    "request_count": 50,
+    "request_latency_seconds": {
+      "maximum": 8.937981106340885,
+      "mean": 3.8829967763274906,
+      "minimum": 1.3169483616948128,
+      "total": 194.14983881637454
+    },
+    "response_utf8_bytes": {
+      "maximum": 783,
+      "mean": 350.88,
+      "minimum": 114,
+      "total": 17544
+    },
+    "schema_version": "generation-diagnostics-v1"
+  },
+  "generation_settings": {
+    "enable_thinking": false,
+    "max_tokens": 512,
+    "seed": 2026,
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "metrics": {
+    "sentence_exact_match_rate": 0.0,
+    "token_accuracy": 0.37131147540983606
+  },
+  "model_identity": {
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129"
+  },
+  "primary_metric": "token_accuracy",
+  "prompt_envelope_version": "1.0",
+  "samples_invalid": 0,
+  "samples_total": 50,
+  "samples_valid": 50,
+  "score": 0.37131147540983606,
+  "scorer_version": "1.0",
+  "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+  "structured_output_contract_version": "dynamic-response-constraint-v5",
+  "student_prompt_sha256": "2101738b319def47eb163bb1d969b5616e02c35cd8fe67d5067d87f55b27a4c1",
+  "task": "transliteration"
+}

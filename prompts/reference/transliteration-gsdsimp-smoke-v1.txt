@@ -1,0 +1,3 @@
+Transliterate every supplied Simplified Chinese token as Hanyu Pinyin with lowercase letters and tone marks. Keep the output strictly token-aligned: return one string for every input token in identical order. Preserve punctuation, numbers, Latin-script text, and other non-Chinese content exactly. Use apostrophes where needed to mark Pinyin syllable boundaries, but do not add spaces or split tokens.
+
+Return exactly the required JSON object. Do not include explanations, markdown, token text, or extra keys.

@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "he-htb-segmentation-foundation-v1",
+  "dataset_sha256": "b42a13dede12c7f977c4ff9e270e5dccc145ada33078b34d79758780de739613",
+  "language": "Hebrew",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "48b6592bbc6fafb2039bbc08bb3d11bf8752d3255dc607aa4345c77fca48a4d3",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Hebrew HTB segmentation challenge",
+  "treebank": "HTB",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

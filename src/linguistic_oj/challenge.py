@@ -9,9 +9,9 @@ import random
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .contracts import (
     AGGREGATION_VERSION,
@@ -50,6 +50,14 @@ class ChallengeSecurityLevel(StrEnum):
 
 class ChallengeStatus(StrEnum):
     DRAFT = "draft"
+    ACTIVE = "active"
+
+
+class SourceFileFingerprint(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    path: str
+    sha256: str
 
 
 class PublicChallenge(BaseModel):
@@ -63,7 +71,7 @@ class PublicChallenge(BaseModel):
     language: str
     treebank: str
     task: str
-    sample_count: int
+    sample_count: int = Field(gt=0)
     primary_metric: str
     secondary_metrics: tuple[str, ...]
     response_schema_version: str
@@ -73,6 +81,16 @@ class PublicChallenge(BaseModel):
     selection_sha256: str
     security_level: str
     status: str
+    annotation_license: str = "unrecorded"
+    attribution_requirements: str = "unrecorded"
+    source_release: str = "unrecorded"
+    source_commit: str = "unrecorded"
+    source_file_sha256s: tuple[SourceFileFingerprint, ...] = ()
+    share_alike_requirements: str = "review_required"
+    underlying_text_rights: str = "review_required"
+    benchmark_limitations: str = (
+        "Public UD-derived teaching benchmark; source data and answers are not secret."
+    )
 
 
 class ManifestSample(BaseModel):
@@ -172,7 +190,7 @@ def selection_sha256(samples: tuple[ManifestSample, ...]) -> str:
 def validated_gold_item_count(sample: DatasetSample, task: TaskType) -> int:
     tokens = sample.answers.get(TaskType.SEGMENTATION.value)
     if not isinstance(tokens, list) or not tokens or any(
-        not isinstance(token, str) or not token for token in tokens
+        not isinstance(token, str) or not token or token == "_" for token in tokens
     ):
         raise InvalidGoldAnswerError(
             f"Sample {sample.id} must have a non-empty segmentation gold list"
@@ -229,7 +247,7 @@ def validated_gold_item_count(sample: DatasetSample, task: TaskType) -> int:
             raise InvalidGoldAnswerError(
                 f"Sample {sample.id} dependency token IDs must be contiguous"
             )
-    elif any(not isinstance(item, str) or not item for item in answer):
+    elif any(not isinstance(item, str) or not item or item == "_" for item in answer):
         raise InvalidGoldAnswerError(
             f"Sample {sample.id} has invalid {task.value} gold items"
         )
@@ -243,6 +261,62 @@ def _is_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
+def validate_public_challenge(public: PublicChallenge) -> None:
+    """Validate catalog metadata without requiring private challenge artifacts."""
+
+    if not isinstance(public, PublicChallenge):
+        raise TypeError("public must be a PublicChallenge")
+    task = TaskType(public.task)
+    expected_primary, expected_secondary = TASK_METRICS[task]
+    if public.primary_metric != expected_primary or public.secondary_metrics != expected_secondary:
+        raise ValueError("public metrics do not match the task contract")
+    if public.response_schema_version != RESPONSE_SCHEMA_VERSIONS[task]:
+        raise ValueError("response schema version does not match the task contract")
+    versions = (public.scorer_version, public.aggregation_version)
+    if versions not in {(None, None), (SCORER_VERSION, AGGREGATION_VERSION)}:
+        raise ValueError("public scorer and aggregation versions do not match the runtime")
+    if public.security_level != ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value:
+        raise ValueError("unsupported challenge security level")
+    if public.status not in {status.value for status in ChallengeStatus}:
+        raise ValueError("unsupported challenge status")
+    public_text_fields = (
+        public.annotation_license,
+        public.attribution_requirements,
+        public.source_release,
+        public.source_commit,
+        public.share_alike_requirements,
+        public.underlying_text_rights,
+        public.benchmark_limitations,
+    )
+    if any(not value or value.strip() != value for value in public_text_fields):
+        raise ValueError("public provenance fields must be non-empty and trimmed")
+    source_paths: set[str] = set()
+    for source in public.source_file_sha256s:
+        source_path = PurePosixPath(source.path)
+        if (
+            not source.path
+            or source.path.strip() != source.path
+            or "\\" in source.path
+            or source_path.is_absolute()
+            or not source_path.parts
+            or ".." in source_path.parts
+            or any(":" in part for part in source_path.parts)
+            or source.path in source_paths
+            or not _is_sha256(source.sha256)
+        ):
+            raise ValueError("public source-file fingerprints are invalid")
+        source_paths.add(source.path)
+    if public.challenge_id != make_challenge_id(
+        public.language,
+        public.treebank,
+        task,
+        public.version,
+    ):
+        raise ValueError("challenge_id does not match challenge metadata")
+    if not _is_sha256(public.dataset_sha256) or not _is_sha256(public.selection_sha256):
+        raise ValueError("challenge fingerprints must be lowercase SHA-256 values")
+
+
 def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
     """Validate the complete public/private challenge identity and manifest."""
 
@@ -253,12 +327,7 @@ def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
     ):
         raise TypeError("artifacts must contain PublicChallenge and PrivateChallengeManifest")
 
-    task = TaskType(public.task)
-    expected_primary, expected_secondary = TASK_METRICS[task]
-    if public.primary_metric != expected_primary or public.secondary_metrics != expected_secondary:
-        raise ValueError("public metrics do not match the task contract")
-    if public.response_schema_version != RESPONSE_SCHEMA_VERSIONS[task]:
-        raise ValueError("response schema version does not match the task contract")
+    validate_public_challenge(public)
     if public.scorer_version != SCORER_VERSION or private.scorer_version != SCORER_VERSION:
         raise ValueError("challenge scorer version does not match the runtime")
     if (
@@ -266,11 +335,6 @@ def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
         or private.aggregation_version != AGGREGATION_VERSION
     ):
         raise ValueError("challenge aggregation version does not match the runtime")
-    if public.security_level != ChallengeSecurityLevel.PUBLIC_REPRODUCIBLE.value:
-        raise ValueError("unsupported challenge security level")
-    if public.status != ChallengeStatus.DRAFT.value:
-        raise ValueError("unsupported challenge status")
-
     matching_fields = (
         "challenge_id",
         "version",
@@ -282,13 +346,6 @@ def validate_challenge_artifacts(artifacts: ChallengeArtifacts) -> None:
     )
     if any(getattr(public, field) != getattr(private, field) for field in matching_fields):
         raise ValueError("public challenge and private manifest do not match")
-    if public.challenge_id != make_challenge_id(
-        public.language, public.treebank, task, public.version
-    ):
-        raise ValueError("challenge_id does not match challenge metadata")
-    if not _is_sha256(public.dataset_sha256) or not _is_sha256(public.selection_sha256):
-        raise ValueError("challenge fingerprints must be lowercase SHA-256 values")
-
     sample_ids = private.sample_ids
     if (
         not sample_ids
@@ -420,7 +477,7 @@ def build_challenge(
 
 def _serialize_json(model: BaseModel) -> str:
     payload = json.dumps(
-        model.model_dump(mode="json"),
+        model.model_dump(mode="json", exclude_defaults=True),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
@@ -443,14 +500,20 @@ def load_challenge_artifacts(
     return ChallengeArtifacts(public=public, private=private, dataset_path=dataset_path)
 
 
-def _ensure_compatible_existing_file(path: Path, payload: str) -> None:
+def _ensure_compatible_existing_file(
+    path: Path,
+    payload: str,
+    model_type: type[BaseModel],
+) -> None:
+    if path.is_symlink():
+        raise ChallengeExistsError(f"Challenge output must not be a symbolic link: {path}")
     if not path.exists():
         return
 
     try:
-        existing_content = json.loads(path.read_text(encoding="utf-8"))
-        new_content = json.loads(payload)
-    except json.JSONDecodeError:
+        existing_content = model_type.model_validate_json(path.read_text(encoding="utf-8"))
+        new_content = model_type.model_validate_json(payload)
+    except ValidationError:
         existing_content = None
         new_content = object()
 
@@ -461,11 +524,18 @@ def _ensure_compatible_existing_file(path: Path, payload: str) -> None:
         )
 
 
-def _write_new_file(path: Path, payload: str) -> None:
+def _write_new_file(path: Path, payload: str, model_type: type[BaseModel]) -> None:
+    if path.is_symlink():
+        raise ChallengeExistsError(f"Challenge output must not be a symbolic link: {path}")
     if path.exists():
+        _ensure_compatible_existing_file(path, payload, model_type)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(payload, encoding="utf-8")
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as output_file:
+            output_file.write(payload)
+    except FileExistsError:
+        _ensure_compatible_existing_file(path, payload, model_type)
 
 
 def write_challenge(
@@ -481,10 +551,10 @@ def write_challenge(
     private_payload = _serialize_json(artifacts.private)
 
     # Check both outputs before writing either one to avoid a partially updated pair.
-    _ensure_compatible_existing_file(public_path, public_payload)
-    _ensure_compatible_existing_file(private_path, private_payload)
-    _write_new_file(public_path, public_payload)
-    _write_new_file(private_path, private_payload)
+    _ensure_compatible_existing_file(public_path, public_payload, PublicChallenge)
+    _ensure_compatible_existing_file(private_path, private_payload, PrivateChallengeManifest)
+    _write_new_file(public_path, public_payload, PublicChallenge)
+    _write_new_file(private_path, private_payload, PrivateChallengeManifest)
     return public_path, private_path
 
 

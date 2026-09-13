@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from linguistic_oj.contracts import (
     AGGREGATION_VERSION,
     RESPONSE_SCHEMA_VERSIONS,
@@ -287,3 +289,18 @@ def test_qwen_runtime_v2_adds_pinned_tokenizer_partition() -> None:
     assert contract.worker_model_concurrency == 1
     assert contract.retry_requires_prior_request_terminated is True
     assert load_qwen_worker_contract(ROOT) == contract
+
+
+def test_contract_rejects_token_limits_that_exceed_context() -> None:
+    config = _load_json(ROOT / "config" / "mvp_evaluation_v2.json")
+    identity = config["evaluation_identity"]
+    partition = config["leaderboard_partition"]
+    assert isinstance(identity, dict)
+    assert isinstance(partition, dict)
+    generation_settings = identity["generation_settings"]
+    assert isinstance(generation_settings, dict)
+    generation_settings["max_tokens"] = 512
+    partition["expected_sha256"] = canonical_sha256(identity)
+
+    with pytest.raises(ValueError, match="exceed the model context"):
+        EvaluationContract.from_mapping(config)

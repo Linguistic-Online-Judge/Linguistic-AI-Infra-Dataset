@@ -1,0 +1,749 @@
+{
+  "challenges": [
+    {
+      "challenge_id": "ar-pud-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "f6a0a0c3206bb87551c43e19cbb3eb9ca02cb11095ce5082dd8594f68e4148af",
+      "dataset_sha256": "2999cd1ad3d4da6cd52d23b8e0f50e8b3482e22e9d619cade6a0c7675a544320",
+      "evaluation_identity_sha256": "e352b417c554afcfdefae173887b11aa7ed956047d78a2f652bc96544b6927f0",
+      "maxima": {
+        "canonical_gold_content_tokens": 157,
+        "canonical_upos_domain_worst_tokens": 211,
+        "gold_items": 52,
+        "rendered_input_tokens_for_prompt": 1418
+      },
+      "minimum_max_tokens_with_termination": 212,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "667eedc403e8b77d57ac4713fff0437b4f217513cf0e9d6277c7eb6990ed1518",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "da-ddt-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "3e50d8c36d15051fd2158ed75fab4948311936348bed7d011dc75a38935821bd",
+      "dataset_sha256": "611826fb6dd1d47442dcaf4306166b980a5ccf8fe470fd1515fefe49e5e3782d",
+      "evaluation_identity_sha256": "0063146989f55133802474991178c15e7008d5e84e76954342d3d62388e1901f",
+      "maxima": {
+        "canonical_gold_content_tokens": 122,
+        "canonical_upos_domain_worst_tokens": 175,
+        "gold_items": 43,
+        "rendered_input_tokens_for_prompt": 1389
+      },
+      "minimum_max_tokens_with_termination": 176,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "b3caa16250eda60505a541b50908509fbb2011090051ea571fe4d30430ae7cdc",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "de-hdt-dependency-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3072,
+        "max_tokens": 1024,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "c8322d16b8f4ccecf3154d210841070863bc50b5b84d03cb87963e364e780c6f",
+      "dataset_sha256": "7e8b60b22fdf53718369753892258d7af80b0cfb5e96a54f7afd118683255a89",
+      "evaluation_identity_sha256": "ac1e48f365806ffc76a0f2542f2b619a92c5a7f6aafd7924c36d9e1e042b604d",
+      "maxima": {
+        "canonical_gold_content_tokens": 832,
+        "canonical_upos_domain_worst_tokens": null,
+        "gold_items": 45,
+        "rendered_input_tokens_for_prompt": 1833
+      },
+      "minimum_max_tokens_with_termination": 833,
+      "recommended_power_of_two_max_tokens": 1024,
+      "sample_count": 50,
+      "selection_sha256": "fda3c3b884d1f6fe2a306df221a8720a8b75a9b0e901dc415d678acaf510aa7f",
+      "structural_output_bound": {
+        "bounded": false,
+        "method": "unbounded strings; canonical selected gold is measured"
+      },
+      "task": "dependency",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "de-hdt-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "50e203cc0ac44914555861c37b43c440dfb5b64d371df4043d93079f20855f82",
+      "dataset_sha256": "7e8b60b22fdf53718369753892258d7af80b0cfb5e96a54f7afd118683255a89",
+      "evaluation_identity_sha256": "54a76be455a259f3bf2388446a9f9fe51337d23cf9e37e1e1f503d4ce3580cc1",
+      "maxima": {
+        "canonical_gold_content_tokens": 132,
+        "canonical_upos_domain_worst_tokens": 183,
+        "gold_items": 45,
+        "rendered_input_tokens_for_prompt": 1392
+      },
+      "minimum_max_tokens_with_termination": 184,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "fda3c3b884d1f6fe2a306df221a8720a8b75a9b0e901dc415d678acaf510aa7f",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "de-hdt-xpos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "44da8d2c176d8645c9bb61aa693ca85c7f519ecc08f0a44ce69d642f65ed3a68",
+      "dataset_sha256": "7e8b60b22fdf53718369753892258d7af80b0cfb5e96a54f7afd118683255a89",
+      "evaluation_identity_sha256": "6a51cbda3784f8269859f50c4ebb87933d985c08701f5140ac268688206d97e2",
+      "maxima": {
+        "canonical_gold_content_tokens": 115,
+        "canonical_upos_domain_worst_tokens": null,
+        "gold_items": 45,
+        "rendered_input_tokens_for_prompt": 1393
+      },
+      "minimum_max_tokens_with_termination": 116,
+      "recommended_power_of_two_max_tokens": 128,
+      "sample_count": 50,
+      "selection_sha256": "fda3c3b884d1f6fe2a306df221a8720a8b75a9b0e901dc415d678acaf510aa7f",
+      "structural_output_bound": {
+        "bounded": false,
+        "method": "unbounded strings; canonical selected gold is measured"
+      },
+      "task": "xpos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "en-childes-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "cd1e47128d2e2ce1e9f622c667980174d3656bea85b704f0c6c77c371a977887",
+      "dataset_sha256": "805c597207a3aa51c4bad7be38cd885a84c8d0d76f8efb6d34db9843aa5e5006",
+      "evaluation_identity_sha256": "6d74d2daae3e0363493a9b5b7f3048021180f9262446eacaab5c05aff1b995d8",
+      "maxima": {
+        "canonical_gold_content_tokens": 94,
+        "canonical_upos_domain_worst_tokens": 127,
+        "gold_items": 31,
+        "rendered_input_tokens_for_prompt": 1341
+      },
+      "minimum_max_tokens_with_termination": 128,
+      "recommended_power_of_two_max_tokens": 128,
+      "sample_count": 50,
+      "selection_sha256": "8c91a203e5d2566b497c9ba84b849ca4cef1543f04c2bf85667576fb4e8e01e2",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "es-ancora-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3584,
+        "max_tokens": 512,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "740ae8aac2ebe75b1998eba0c10a54c2fdedb0c9fb2796b7ca3762aac429414c",
+      "dataset_sha256": "e71e034f2e32a2c420618f3867410211fae6fc0c85f31678d28b58721e54ea2e",
+      "evaluation_identity_sha256": "42f4e995bd4555d25c31812014aaca69da1719e18fa781fd7a01e8cd5a00cb93",
+      "maxima": {
+        "canonical_gold_content_tokens": 356,
+        "canonical_upos_domain_worst_tokens": 503,
+        "gold_items": 125,
+        "rendered_input_tokens_for_prompt": 1590
+      },
+      "minimum_max_tokens_with_termination": 504,
+      "recommended_power_of_two_max_tokens": 512,
+      "sample_count": 50,
+      "selection_sha256": "98d7b59a6c43bccc2d7fa7e504226109b69d0b59f4badde2e5bb299e5db58d6e",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "fr-fqb-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "218a9b2dfab92c9cf449f43e0193a0064c17d8a21320628d3ae0648c1ff88847",
+      "dataset_sha256": "d524d2aaf27bcca579d3af8b5be8afbcda797a120c8d44094a0d83ba44d5c75b",
+      "evaluation_identity_sha256": "99c7cb1f98bf235e0f9a4bb8fa160ee81651a2b607092fbceaf592f11622cb42",
+      "maxima": {
+        "canonical_gold_content_tokens": 62,
+        "canonical_upos_domain_worst_tokens": 87,
+        "gold_items": 21,
+        "rendered_input_tokens_for_prompt": 1322
+      },
+      "minimum_max_tokens_with_termination": 88,
+      "recommended_power_of_two_max_tokens": 128,
+      "sample_count": 50,
+      "selection_sha256": "a9b304ed38d2ba35c5e985c7022bfd02342780299c65f18d8b566e93c93b61ab",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "he-htb-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3584,
+        "max_tokens": 512,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "e0524a2e040de9d8bc6f6b1e7ffed3dad3388e1f6e9d4091d5546993417c2ca3",
+      "dataset_sha256": "b42a13dede12c7f977c4ff9e270e5dccc145ada33078b34d79758780de739613",
+      "evaluation_identity_sha256": "5092baf754d9d2b016ac0b3006faaade221ebe6939e760c93ba5f83a5936bbe0",
+      "maxima": {
+        "canonical_gold_content_tokens": 210,
+        "canonical_upos_domain_worst_tokens": 287,
+        "gold_items": 71,
+        "rendered_input_tokens_for_prompt": 1478
+      },
+      "minimum_max_tokens_with_termination": 288,
+      "recommended_power_of_two_max_tokens": 512,
+      "sample_count": 50,
+      "selection_sha256": "48b6592bbc6fafb2039bbc08bb3d11bf8752d3255dc607aa4345c77fca48a4d3",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "hi-hdtb-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "3068419b00d9922926a9ec2d77f1b30ab3ac159008aa2ab4af3244a4277379c0",
+      "dataset_sha256": "7c8374ea5c4ad73e636456709ea481090cdf62f1ce2d1c661a01102611a2ea31",
+      "evaluation_identity_sha256": "429e2a380833cf1cbdfe7d0c3be05896f11b16af0fac95f10b2d218a22e7c90c",
+      "maxima": {
+        "canonical_gold_content_tokens": 156,
+        "canonical_upos_domain_worst_tokens": 207,
+        "gold_items": 51,
+        "rendered_input_tokens_for_prompt": 1489
+      },
+      "minimum_max_tokens_with_termination": 208,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "850fcb5b3efc8633ff993871f6e42a6d9595f9855c38c0cffb1f076ab9d72edf",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "hu-szeged-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "78f5bb27b9bce9ffd3204511845f54a78d4261bd33376b84a97ae6451231c8ce",
+      "dataset_sha256": "ef75d88de80a06a845b833845619201e8d9d8d8b396f9a77eb91ac0a41f942e0",
+      "evaluation_identity_sha256": "fd517916b5d69b0f7ed165c6f47bd21f8a0fb428cbcbc123b1fcf7e4457b2777",
+      "maxima": {
+        "canonical_gold_content_tokens": 174,
+        "canonical_upos_domain_worst_tokens": 231,
+        "gold_items": 57,
+        "rendered_input_tokens_for_prompt": 1473
+      },
+      "minimum_max_tokens_with_termination": 232,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "a64eb4d7515a7037a62a185e9695842756c01e9d220b586e30cd8e4baf8f6fd1",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "it-kiparlaforest-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "267c2d6f9f15a2a82a69c452d3c1adad0ff4f9fbc0687c4c7b40e77581fa74b6",
+      "dataset_sha256": "8c93c5af9524d66614a0979a834dd972ac5bb41f1fb027d7bcbb94cd9f7db7c7",
+      "evaluation_identity_sha256": "98ba3d8994f92430b664f83cb9dbf3db7333acb04dacb2f4d467f395ae85333d",
+      "maxima": {
+        "canonical_gold_content_tokens": 100,
+        "canonical_upos_domain_worst_tokens": 143,
+        "gold_items": 35,
+        "rendered_input_tokens_for_prompt": 1365
+      },
+      "minimum_max_tokens_with_termination": 144,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "0782722d854e5105a7777ff7fb88caf3fbb19e4c4c697a42c6ee3079e23bb499",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "ja-pud-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3584,
+        "max_tokens": 512,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "e4ef8acd73b875611c1976b8cb6057dc6ba4b02be4b6cd22303dede6f5d47d5e",
+      "dataset_sha256": "4f2b5a152f945605969bf3b986d629dc31aaea07ed4db27d3a54a11bcd8a9f20",
+      "evaluation_identity_sha256": "03e59c907c1677406de248251dafba1a998dee8054d4f36eba996b70dd0714e0",
+      "maxima": {
+        "canonical_gold_content_tokens": 205,
+        "canonical_upos_domain_worst_tokens": 275,
+        "gold_items": 68,
+        "rendered_input_tokens_for_prompt": 1415
+      },
+      "minimum_max_tokens_with_termination": 276,
+      "recommended_power_of_two_max_tokens": 512,
+      "sample_count": 50,
+      "selection_sha256": "07b7a3dbb0811bad7a11811f98f6f6682d81d8a171f9cf7ce3822291008f8ad8",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "ko-kaist-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "12dab8f206ff18b9e9da3ba7c790dbba453fef8dee9127b79909c0155db07de3",
+      "dataset_sha256": "6548630f95d522168165a1f9098e8231e8ba91529f7d78bd24f6f277a4fc6fe4",
+      "evaluation_identity_sha256": "8898b5c6df534c849aa8f73df5da29ddc08567ae9df4dd81969f5cd5c603ff1e",
+      "maxima": {
+        "canonical_gold_content_tokens": 62,
+        "canonical_upos_domain_worst_tokens": 87,
+        "gold_items": 21,
+        "rendered_input_tokens_for_prompt": 1355
+      },
+      "minimum_max_tokens_with_termination": 88,
+      "recommended_power_of_two_max_tokens": 128,
+      "sample_count": 50,
+      "selection_sha256": "647d61e96ed92936161f03cac71dae0a30674c88bb6c1ddd53b0ce8938f21f23",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "nl-lassysmall-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "d62b4a818afb2926ff68c9a0b37e499298a2c91998ba5923bdcb7899cdec1220",
+      "dataset_sha256": "e877b5df531b581ec681b706bd8198370592de8c78df3223fae12471de2a5763",
+      "evaluation_identity_sha256": "bcbcdea88f5c5bf6f44203bcc3c54238657394e92049a8ad4e5ae56fbb7f931d",
+      "maxima": {
+        "canonical_gold_content_tokens": 160,
+        "canonical_upos_domain_worst_tokens": 227,
+        "gold_items": 56,
+        "rendered_input_tokens_for_prompt": 1418
+      },
+      "minimum_max_tokens_with_termination": 228,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "a95ae70149ec6f8d2adbced321c08af9f273eaeee72cb09f35e759b474a4b242",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "pt-cintil-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "947f86a3bc0cd86fa3b67ee85740099beb737178d191c9d5fa02ac30a0b82f9d",
+      "dataset_sha256": "a59c360c50cfa070ba0b070f32ece3b54156382ab0fdd0b16d81152cb2e151d7",
+      "evaluation_identity_sha256": "bd4128d8f358a8c75830ef2e919cb3cef0c63bb1337c5daa32310c94d30b1b15",
+      "maxima": {
+        "canonical_gold_content_tokens": 183,
+        "canonical_upos_domain_worst_tokens": 255,
+        "gold_items": 63,
+        "rendered_input_tokens_for_prompt": 1435
+      },
+      "minimum_max_tokens_with_termination": 256,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "3b2b6c817eabf467c307f27e69e4fecfd4f3a1e4d0f1397183eb21c2eb5a814f",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "ru-syntagrus-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "ca034b07f7bb6f7ae814d36a471f56f397d2c6395c8c1c61b992698f78c32913",
+      "dataset_sha256": "a19bb5e730e45a2b84d5cfa54c7ca3374b22a9117afdc7631d7db2d54abb4f5c",
+      "evaluation_identity_sha256": "45ba60fafcdbd2a518c4821e1edd3a496f2ffbcb91cf3a67cbbda0009ca7af06",
+      "maxima": {
+        "canonical_gold_content_tokens": 182,
+        "canonical_upos_domain_worst_tokens": 247,
+        "gold_items": 61,
+        "rendered_input_tokens_for_prompt": 1458
+      },
+      "minimum_max_tokens_with_termination": 248,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "a207bb6e8db934755ba36ce21d2d2160fdb750b3d9543df0047c5a35e7f7f6b0",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "sv-talbanken-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3584,
+        "max_tokens": 512,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "af8835c4c775b5f1c63cff92ea3279ccf062e19aad9024497c8c134bb848d638",
+      "dataset_sha256": "712817e9d76609f7c1b77f4beda466d37784793421b909906edf42768e832fe4",
+      "evaluation_identity_sha256": "6ac6960e3d479032dc00639e6391bf2dc9d666a604e8e28e2fce37b6906d5fe1",
+      "maxima": {
+        "canonical_gold_content_tokens": 183,
+        "canonical_upos_domain_worst_tokens": 275,
+        "gold_items": 68,
+        "rendered_input_tokens_for_prompt": 1480
+      },
+      "minimum_max_tokens_with_termination": 276,
+      "recommended_power_of_two_max_tokens": 512,
+      "sample_count": 50,
+      "selection_sha256": "090dfd412939813d276b7f4c04346c0fea92d6e4411c418c246f66beb2f97525",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "th-pud-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "eedab40e462e9b2a5fa66fe0cd49abe6fb4f51a71f5b1dadf1281c60cf56741b",
+      "dataset_sha256": "ad299c0d371a498b22318b7032d386bc8722558665c514d3e413debef5022897",
+      "evaluation_identity_sha256": "438912be571c9a0791617b36567ab1a14fe6ec1131c661672acde87d112aceee",
+      "maxima": {
+        "canonical_gold_content_tokens": 157,
+        "canonical_upos_domain_worst_tokens": 223,
+        "gold_items": 55,
+        "rendered_input_tokens_for_prompt": 1449
+      },
+      "minimum_max_tokens_with_termination": 224,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "50f58628e81d5579954f5ccf56d699b6931cfcd216bd4b45da33519f1f5aae26",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "zh-beginner-upos-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "d019f7bba9e28a93ef79deddfaafaace8287eba62b82bb9ac5833a3b38cc795f",
+      "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+      "evaluation_identity_sha256": "2fc9cc7f45033c07ccf43a24a09837f7b5566789a11b3ba0660e44681b98f28d",
+      "maxima": {
+        "canonical_gold_content_tokens": 62,
+        "canonical_upos_domain_worst_tokens": 87,
+        "gold_items": 21,
+        "rendered_input_tokens_for_prompt": 1309
+      },
+      "minimum_max_tokens_with_termination": 88,
+      "recommended_power_of_two_max_tokens": 128,
+      "sample_count": 50,
+      "selection_sha256": "b6baf47e42f0fa73dc095f22b9810746b14dbd78a57510ab51b6e91130ae08d8",
+      "structural_output_bound": {
+        "bounded": true,
+        "method": "canonical compact JSON with the longest uniform allowed UPOS tag"
+      },
+      "task": "upos",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "zh-gsdsimp-segmentation-v2",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3840,
+        "max_tokens": 256,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "ba7da1f56c8410f342ccba597784881fce87b1497b0f8e7415acbfa816215baa",
+      "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+      "evaluation_identity_sha256": "a32c2fea541ab23e67c53b1348dbec35e7cad996266f9c38d7f2d9b3488f685c",
+      "maxima": {
+        "canonical_gold_content_tokens": 130,
+        "canonical_upos_domain_worst_tokens": null,
+        "gold_items": 59,
+        "rendered_input_tokens_for_prompt": 1331
+      },
+      "minimum_max_tokens_with_termination": 131,
+      "recommended_power_of_two_max_tokens": 256,
+      "sample_count": 50,
+      "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+      "structural_output_bound": {
+        "bounded": false,
+        "method": "unbounded strings; canonical selected gold is measured"
+      },
+      "task": "segmentation",
+      "verdict": "pass"
+    },
+    {
+      "challenge_id": "zh-gsdsimp-transliteration-v1",
+      "checks": {
+        "configured_output_budget_fits": true,
+        "contract_limits_fit_context": true,
+        "prompt_render_fits_context": true,
+        "prompt_render_fits_limit": true
+      },
+      "configured": {
+        "max_rendered_input_tokens": 3584,
+        "max_tokens": 512,
+        "model_context_tokens": 4096
+      },
+      "contract_snapshot_sha256": "6cfdfa6fd0d24a1934d54e822691735cf642ce89108dc114b7154f8a44122464",
+      "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+      "evaluation_identity_sha256": "9dbd5f5462aa364b9d65ffeeca4ab8422b489aed8f1a635e68e81c8c76d8fffc",
+      "maxima": {
+        "canonical_gold_content_tokens": 257,
+        "canonical_upos_domain_worst_tokens": null,
+        "gold_items": 59,
+        "rendered_input_tokens_for_prompt": 1469
+      },
+      "minimum_max_tokens_with_termination": 258,
+      "recommended_power_of_two_max_tokens": 512,
+      "sample_count": 50,
+      "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+      "structural_output_bound": {
+        "bounded": false,
+        "method": "unbounded strings; canonical selected gold is measured"
+      },
+      "task": "transliteration",
+      "verdict": "pass"
+    }
+  ],
+  "prompt": {
+    "sha256": "bfd9ae0e238564ca0552b08e757a13fb66e3d7ae2de7437766829d0808e07381",
+    "tokens": 1090,
+    "universal_student_prompt_certified": false
+  },
+  "registry_sha256": "42d01b952688cd540e469a1b604d5e477d89c60ebbc9e73959f8dc4c14842368",
+  "report_sha256": "82ef537f26a4b25a7f585070438d4cf17e29c5b541dc2ebce39205151da8cd0f",
+  "schema_version": "qwen-token-budget-audit-v1",
+  "tokenizer_identity": {
+    "add_generation_prompt": true,
+    "chat_template_sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+    "counting_method": "hf-apply-chat-template-tokenize-v1",
+    "enable_thinking": false,
+    "repository": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "tokenizer_config_sha256": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8",
+    "tokenizer_json_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+  },
+  "verdict": "pass"
+}

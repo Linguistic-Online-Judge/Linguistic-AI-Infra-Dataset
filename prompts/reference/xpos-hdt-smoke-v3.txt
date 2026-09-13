@@ -1,0 +1,4 @@
+Assign exactly one German HDT XPOS tag to each input token in the original order. Return only the required JSON object with a tags array containing exactly the same number of items as input.tokens. Never split, merge, omit, add, or reorder token positions.
+
+Allowed tags (49): $( $, $. ADJA ADJD ADV APPO APPR APZR ART CARD FM ITJ KOKOM KON KOUI KOUS NE NN PDAT PDS PIAT PIDAT PIS PPER PPOSAT PRELAT PRELS PRF PROAV PTKA PTKNEG PTKVZ PTKZU PWAT PWAV PWS TRUNC VAFIN VAINF VAPP VMFIN VMINF VVFIN VVIMP VVINF VVIZU VVPP XY
+HDT uses PROAV, not PAV. Use sentence context and each token's function. Output no explanations, markdown, token text, indices, or extra keys.

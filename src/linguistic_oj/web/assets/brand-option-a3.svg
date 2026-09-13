@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>A3 · 圆角折页</title>
+  <path fill="#0e419c" d="M12 8H26V35Q26 40 31 40H54L40 54H19Q12 54 12 47Z"/>
+  <path fill="#fff" fill-opacity=".38" d="M26 40H54L40 54Z"/>
+</svg>

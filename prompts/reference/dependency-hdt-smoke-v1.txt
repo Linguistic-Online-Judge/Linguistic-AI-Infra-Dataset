@@ -1,0 +1,3 @@
+Produce a Universal Dependencies parse for the supplied German HDT token sequence. Return exactly one arc for every token_id. Each head_id must be 0 for the single sentence root or the token_id of another supplied token. Use the token's syntactic head and the most specific appropriate UD dependency relation. The arcs must form one connected, acyclic dependency tree.
+
+Return exactly the required JSON object. Preserve token IDs, include no duplicate or missing token IDs, and do not include explanations, markdown, token text, or extra keys.

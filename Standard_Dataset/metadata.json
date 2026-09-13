@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-31T08:03:25.141161+00:00",
+  "generated_at": "2026-09-02T18:14:31.655735+00:00",
   "input_dir": "Target_Conllus",
   "treebank_name_map": "config/treebank_names.json",
   "treebank_name_map_sha256": "7d5e8eefd241faa3a2e57f48014e0047bd47e0c9758a464d75571ba949f0293d",
@@ -26,11 +26,11 @@
     "Thai_泰语": 1363
   },
   "by_task": {
-    "dependency": 135180,
-    "segmentation": 135180,
-    "transliteration": 14592,
-    "upos": 135180,
-    "xpos": 80992
+    "dependency": 114300,
+    "segmentation": 114320,
+    "transliteration": 14582,
+    "upos": 114287,
+    "xpos": 78423
   },
   "by_treebank": {
     "Arabic_NYUAD": 1963,
@@ -139,7 +139,9 @@
       "head_form",
       "deprel"
     ],
-    "xpos_policy": "answers.xpos is included only when every token in the sentence has a non-empty XPOS value.",
-    "transliteration_policy": "answers.transliteration is included only when every token in the sentence has MISC.Translit."
+    "eligibility_policy": "A task is advertised only when every integer-ID token has a visible FORM and that task's complete, structurally valid gold fields.",
+    "upos_policy": "Every UPOS value must belong to the 17-tag UD inventory.",
+    "xpos_policy": "answers.xpos is included only when every token has a visible FORM and a non-empty XPOS value.",
+    "transliteration_policy": "answers.transliteration is included only when every token has a visible FORM and non-empty MISC.Translit."
   }
 }

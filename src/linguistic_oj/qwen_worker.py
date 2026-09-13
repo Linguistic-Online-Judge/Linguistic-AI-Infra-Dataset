@@ -8,11 +8,11 @@ from pathlib import Path
 from time import sleep
 
 from .challenge import load_challenge_artifacts
-from .mvp_contract import load_qwen_worker_contract
+from .mvp_contract import EvaluationContract, load_qwen_worker_contract
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
 from .redis_job_queue import RedisJobQueue
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
-from .submission_store import SubmissionStore
+from .submission_store_factory import build_submission_store
 
 
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -25,8 +25,15 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="deployment root containing config/mvp_evaluation_v2.json",
     )
-    parser.add_argument("--database", type=Path, required=True)
+    storage = parser.add_mutually_exclusive_group(required=True)
+    storage.add_argument("--database", type=Path, help="SQLite database path")
+    storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
     parser.add_argument("--redis-url", required=True)
+    parser.add_argument(
+        "--contract",
+        type=Path,
+        help="evaluation contract path; defaults to config/mvp_evaluation_v2.json",
+    )
     parser.add_argument("--public-challenge", type=Path, required=True)
     parser.add_argument("--private-challenge", type=Path, required=True)
     parser.add_argument("--dataset", type=Path, required=True)
@@ -35,18 +42,31 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--launch-evidence", type=Path, required=True)
     parser.add_argument("--consumer-name")
     parser.add_argument("--namespace", default="linguistic-oj")
+    parser.add_argument(
+        "--environment",
+        choices=("development", "test", "production"),
+        default="production",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--idle-sleep-seconds", type=float, default=0.25)
     args = parser.parse_args(arguments)
     if args.idle_sleep_seconds <= 0:
         parser.error("--idle-sleep-seconds must be positive")
+    if args.environment == "production" and args.database is not None:
+        parser.error("production Qwen Worker requires PostgreSQL persistence")
     return args
 
 
 def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
     """Build one fail-closed worker from deployment-owned paths and endpoints."""
 
-    contract = load_qwen_worker_contract(args.root)
+    if args.environment == "production" and args.database is not None:
+        raise ValueError("production Qwen Worker requires PostgreSQL persistence")
+    if args.contract is None:
+        contract = load_qwen_worker_contract(args.root)
+    else:
+        contract_path = args.contract if args.contract.is_absolute() else args.root / args.contract
+        contract = EvaluationContract.from_path(contract_path)
     identity = contract.evaluation_identity
     model_identity = identity.get("model_identity")
     generation_settings = identity.get("generation_settings")
@@ -74,7 +94,10 @@ def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
         namespace=args.namespace,
     )
     return QwenSubmissionWorker(
-        store=SubmissionStore(args.database),
+        store=build_submission_store(
+            database_path=args.database,
+            postgres_database_url=args.postgres_database_url,
+        ),
         queue=queue,
         contract=contract,
         artifacts=artifacts,

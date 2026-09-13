@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import sqlite3
@@ -11,6 +13,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+import linguistic_oj.api as api_module
 import linguistic_oj.qwen_runtime as qwen_runtime_module
 import linguistic_oj.submission_jobs as submission_jobs_module
 import linguistic_oj.submission_store as submission_store_module
@@ -57,7 +60,12 @@ def _sample(sample_id: str, text: str) -> dict[str, object]:
     }
 
 
-def _artifacts(tmp_path: Path) -> ChallengeArtifacts:
+def _artifacts(
+    tmp_path: Path,
+    *,
+    task: str = "upos",
+    version: str = "v1",
+) -> ChallengeArtifacts:
     dataset_path = tmp_path / "dataset.jsonl"
     samples = [_sample("sample-b", "CD"), _sample("sample-a", "AB")]
     dataset_path.write_text(
@@ -68,10 +76,10 @@ def _artifacts(tmp_path: Path) -> ChallengeArtifacts:
         dataset_path,
         language="Test",
         treebank="Tiny",
-        task="upos",
+        task=task,
         count=2,
         seed=2026,
-        version="v1",
+        version=version,
     )
 
 
@@ -82,7 +90,21 @@ def _mock_contract(
 ) -> EvaluationContract:
     config = json.loads((ROOT / "config" / "mvp_evaluation.json").read_text(encoding="utf-8"))
     config["contract_version"] = contract_version
-    config["catalog"]["challenge_id"] = artifacts.public.challenge_id
+    config["catalog"].update(
+        artifacts.public.model_dump(
+            mode="json",
+            include={
+                "challenge_id",
+                "annotation_license",
+                "attribution_requirements",
+                "source_release",
+                "source_commit",
+                "source_file_sha256s",
+                "share_alike_requirements",
+                "underlying_text_rights",
+            },
+        )
+    )
     identity = config["evaluation_identity"]
     identity.update(
         {
@@ -145,7 +167,21 @@ def _qwen_contract(
     config = json.loads(
         (ROOT / "config" / "mvp_evaluation_v2.json").read_text(encoding="utf-8")
     )
-    config["catalog"]["challenge_id"] = artifacts.public.challenge_id
+    config["catalog"].update(
+        artifacts.public.model_dump(
+            mode="json",
+            include={
+                "challenge_id",
+                "annotation_license",
+                "attribution_requirements",
+                "source_release",
+                "source_commit",
+                "source_file_sha256s",
+                "share_alike_requirements",
+                "underlying_text_rights",
+            },
+        )
+    )
     identity = config["evaluation_identity"]
     identity.update(
         {
@@ -307,6 +343,11 @@ def _headers(subject: str, idempotency_key: str | None = None) -> dict[str, str]
     return headers
 
 
+def _cursor(value: dict[str, object]) -> str:
+    payload = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
 def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path, caplog) -> None:
     artifacts = _artifacts(tmp_path)
     contract = _mock_contract(artifacts)
@@ -339,7 +380,13 @@ def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path,
     assert live.json() == {"status": "live"}
     assert live.headers["x-request-id"] == "health-check-1"
     assert ready.status_code == 503
-    assert ready.json() == {"detail": "Service not ready"}
+    assert ready.json() == {
+        "error": {
+            "code": "SERVICE_NOT_READY",
+            "details": {},
+            "message": "Service is not ready",
+        }
+    }
     records = [
         json.loads(record.message)
         for record in caplog.records
@@ -349,6 +396,163 @@ def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path,
     assert records[0]["request_id"] == "health-check-1"
     assert all("top-secret" not in record.message for record in caplog.records)
     assert all("redis password" not in record.message for record in caplog.records)
+
+
+def test_frontend_is_packaged_with_restrictive_document_headers(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    _, _, _, _, _, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        document = client.get("/")
+        stylesheet = client.get("/assets/app-shell.css")
+        script = client.get("/assets/app.js")
+
+    assert document.status_code == stylesheet.status_code == script.status_code == 200
+    assert document.headers["content-type"].startswith("text/html")
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert "javascript" in script.headers["content-type"]
+    assert "default-src 'self'" in document.headers["content-security-policy"]
+    assert document.headers["x-frame-options"] == "DENY"
+    assert document.headers["x-content-type-options"] == "nosniff"
+    assert '<main id="main-content" tabindex="-1">' in document.text
+    assert 'src="/assets/app.js?v=pages-1"' in document.text
+    assert 'href="/assets/brand-palette.css?v=fudan-1"' in document.text
+    assert 'src="/assets/account.js?v=pages-1"' in document.text
+    assert 'src="/assets/teaching.js?v=xpos-1"' in document.text
+
+
+def test_api_errors_and_openapi_security_are_machine_readable(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    _, _, _, _, _, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        unauthenticated = client.get("/v1/users/me")
+        missing_idempotency_key = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+        invalid_body = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "invalid-body"),
+            json={"challenge_id": contract.challenge_id},
+        )
+        missing_route = client.get("/v1/not-a-route")
+        schema = client.get("/openapi.json").json()
+
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["www-authenticate"] == "Bearer"
+    assert unauthenticated.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+    assert missing_idempotency_key.status_code == 422
+    assert missing_idempotency_key.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"
+    assert invalid_body.status_code == 422
+    assert invalid_body.json()["error"]["code"] == "REQUEST_VALIDATION_ERROR"
+    assert missing_route.status_code == 404
+    assert missing_route.json()["error"]["code"] == "ROUTE_NOT_FOUND"
+    assert schema["components"]["securitySchemes"]["BearerAuth"] == {
+        "scheme": "bearer",
+        "type": "http",
+    }
+    assert schema["paths"]["/v1/users/me"]["get"]["security"] == [{"BearerAuth": []}]
+    result_schema = schema["paths"]["/v1/submissions/{submission_id}/result"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["schema"]
+    assert result_schema["discriminator"]["propertyName"] == "outcome"
+    assert len(result_schema["oneOf"]) == 3
+    assert {
+        "DependencyResultResponse",
+        "SegmentationResultResponse",
+        "TransliterationResultResponse",
+        "UposResultResponse",
+        "XposResultResponse",
+    } <= set(schema["components"]["schemas"])
+
+
+def test_unavailable_challenge_runtime_is_visible_and_rejected_before_persistence(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, dispatcher, _, _, _ = _components(tmp_path, artifacts, contract)
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        public_challenges={contract.challenge_id: artifacts.public},
+        authenticate=_authenticate,
+        runtime_availability={contract.challenge_id: False},
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        challenge = client.get(f"/v1/challenges/{contract.challenge_id}").json()
+        response = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "runtime-unavailable"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+    assert challenge["submission_enabled"] is True
+    assert challenge["runtime_available"] is False
+    assert challenge["accepting_submissions"] is False
+    assert challenge["student_prompt_utf8_bytes"] == contract.student_prompt_utf8_bytes
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "CHALLENGE_RUNTIME_UNAVAILABLE"
+    assert store.count_submissions() == 0
+
+
+def test_post_returns_durable_acceptance_when_immediate_outbox_publish_fails(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+
+    class UnavailableQueue(InMemoryJobQueue):
+        def publish(self, message: JobMessage) -> None:
+            raise OSError("private redis failure")
+
+    queue = UnavailableQueue(contract.contract_snapshot_sha256)
+    dispatcher = OutboxDispatcher(store, queue, contract)
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+    payload = {"challenge_id": contract.challenge_id, "student_prompt": "Prompt."}
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "durable-outbox"),
+            json=payload,
+        )
+        replay = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "durable-outbox"),
+            json=payload,
+        )
+        visible = client.get(
+            f"/v1/submissions/{created.json()['submission_id']}",
+            headers=_headers("subject-alice"),
+        )
+
+    assert created.status_code == replay.status_code == 202
+    assert replay.json()["submission_id"] == created.json()["submission_id"]
+    assert created.json()["evaluation_identity_sha256"] == contract.evaluation_identity_sha256
+    assert visible.status_code == 200
+    assert store.count_submissions() == store.count_outbox_records() == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == (created.json()["submission_id"],)
 
 
 def _assert_no_private_fields(value: object) -> None:
@@ -371,6 +575,228 @@ def _assert_no_private_fields(value: object) -> None:
     elif isinstance(value, list):
         for nested in value:
             _assert_no_private_fields(nested)
+
+
+def test_current_user_and_submission_history_are_owner_scoped_and_paginated(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, _, _, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        assert client.get("/v1/users/me").status_code == 401
+        assert client.get(
+            "/v1/users/me",
+            headers=_headers("subject-unknown"),
+        ).status_code == 403
+        current_user = client.get(
+            "/v1/users/me",
+            headers=_headers("subject-alice"),
+        )
+        submission_ids = []
+        for index in range(3):
+            response = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-alice", f"history-{index}"),
+                json={
+                    "challenge_id": contract.challenge_id,
+                    "student_prompt": f"Prompt {index}",
+                },
+            )
+            assert response.status_code == 202
+            submission_ids.append(response.json()["submission_id"])
+
+        first_page = client.get(
+            "/v1/submissions?limit=2",
+            headers=_headers("subject-alice"),
+        )
+        empty_page = client.get(
+            "/v1/submissions",
+            headers=_headers("subject-bob"),
+        )
+        invalid_cursor = client.get(
+            "/v1/submissions?cursor=not-base64!",
+            headers=_headers("subject-alice"),
+        )
+        invalid_timestamp_cursor = client.get(
+            "/v1/submissions",
+            params={
+                "cursor": _cursor(
+                    {
+                        "created_at": "not-a-timestamp",
+                        "submission_id": "a" * 32,
+                        "version": 1,
+                    }
+                )
+            },
+            headers=_headers("subject-alice"),
+        )
+
+        first_payload = first_page.json()
+        second_page = client.get(
+            "/v1/submissions",
+            headers=_headers("subject-alice"),
+            params={"limit": 2, "cursor": first_payload["next_cursor"]},
+        )
+
+    assert current_user.status_code == 200
+    assert current_user.json()["public_handle"] == "alice"
+    assert "auth_subject" not in current_user.json()
+    assert first_page.status_code == 200
+    assert len(first_payload["items"]) == 2
+    assert first_payload["next_cursor"]
+    assert second_page.status_code == 200
+    all_history_ids = [
+        item["submission_id"]
+        for item in [*first_payload["items"], *second_page.json()["items"]]
+    ]
+    assert len(all_history_ids) == len(set(all_history_ids)) == 3
+    assert set(all_history_ids) == set(submission_ids)
+    assert all(
+        item["evaluation_identity_sha256"] == contract.evaluation_identity_sha256
+        for item in [*first_payload["items"], *second_page.json()["items"]]
+    )
+    _assert_no_private_fields(first_payload)
+    assert empty_page.json() == {"items": [], "next_cursor": None}
+    assert invalid_cursor.status_code == 422
+    assert invalid_timestamp_cursor.status_code == 422
+    assert invalid_timestamp_cursor.json()["error"]["code"] == "INVALID_SUBMISSION_CURSOR"
+    assert store.count_submissions() == 3
+
+
+def test_owner_prompt_preserves_exact_text_without_exposing_it_to_other_users(tmp_path):
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, provider, _, app = _components(tmp_path, artifacts, contract)
+    prompt = '  中文 e\u0301 العربية\n<img src=x onerror=alert(1)>\n'
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "owner-prompt"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": prompt},
+        )
+        assert created.status_code == 202
+        submission_id = created.json()["submission_id"]
+        path = f"/v1/submissions/{submission_id}/prompt"
+        assert client.get(path).status_code == 401
+        other = client.get(path, headers=_headers("subject-bob"))
+        missing = client.get(
+            "/v1/submissions/missing/prompt", headers=_headers("subject-bob")
+        )
+        assert other.status_code == missing.status_code == 404
+        assert other.json() == missing.json()
+        owned = client.get(path, headers=_headers("subject-alice"))
+        assert owned.status_code == 200
+        assert owned.headers["cache-control"] == "no-store"
+        assert owned.json() == {
+            "submission_id": submission_id,
+            "challenge_id": contract.challenge_id,
+            "student_prompt": prompt,
+            "student_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        }
+        _assert_no_private_fields(client.get(
+            "/v1/submissions", headers=_headers("subject-alice")
+        ).json())
+        assert store.count_submissions() == 1
+        assert provider.calls == 0
+
+
+def test_multi_challenge_api_routes_jobs_and_results_by_contract(tmp_path: Path) -> None:
+    upos_artifacts = _artifacts(tmp_path)
+    segmentation_artifacts = _artifacts(tmp_path, task="segmentation", version="v2")
+    upos_contract = _mock_contract(upos_artifacts)
+    segmentation_contract = _mock_contract(segmentation_artifacts)
+    store = SubmissionStore(tmp_path / "multi-challenge.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+    queues = {
+        upos_contract.challenge_id: InMemoryJobQueue(
+            upos_contract.contract_snapshot_sha256
+        ),
+        segmentation_contract.challenge_id: InMemoryJobQueue(
+            segmentation_contract.contract_snapshot_sha256
+        ),
+    }
+    dispatchers = {
+        upos_contract.challenge_id: OutboxDispatcher(
+            store,
+            queues[upos_contract.challenge_id],
+            upos_contract,
+        ),
+        segmentation_contract.challenge_id: OutboxDispatcher(
+            store,
+            queues[segmentation_contract.challenge_id],
+            segmentation_contract,
+        ),
+    }
+    workers = {
+        upos_contract.challenge_id: SubmissionWorker(
+            store=store,
+            queue=queues[upos_contract.challenge_id],
+            contract=upos_contract,
+            artifacts=upos_artifacts,
+            provider=DeterministicMockProvider(),
+        ),
+        segmentation_contract.challenge_id: SubmissionWorker(
+            store=store,
+            queue=queues[segmentation_contract.challenge_id],
+            contract=segmentation_contract,
+            artifacts=segmentation_artifacts,
+            provider=DeterministicMockProvider(),
+        ),
+    }
+    contracts = {
+        upos_contract.challenge_id: upos_contract,
+        segmentation_contract.challenge_id: segmentation_contract,
+    }
+    app = create_app(
+        store=store,
+        dispatcher=dispatchers,
+        contract=contracts,
+        public_challenges={
+            upos_artifacts.public.challenge_id: upos_artifacts.public,
+            segmentation_artifacts.public.challenge_id: segmentation_artifacts.public,
+        },
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        catalog = client.get("/v1/challenges").json()
+        created = {}
+        for challenge_id in contracts:
+            response = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-alice", f"route-{challenge_id}"),
+                json={
+                    "challenge_id": challenge_id,
+                    "student_prompt": "Return the required JSON.",
+                },
+            )
+            assert response.status_code == 202
+            created[challenge_id] = response.json()["submission_id"]
+
+        assert len(queues[upos_contract.challenge_id]) == 1
+        assert len(queues[segmentation_contract.challenge_id]) == 1
+        assert all(worker.run_once() for worker in workers.values())
+
+        for challenge_id, submission_id in created.items():
+            result = client.get(
+                f"/v1/submissions/{submission_id}/result",
+                headers=_headers("subject-alice"),
+            )
+            assert result.status_code == 200
+            assert result.json()["challenge_id"] == challenge_id
+
+    assert {item["challenge_id"] for item in catalog} == set(contracts)
+    assert all(item["submission_enabled"] for item in catalog)
+    assert all(item["runtime_available"] for item in catalog)
+    assert all(item["accepting_submissions"] for item in catalog)
+    assert all(
+        len(store.leaderboard(contract.evaluation_identity_sha256)) == 1
+        for contract in contracts.values()
+    )
 
 
 def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
@@ -454,7 +880,8 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
         )
         assert result_response.status_code == 200
         result = result_response.json()
-        assert set(result) == set(contract.owner_result_fields)
+        assert set(result) == {*contract.owner_result_fields, "outcome"}
+        assert result["outcome"] == "succeeded"
         assert result["score"] == 1.0
         assert result["samples_valid"] == result["samples_total"] == 2
 
@@ -463,18 +890,21 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
         )
         assert leaderboard_response.status_code == 200
         leaderboard = leaderboard_response.json()
-        assert leaderboard == [
-            {
-                "evaluation_identity_sha256": contract.evaluation_identity_sha256,
-                "public_handle": "alice",
-                "rank": 1,
-                "samples_invalid": 0,
-                "samples_total": 2,
-                "samples_valid": 2,
-                "score": 1.0,
-                "succeeded_at": leaderboard[0]["succeeded_at"],
-            }
-        ]
+        assert leaderboard == {
+            "items": [
+                {
+                    "evaluation_identity_sha256": contract.evaluation_identity_sha256,
+                    "public_handle": "alice",
+                    "rank": 1,
+                    "samples_invalid": 0,
+                    "samples_total": 2,
+                    "samples_valid": 2,
+                    "score": 1.0,
+                    "succeeded_at": leaderboard["items"][0]["succeeded_at"],
+                }
+            ],
+            "next_cursor": None,
+        }
         _assert_no_private_fields(submission)
         _assert_no_private_fields(result)
         _assert_no_private_fields(leaderboard)
@@ -518,16 +948,129 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
             )
             assert second_created.status_code == 202
             assert second_worker.run_once() is True
-            assert len(
-                second_client.get(
-                    f"/v1/leaderboards/{second_contract.evaluation_identity_sha256}"
-                ).json()
-            ) == 1
-            assert len(
-                second_client.get(
-                    f"/v1/leaderboards/{contract.evaluation_identity_sha256}"
-                ).json()
-            ) == 1
+            current_leaderboard = second_client.get(
+                f"/v1/leaderboards/{second_contract.evaluation_identity_sha256}"
+            )
+            historical_leaderboard = second_client.get(
+                f"/v1/leaderboards/{contract.evaluation_identity_sha256}"
+            )
+            assert len(current_leaderboard.json()["items"]) == 1
+            assert historical_leaderboard.status_code == 404
+            assert historical_leaderboard.json()["error"]["code"] == "LEADERBOARD_NOT_FOUND"
+
+
+def test_leaderboard_is_bounded_cursor_paginated_and_snapshot_stable(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, _, worker, app = _components(tmp_path, artifacts, contract)
+    store.register_user(auth_subject="subject-charlie", public_handle="charlie")
+    store.register_user(auth_subject="subject-dave", public_handle="dave")
+
+    with TestClient(app) as client:
+        for index, subject in enumerate(
+            ("subject-alice", "subject-bob", "subject-charlie"),
+            start=1,
+        ):
+            created = client.post(
+                "/v1/submissions",
+                headers=_headers(subject, f"leaderboard-{index}"),
+                json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+            )
+            assert created.status_code == 202
+            assert worker.run_once() is True
+
+        first = client.get(
+            f"/v1/leaderboards/{contract.evaluation_identity_sha256}",
+            params={"limit": 2},
+        )
+        first_payload = first.json()
+        assert [item["rank"] for item in first_payload["items"]] == [1, 2]
+        assert first_payload["next_cursor"] is not None
+
+        later = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-dave", "leaderboard-later"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+        assert later.status_code == 202
+        assert worker.run_once() is True
+
+        second = client.get(
+            f"/v1/leaderboards/{contract.evaluation_identity_sha256}",
+            params={"limit": 2, "cursor": first_payload["next_cursor"]},
+        )
+        unknown = client.get(f"/v1/leaderboards/{'0' * 64}")
+        invalid = client.get(
+            f"/v1/leaderboards/{contract.evaluation_identity_sha256}",
+            params={
+                "cursor": _cursor(
+                    {
+                        "as_of": datetime.now(UTC).isoformat(timespec="microseconds"),
+                        "evaluation_identity_sha256": "f" * 64,
+                        "rank": 1,
+                        "version": 1,
+                    }
+                )
+            },
+        )
+
+    assert second.status_code == 200
+    assert [item["rank"] for item in second.json()["items"]] == [3]
+    assert second.json()["next_cursor"] is None
+    assert unknown.status_code == 404
+    assert unknown.json()["error"]["code"] == "LEADERBOARD_NOT_FOUND"
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "INVALID_LEADERBOARD_CURSOR"
+
+
+def test_api_returns_structured_rate_and_outstanding_quota_feedback(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    _, _, _, _, worker, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        for index in range(contract.submissions_per_user_per_challenge_per_24h):
+            accepted = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-alice", f"rate-{index}"),
+                json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+            )
+            assert accepted.status_code == 202
+            assert worker.run_once() is True
+        rate_limited = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "rate-exceeded"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+        for index in range(contract.max_outstanding_submissions_per_user):
+            accepted = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-bob", f"outstanding-{index}"),
+                json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+            )
+            assert accepted.status_code == 202
+        outstanding_limited = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-bob", "outstanding-exceeded"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+    rate_error = rate_limited.json()["error"]
+    assert rate_limited.status_code == 429
+    assert rate_error["code"] == "SUBMISSION_RATE_LIMIT"
+    assert rate_error["details"]["limit"] == 5
+    assert rate_error["details"]["current"] == 5
+    assert int(rate_limited.headers["retry-after"]) == rate_error["details"][
+        "retry_after_seconds"
+    ]
+    outstanding_error = outstanding_limited.json()["error"]
+    assert outstanding_limited.status_code == 429
+    assert outstanding_error == {
+        "code": "OUTSTANDING_SUBMISSION_LIMIT",
+        "details": {"current": 3, "limit": 3},
+        "message": "Submission quota exceeded",
+    }
 
 
 def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path) -> None:
@@ -558,7 +1101,8 @@ def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path
             headers=_headers("subject-alice", "closed-draft"),
             json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
         )
-        assert closed.status_code == 403
+        assert closed.status_code == 409
+        assert closed.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
 
     open_app = create_app(
         store=store,
@@ -638,6 +1182,7 @@ def test_platform_failure_returns_only_the_safe_failure_contract(tmp_path: Path)
         assert failed.json() == {
             "code": "RUNTIME_MISCONFIGURATION",
             "failure_contract_version": "platform-failure-v1",
+            "outcome": "failed",
             "retryable": False,
         }
         assert "private provider detail" not in failed.text
@@ -722,6 +1267,7 @@ def test_retryable_transport_failure_stops_after_max_attempts(tmp_path: Path) ->
         assert failed.json() == {
             "code": "PROVIDER_TRANSPORT",
             "failure_contract_version": "platform-failure-v1",
+            "outcome": "failed",
             "retryable": False,
         }
         assert provider.calls == 2
@@ -881,6 +1427,7 @@ def test_qwen_worker_does_not_retry_ambiguous_remote_timeout(
         assert failure.json() == {
             "code": "PROVIDER_TIMEOUT",
             "failure_contract_version": "platform-failure-v1",
+            "outcome": "failed",
             "retryable": False,
         }
 
@@ -983,6 +1530,7 @@ def test_duplicate_running_submission_waits_for_visibility(
 
         assert worker.run_once() is False
         assert worker.run_once() is False
+        assert len(queue) == 1
         assert store.complete_failure(
             claim,
             failure_contract_version=contract.failure_contract_version,
@@ -991,7 +1539,6 @@ def test_duplicate_running_submission_waits_for_visibility(
         )
         assert queue.ack(first_delivery) is True
 
-        now[0] += queue.visibility_timeout_seconds
         assert worker.run_once() is False
         assert queue.receive() is None
 
@@ -1042,7 +1589,13 @@ def test_mock_token_preflight_rejects_without_provider_calls(tmp_path: Path) -> 
             f"/v1/submissions/{submission_id}/result",
             headers=_headers("subject-alice"),
         )
-        assert result.status_code == 409
+        assert result.status_code == 200
+        assert result.json() == {
+            "code": "TOKEN_LIMIT_EXCEEDED",
+            "failure_contract_version": "platform-failure-v1",
+            "outcome": "rejected",
+            "retryable": False,
+        }
 
 
 def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path) -> None:
@@ -1076,7 +1629,8 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
             headers=_headers("subject-alice", "not-ready"),
             json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
         )
-        assert response.status_code == 403
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
 
     with pytest.raises(ValueError, match="deployment environment"):
         create_app(
@@ -1111,6 +1665,24 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
             provider=DeterministicMockProvider(),
         )
 
+    incompatible_mapping = json.loads(contract.snapshot_json)
+    incompatible_mapping["feedback"]["owner_result_fields"].remove("errors")
+    incompatible_contract = EvaluationContract.from_mapping(incompatible_mapping)
+    incompatible_dispatcher = OutboxDispatcher(
+        store,
+        InMemoryJobQueue(incompatible_contract.contract_snapshot_sha256),
+        incompatible_contract,
+    )
+    with pytest.raises(ValueError, match="owner result fields"):
+        create_app(
+            store=store,
+            dispatcher=incompatible_dispatcher,
+            contract=incompatible_contract,
+            authenticate=_authenticate,
+            allow_draft_submissions=True,
+            environment="test",
+        )
+
 
 def test_published_queued_job_is_recovered_after_in_memory_queue_restart(
     tmp_path: Path,
@@ -1143,6 +1715,155 @@ def test_published_queued_job_is_recovered_after_in_memory_queue_restart(
     )
     assert restarted_worker.run_once() is True
     assert store.count_results() == 1
+
+
+def test_unpublished_outbox_job_is_dispatched_when_api_starts(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="startup-outbox",
+        student_prompt="Return JSON.",
+        contract=contract,
+    )
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    dispatcher = OutboxDispatcher(store, queue, contract)
+
+    create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    assert len(queue) == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+    delivery = queue.receive()
+    assert delivery is not None
+    assert delivery.message.submission_id == created.submission.submission_id
+
+
+def test_outbox_background_dispatch_retries_after_publish_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="background-outbox",
+        student_prompt="Return JSON.",
+        contract=contract,
+    )
+
+    class FailOnceJobQueue(InMemoryJobQueue):
+        def __init__(self) -> None:
+            super().__init__(contract.contract_snapshot_sha256)
+            self.failures = 1
+
+        def publish(self, message: JobMessage) -> None:
+            if self.failures:
+                self.failures -= 1
+                raise OSError("temporary queue failure")
+            super().publish(message)
+
+    queue = FailOnceJobQueue()
+    dispatcher = OutboxDispatcher(store, queue, contract)
+    monkeypatch.setattr(api_module, "_OUTBOX_DISPATCH_INTERVAL_SECONDS", 0.01)
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app):
+        deadline = time.monotonic() + 1
+        while len(queue) == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert len(queue) == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+    delivery = queue.receive()
+    assert delivery is not None
+    assert delivery.message.submission_id == created.submission.submission_id
+
+
+def test_queued_deadline_sweep_fails_stale_unpublished_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [datetime(2026, 8, 30, tzinfo=UTC)]
+    monkeypatch.setattr(submission_store_module, "_utc_now", lambda: now[0])
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="queued-deadline",
+        student_prompt="Prompt.",
+        contract=contract,
+    )
+
+    now[0] += timedelta(seconds=contract.job_deadline_seconds + 1)
+    assert (
+        store.expire_queued_deadlines(
+            evaluation_identity_sha256=contract.evaluation_identity_sha256
+        )
+        == 1
+    )
+    submission = store.submission_for_owner(created.submission.submission_id, user.user_id)
+    result = store.owner_result(created.submission.submission_id, user.user_id)
+
+    assert submission is not None and submission.status.value == "failed"
+    assert result is not None and result.failure == {
+        "code": "JOB_DEADLINE",
+        "failure_contract_version": "platform-failure-v1",
+        "retryable": False,
+    }
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+
+
+def test_idle_worker_throttles_lease_sweeps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, _, worker, _ = _components(tmp_path, artifacts, contract)
+    sweep_calls = 0
+    expire_leases = store.expire_leases
+
+    def count_sweep(*, evaluation_identity_sha256: str) -> int:
+        nonlocal sweep_calls
+        sweep_calls += 1
+        return expire_leases(
+            evaluation_identity_sha256=evaluation_identity_sha256,
+        )
+
+    monkeypatch.setattr(store, "expire_leases", count_sweep)
+
+    assert worker.run_once() is False
+    assert worker.run_once() is False
+    assert sweep_calls == 1
 
 
 def test_streaming_body_limit_rejects_chunked_oversize_before_route() -> None:
@@ -1183,7 +1904,15 @@ def test_streaming_body_limit_rejects_chunked_oversize_before_route() -> None:
     assert sent[0]["status"] == 413
 
 
-@pytest.mark.parametrize("invalid_path", ["/absolute.jsonl", "../escape.jsonl", "bad\\path"])
+@pytest.mark.parametrize(
+    "invalid_path",
+    [
+        "/absolute.jsonl",
+        "../escape.jsonl",
+        "bad\\path",
+        "data/source.jsonl:descriptor",
+    ],
+)
 def test_external_activation_requires_safe_complete_provenance(
     tmp_path: Path,
     invalid_path: str,

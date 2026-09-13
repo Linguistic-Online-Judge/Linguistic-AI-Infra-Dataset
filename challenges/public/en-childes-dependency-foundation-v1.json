@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "en-childes-dependency-foundation-v1",
+  "dataset_sha256": "805c597207a3aa51c4bad7be38cd885a84c8d0d76f8efb6d34db9843aa5e5006",
+  "language": "English",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "8c91a203e5d2566b497c9ba84b849ca4cef1543f04c2bf85667576fb4e8e01e2",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "English CHILDES dependency challenge",
+  "treebank": "CHILDES",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

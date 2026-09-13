@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>A4 · 折痕留白</title>
+  <path fill="#0e419c" d="M12 8H26V38L42 54H12ZM30 38H56L43 51Z"/>
+  <path fill="#fff" fill-opacity=".38" d="M30 38H56L43 51Z"/>
+</svg>

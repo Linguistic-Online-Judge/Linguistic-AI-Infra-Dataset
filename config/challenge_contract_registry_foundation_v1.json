@@ -1,0 +1,245 @@
+{
+  "entries": [
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ar-pud-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ar-pud-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ar-pud-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ar-pud-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/ar-pud-upos-v1.json",
+      "public_descriptor_path": "challenges/public/ar-pud-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/da-ddt-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/da-ddt-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/da-ddt-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/da-ddt-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/da-ddt-upos-v1.json",
+      "public_descriptor_path": "challenges/public/da-ddt-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/de-hdt-dependency-v1.json",
+      "public_descriptor_path": "challenges/public/de-hdt-dependency-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/de-hdt-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/de-hdt-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/de-hdt-upos-v1.json",
+      "public_descriptor_path": "challenges/public/de-hdt-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/de-hdt-xpos-v1.json",
+      "public_descriptor_path": "challenges/public/de-hdt-xpos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/en-childes-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/en-childes-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/en-childes-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/en-childes-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/en-childes-upos-v1.json",
+      "public_descriptor_path": "challenges/public/en-childes-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": null,
+      "public_descriptor_path": "challenges/public/en-ewt-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": null,
+      "public_descriptor_path": "challenges/public/en-gum-upos-holdout-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/es-ancora-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/es-ancora-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/es-ancora-upos-v1.json",
+      "public_descriptor_path": "challenges/public/es-ancora-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/es-pud-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/es-pud-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/fr-fqb-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/fr-fqb-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/fr-fqb-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/fr-fqb-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/fr-fqb-upos-v1.json",
+      "public_descriptor_path": "challenges/public/fr-fqb-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/he-htb-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/he-htb-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/he-htb-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/he-htb-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/he-htb-upos-v1.json",
+      "public_descriptor_path": "challenges/public/he-htb-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/hi-hdtb-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/hi-hdtb-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/hi-hdtb-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/hi-hdtb-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/hi-hdtb-upos-v1.json",
+      "public_descriptor_path": "challenges/public/hi-hdtb-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/hu-szeged-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/hu-szeged-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/hu-szeged-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/hu-szeged-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/hu-szeged-upos-v1.json",
+      "public_descriptor_path": "challenges/public/hu-szeged-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/it-kiparlaforest-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/it-kiparlaforest-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/it-kiparlaforest-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/it-kiparlaforest-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/it-kiparlaforest-upos-v1.json",
+      "public_descriptor_path": "challenges/public/it-kiparlaforest-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ja-pud-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ja-pud-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ja-pud-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ja-pud-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/ja-pud-upos-v1.json",
+      "public_descriptor_path": "challenges/public/ja-pud-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ko-kaist-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ko-kaist-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ko-kaist-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ko-kaist-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/ko-kaist-upos-v1.json",
+      "public_descriptor_path": "challenges/public/ko-kaist-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/nl-lassysmall-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/nl-lassysmall-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/nl-lassysmall-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/nl-lassysmall-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/nl-lassysmall-upos-v1.json",
+      "public_descriptor_path": "challenges/public/nl-lassysmall-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/pt-cintil-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/pt-cintil-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/pt-cintil-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/pt-cintil-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/pt-cintil-upos-v1.json",
+      "public_descriptor_path": "challenges/public/pt-cintil-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ru-syntagrus-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ru-syntagrus-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/ru-syntagrus-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/ru-syntagrus-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/ru-syntagrus-upos-v1.json",
+      "public_descriptor_path": "challenges/public/ru-syntagrus-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/sv-talbanken-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/sv-talbanken-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/sv-talbanken-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/sv-talbanken-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/sv-talbanken-upos-v1.json",
+      "public_descriptor_path": "challenges/public/sv-talbanken-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/th-pud-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/th-pud-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/th-pud-segmentation-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/th-pud-segmentation-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/th-pud-upos-v1.json",
+      "public_descriptor_path": "challenges/public/th-pud-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/foundation-v1/zh-beginner-dependency-foundation-v1.json",
+      "public_descriptor_path": "challenges/public/zh-beginner-dependency-foundation-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/zh-beginner-upos-v1.json",
+      "public_descriptor_path": "challenges/public/zh-beginner-upos-v1.json"
+    },
+    {
+      "evaluation_contract_path": null,
+      "public_descriptor_path": "challenges/public/zh-gsd-upos-holdout-v1.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/zh-gsdsimp-segmentation-v2.json",
+      "public_descriptor_path": "challenges/public/zh-gsdsimp-segmentation-v2.json"
+    },
+    {
+      "evaluation_contract_path": "config/evaluation_contracts/v1/zh-gsdsimp-transliteration-v1.json",
+      "public_descriptor_path": "challenges/public/zh-gsdsimp-transliteration-v1.json"
+    },
+    {
+      "evaluation_contract_path": null,
+      "public_descriptor_path": "challenges/public/zh-gsdsimp-upos-v1.json"
+    }
+  ],
+  "schema_version": "challenge-contract-registry-v1"
+}

@@ -4,74 +4,213 @@ from __future__ import annotations
 
 import argparse
 import importlib
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal, cast
 
 from fastapi import FastAPI
 
+from .admin import install_admin_routes
 from .api import Authenticate, create_app
-from .mvp_contract import EvaluationContract, load_qwen_worker_contract
+from .auth import install_auth_routes
+from .auth_config import build_auth_service
+from .challenge import PublicChallenge
+from .challenge_registry import (
+    load_challenge_contract_registry,
+    validate_contract_matches_public,
+)
+from .mvp_contract import EvaluationContract
+from .qwen_runtime import QWEN_EVALUATION_CONTRACT_VERSION
 from .redis_job_queue import RedisJobQueue
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
     OutboxDispatcher,
 )
-from .submission_store import SubmissionStore
+from .submission_store import SubmissionStoreProtocol
+from .submission_store_factory import build_submission_store
 
 
 @dataclass(frozen=True, slots=True)
 class QwenApiRuntime:
     app: FastAPI
-    contract: EvaluationContract
-    dispatcher: OutboxDispatcher
-    queue: RedisJobQueue
-    store: SubmissionStore
+    contracts: Mapping[str, EvaluationContract]
+    dispatchers: Mapping[str, OutboxDispatcher]
+    queues: Mapping[str, RedisJobQueue]
+    public_challenges: Mapping[str, PublicChallenge]
+    runtime_availability: Mapping[str, bool]
+    store: SubmissionStoreProtocol
+
+    def _only(self, values: Mapping[str, object], name: str):
+        if len(values) != 1:
+            raise RuntimeError(f"{name} is only available for a single-challenge runtime")
+        return next(iter(values.values()))
+
+    @property
+    def contract(self) -> EvaluationContract:
+        return cast(EvaluationContract, self._only(self.contracts, "contract"))
+
+    @property
+    def dispatcher(self) -> OutboxDispatcher:
+        return cast(OutboxDispatcher, self._only(self.dispatchers, "dispatcher"))
+
+    @property
+    def queue(self) -> RedisJobQueue:
+        return cast(RedisJobQueue, self._only(self.queues, "queue"))
+
+
+def _resolve_contract_path(root: Path, path: Path) -> Path:
+    return path if path.is_absolute() else root / path
+
+
+def _load_runtime_registry(
+    root: Path,
+    *,
+    registry_path: Path | None,
+    contract_paths: Sequence[Path] | None,
+) -> tuple[dict[str, EvaluationContract], dict[str, PublicChallenge]]:
+    root = root.resolve()
+    if registry_path is not None and contract_paths is not None:
+        raise ValueError("registry_path and contract_paths are mutually exclusive")
+    default_registry = root / "config" / "challenge_contract_registry_v1.json"
+    if registry_path is not None or (contract_paths is None and default_registry.exists()):
+        registry = load_challenge_contract_registry(
+            root,
+            default_registry if registry_path is None else registry_path,
+        )
+        contracts = dict(registry.contracts)
+        public_challenges = dict(registry.public_challenges)
+    else:
+        if contract_paths is not None and not contract_paths:
+            raise ValueError("contract_paths must not be empty")
+        paths = (
+            (root / "config" / "mvp_evaluation_v2.json",)
+            if contract_paths is None
+            else tuple(_resolve_contract_path(root, path) for path in contract_paths)
+        )
+        contracts = {}
+        public_challenges = {}
+        for path in paths:
+            contract = EvaluationContract.from_path(path)
+            if contract.challenge_id in contracts:
+                raise ValueError(f"duplicate challenge ID: {contract.challenge_id}")
+            contracts[contract.challenge_id] = contract
+            public_path = root / "challenges" / "public" / f"{contract.challenge_id}.json"
+            if not public_path.exists():
+                raise ValueError(
+                    f"Qwen contract has no public challenge descriptor: {contract.challenge_id}"
+                )
+            public = PublicChallenge.model_validate_json(
+                public_path.read_text(encoding="utf-8")
+            )
+            validate_contract_matches_public(contract, public)
+            public_challenges[public.challenge_id] = public
+
+    for contract in contracts.values():
+        if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
+            raise ValueError("Qwen API requires mvp-evaluation-v2 contracts")
+    return contracts, public_challenges
 
 
 def build_qwen_api(
     *,
     root: Path,
-    database_path: Path,
+    database_path: Path | None = None,
+    postgres_database_url: str | None = None,
     redis_url: str,
-    authenticate: Authenticate,
+    authenticate: Authenticate | None = None,
+    auth_config_file: Path | None = None,
+    registry_path: Path | None = None,
+    contract_paths: Sequence[Path] | None = None,
     namespace: str = "linguistic-oj",
+    runtime_available_challenge_ids: Collection[str] | None = None,
     allow_draft_submissions: bool = False,
     environment: Literal["development", "test", "production"] = "production",
 ) -> QwenApiRuntime:
-    """Compose API, store, and Redis queue for the Qwen v2 contract only."""
+    """Compose one API route and Redis partition per registered Qwen contract."""
 
-    contract = load_qwen_worker_contract(root)
-    store = SubmissionStore(database_path)
-    queue = RedisJobQueue(
-        redis_url=redis_url,
-        routing_key=contract.contract_snapshot_sha256,
-        visibility_timeout_seconds=(
-            contract.job_deadline_seconds + QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS
-        ),
-        namespace=namespace,
+    if environment == "production" and database_path is not None:
+        raise ValueError("production Qwen API requires PostgreSQL persistence")
+    if (authenticate is None) == (auth_config_file is None):
+        raise ValueError("configure exactly one of auth_config_file or authenticate")
+    if environment == "production" and auth_config_file is None:
+        raise ValueError("production Qwen API requires auth_config_file; callbacks are forbidden")
+    contracts, public_challenges = _load_runtime_registry(
+        root,
+        registry_path=registry_path,
+        contract_paths=contract_paths,
     )
-    dispatcher = OutboxDispatcher(store, queue, contract)
+    if runtime_available_challenge_ids is None:
+        available_ids = set(contracts) if environment != "production" else set()
+    else:
+        available_ids = set(runtime_available_challenge_ids)
+        unknown_ids = available_ids - set(contracts)
+        if unknown_ids:
+            raise ValueError(
+                f"runtime availability contains unknown challenges: {sorted(unknown_ids)}"
+            )
+    runtime_availability = {
+        challenge_id: challenge_id in available_ids for challenge_id in contracts
+    }
+    store = build_submission_store(
+        database_path=database_path,
+        postgres_database_url=postgres_database_url,
+    )
+    auth_service = (
+        None if auth_config_file is None else build_auth_service(store, auth_config_file)
+    )
+    if auth_service is not None:
+        # Refuse unbound legacy accounts before queue recovery or any serving-side effects.
+        # Schema migration alone is not trusted account enrollment; never auto-link old users.
+        auth_service.health_check()
+        authenticate = auth_service.authenticate
+    queues = {
+        challenge_id: RedisJobQueue(
+            redis_url=redis_url,
+            routing_key=contract.contract_snapshot_sha256,
+            visibility_timeout_seconds=(
+                contract.job_deadline_seconds + QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS
+            ),
+            namespace=namespace,
+        )
+        for challenge_id, contract in contracts.items()
+    }
+    dispatchers = {
+        challenge_id: OutboxDispatcher(store, queues[challenge_id], contract)
+        for challenge_id, contract in contracts.items()
+    }
 
     def readiness_check() -> None:
-        store.health_check()
-        queue.health_check()
+        if auth_service is not None:
+            auth_service.health_check()
+        else:
+            store.health_check()
+        for queue in queues.values():
+            queue.health_check()
 
+    assert authenticate is not None
     app = create_app(
         store=store,
-        dispatcher=dispatcher,
-        contract=contract,
+        dispatcher=dispatchers,
+        contract=contracts,
         authenticate=authenticate,
         readiness_check=readiness_check,
+        public_challenges=public_challenges,
+        runtime_availability=runtime_availability,
         allow_draft_submissions=allow_draft_submissions,
         environment=environment,
     )
+    if auth_service is not None:
+        install_auth_routes(app, auth_service)
+        install_admin_routes(app)
     return QwenApiRuntime(
         app=app,
-        contract=contract,
-        dispatcher=dispatcher,
-        queue=queue,
+        contracts=MappingProxyType(contracts),
+        dispatchers=MappingProxyType(dispatchers),
+        queues=MappingProxyType(queues),
+        public_challenges=MappingProxyType(public_challenges),
+        runtime_availability=MappingProxyType(runtime_availability),
         store=store,
     )
 
@@ -86,14 +225,36 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="deployment root containing config/mvp_evaluation_v2.json",
     )
-    parser.add_argument("--database", type=Path, required=True)
+    storage = parser.add_mutually_exclusive_group(required=True)
+    storage.add_argument("--database", type=Path, help="SQLite database path")
+    storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
     parser.add_argument("--redis-url", required=True)
-    parser.add_argument(
+    routing = parser.add_mutually_exclusive_group()
+    routing.add_argument(
+        "--registry",
+        type=Path,
+        help="challenge contract registry; defaults to config/challenge_contract_registry_v1.json",
+    )
+    routing.add_argument(
+        "--contract",
+        dest="contracts",
+        type=Path,
+        action="append",
+        help="repeatable evaluation contract path for deployments without a registry",
+    )
+    authentication = parser.add_mutually_exclusive_group(required=True)
+    authentication.add_argument("--auth-config-file", type=Path)
+    authentication.add_argument(
         "--authenticate",
-        required=True,
-        help="dotted callback in module:attribute form",
+        help="development/test only: dotted callback in module:attribute form",
     )
     parser.add_argument("--namespace", default="linguistic-oj")
+    parser.add_argument(
+        "--runtime-available-challenge",
+        dest="runtime_available_challenges",
+        action="append",
+        help="repeat for each challenge with an attested running worker",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument(
@@ -105,6 +266,10 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(arguments)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if args.environment == "production" and args.database is not None:
+        parser.error("production Qwen API requires PostgreSQL persistence")
+    if args.environment == "production" and args.auth_config_file is None:
+        parser.error("production Qwen API requires --auth-config-file; callbacks are forbidden")
     return args
 
 
@@ -127,13 +292,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
     runtime = build_qwen_api(
         root=args.root,
         database_path=args.database,
+        postgres_database_url=args.postgres_database_url,
         redis_url=args.redis_url,
-        authenticate=_load_authenticate(args.authenticate),
+        authenticate=None if args.authenticate is None else _load_authenticate(args.authenticate),
+        auth_config_file=args.auth_config_file,
+        registry_path=args.registry,
+        contract_paths=args.contracts,
         namespace=args.namespace,
+        runtime_available_challenge_ids=args.runtime_available_challenges,
         allow_draft_submissions=args.allow_draft_submissions,
         environment=args.environment,
     )
-    uvicorn.run(runtime.app, host=args.host, port=args.port)
+    uvicorn.run(runtime.app, host=args.host, port=args.port, access_log=False, proxy_headers=False)
     return 0
 
 

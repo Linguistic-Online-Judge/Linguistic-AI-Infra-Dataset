@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "th-pud-dependency-foundation-v1",
+  "dataset_sha256": "ad299c0d371a498b22318b7032d386bc8722558665c514d3e413debef5022897",
+  "language": "Thai",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "50f58628e81d5579954f5ccf56d699b6931cfcd216bd4b45da33519f1f5aae26",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "Thai PUD dependency challenge",
+  "treebank": "PUD",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

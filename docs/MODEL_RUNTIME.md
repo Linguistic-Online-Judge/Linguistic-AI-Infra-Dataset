@@ -1,5 +1,15 @@
 # Qwen3.5 Model Runtime
 
+## Current Worker Dependency
+
+The `qwen-worker` extra now pins Transformers `5.15.1`, the tokenizer client
+actually used by the isolated Qwen3.5-9B acceptance on 2026-09-07. The previous
+`>=4.57,<5` range did not describe that working school-server environment. This
+corrects the installation declaration; it does not upgrade the running vLLM
+environment, change model weights, or change a scoring contract. The acceptance
+used a private dependency overlay for the updated API/auth libraries and left
+the existing model environment unchanged. See `docs/OPERATIONS.md` for scope.
+
 ## Verified baselines
 
 Both real-model baselines use one RTX 3090 in text-only mode and share one
@@ -77,14 +87,17 @@ chat-completions request explicitly sends `add_generation_prompt: true` and
 Install the Worker with `pip install '.[qwen-worker]'`. Run it from a deployment
 root containing `config/mvp_evaluation_v2.json`, for example
 `python -m linguistic_oj.qwen_worker --root /srv/linguistic-oj ...`. It requires
-the SQLite database, Redis URL, challenge artifacts, dataset, localhost vLLM URL,
-tokenizer snapshot, and launch-evidence paths as explicit command-line arguments.
+exactly one persistence backend: `--database /path/to/submissions.db` for SQLite,
+or `--postgres-database-url 'postgresql://...'` for PostgreSQL. It also requires a
+Redis URL, challenge artifacts, dataset, localhost vLLM URL, tokenizer snapshot, and
+launch-evidence paths as explicit command-line arguments.
 Use `--once` for a single operational smoke delivery; otherwise it polls the
 contract-specific Redis Stream continuously.
 
 Run the paired API with `python -m linguistic_oj.qwen_api --root /srv/linguistic-oj
---database ... --redis-url ... --authenticate package.module:callback`. The
-authentication callback receives a FastAPI request and must return
+--postgres-database-url 'postgresql://...' --redis-url ... --authenticate
+package.module:callback`. Run `migrate_postgres()` before the first PostgreSQL start.
+The API and Worker must use the same PostgreSQL URL. The authentication callback receives a FastAPI request and must return
 `linguistic_oj.api.Principal`; it is deployment-owned rather than a built-in
 header-based fallback. Both API and Worker derive the same v2 contract snapshot
 and Redis routing key. Development smoke tests may opt in to draft submissions;

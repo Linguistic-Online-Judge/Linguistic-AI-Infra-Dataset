@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "ko-kaist-dependency-foundation-v1",
+  "dataset_sha256": "6548630f95d522168165a1f9098e8231e8ba91529f7d78bd24f6f277a4fc6fe4",
+  "language": "Korean",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "647d61e96ed92936161f03cac71dae0a30674c88bb6c1ddd53b0ce8938f21f23",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "Korean Kaist dependency challenge",
+  "treebank": "Kaist",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

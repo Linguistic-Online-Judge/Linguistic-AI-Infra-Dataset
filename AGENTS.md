@@ -1,0 +1,337 @@
+# Project Context
+
+Read the owner-local `PROJECT_COMMUNICATION.md` if present; it is intentionally
+excluded from Git. In other checkouts, communicate in clear, concrete Chinese
+unless the user requests another language, explain technical terms, and never
+present planned work or skipped checks as completed results.
+
+## Canonical Project
+
+- On the project owner's computer, the main project directory is
+  `D:\MyWebsite\Online Linguistic Judge`.
+- The repository is
+  `https://github.com/Linguistic-Online-Judge/Linguistic-AI-Infra-Dataset`.
+- The configured Git remote uses the same URL with a `.git` suffix.
+- Work in this project, not the former temporary worktree under
+  `C:\Users\24300\AppData\Local\Temp\opencode\loj-multi-challenge-runtime`.
+- The owner and the other repository collaborator can both reach the school
+  server through SSH or the school VPN. Do not ask them to reconfirm this unless
+  connection requirements or access actually change.
+- Preserve existing uncommitted changes. Do not move or restore code from another
+  worktree, commit, push, or deploy without the appropriate user request.
+
+## Current Delivery Scope
+
+- The teacher has now confirmed that the intended formal service must be reachable
+  from both on- and off-campus networks. Public reachability is an explicit goal,
+  not an optional campus-only deployment. See `docs/PUBLIC_DEPLOYMENT.md`.
+  Current 8090 remains an SSH-only developer composition, not a verified public
+  service. Do not expose its shared accounts/mailbox/draft override as production.
+  Source/version consolidation and README updates precede GitHub publishing and
+  a separately verified public deployment. The pre-integration Git inspection found detached
+  HEAD at `cca0cc4`, while origin/main is `b69d3ff` (36 commits ahead), with a stale
+  old-worktree main association. Preserve both histories and review an integration
+  branch rather than force-pushing or copying the old worktree implementation.
+  The owner subsequently authorized reviewed commit/push to an integration branch,
+  without merging or deploying. Current branch: `integration/public-release-prep-20260913`.
+  This is a complete development-source baseline; main integration and public
+  deployment remain separate actions. Keep runtime/private material out of commits.
+
+- Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
+  registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
+  74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
+  dependency, XPOS in 15 languages, Chinese transliteration. The original 56
+  contracts and pre-upgrade 54 runs were preserved. Fourteen new XPOS tasks passed
+  full browser workflow checks, exactly 14 submissions / 700 samples. Reused the
+  foundation acceptance account; final counts are 7 accounts / 68 successful runs.
+  See `docs/XPOS_TASK_EXPANSION.md` and ignored
+  `runtime/browser-tests/xpos-20260913-v1/report.json` (`passed: true`).
+  XPOS format validity was only 5–26/50 with the few-shot templates: do not call
+  execution success a model-quality pass. Hebrew XPOS duplicates UPOS in every
+  current pool; no redundant task was added. Danish/Hungarian lack complete XPOS.
+  Backup `20260913T084818Z-8a6421c3` passed isolated restore for all 68 owner records,
+  7 credentials, 11 matching tables and queue rebuilding, with cleanup confirmed.
+  Its NEW off-host copy is incomplete because the school/jump connection failed;
+  do not claim `runtime/backups/20260913T084818Z-8a6421c3` is verified. Older full
+  copies remain intact. Resume the pinned transfer via `runtime/fetch_xpos_backup.py`
+  after the connection recovers, then verify-copy. School backup itself is complete.
+  `qwen-xpos.mjs --run-real-qwen --limit 2` resumes incomplete checks without
+  duplicating accepted runs. Use the canonical project path for every tool call.
+
+- The 2026-09-12 system audit and next engineering phase are documented in
+  `docs/SYSTEM_ENGINEERING_PLAN.md`. Priority: current-instance backup/isolated
+  restore, complete Git/reproducible delivery, CI, supervised operations and
+  rollback, then measured capacity/fault recovery and product refinements.
+  The first remediation batch is in `docs/QWEN_DEVELOPMENT_OPERATIONS.md`:
+  `operations/bin/qwen-development status|backup|verify-restore` now targets the
+  active marked database. Backup `20260912T180549Z-9d2ebb81` was restored in an
+  isolated DB: 11 matching table fingerprints, 6 credentials, 20 owner records,
+  in-memory queue rebuilding, confirmed cleanup and unchanged live data. A checked
+  off-host copy is in ignored `runtime/backups/`; keep it private and preserve it.
+  Legacy `backup-services`/health/restore scripts still target older databases and
+  do not diagnose 8090. `Linger=no` and no Qwen developer user service were confirmed.
+  Core source was initially untracked; the authorized integration branch now
+  collects the complete source baseline. CI includes browser/wheel checks and
+  `LOJ_ADMIN_POSTGRES_TEST_URL`; rely on its actual run result before calling it verified.
+  Installed-wheel acceptance passed in a fresh Windows Python 3.14 environment;
+  `requirements/application-win-py314.txt` records only that tested dependency set.
+- The owner requests fuller task coverage in each of the 18 languages. The first
+  expansion is deployed: 60 catalog entries / 56 executable contracts, with
+  segmentation, UPOS and dependency in all 18 languages, plus German XPOS and
+  Chinese transliteration. The original v1 registry remains the 22-task baseline;
+  use `config/challenge_contract_registry_foundation_v1.json` for the current
+  school instance via `--registry`. New source is
+  `artifacts/foundation-20260913-v1/source`, data is sibling `data`; existing state,
+  database and old contract hashes are preserved. All 34 new 50-sample jobs passed
+  execution through the real browser/Qwen path (1700 samples), not a model-quality
+  pass. Final observed state: 7 accounts, 54 successful runs, no outstanding jobs.
+  Report: `runtime/browser-tests/foundation-20260913-v1/report.json`.
+  `tests/browser/qwen-foundation.mjs --run-real-qwen --limit 2` is resumable and
+  skips completed records. Never put it in ordinary CI. Details, token budgets,
+  source choice and backup evidence: `docs/FOUNDATION_TASK_EXPANSION.md`.
+  New backup `20260912T214730Z-78cc303d` restored successfully: 54 owner records,
+  seven credentials, matching table fingerprints, queue rebuild and cleanup.
+  Earlier read-only scanning
+  found 75 language/task candidate combinations with a >=50-sample treebank:
+  segmentation/UPOS/dependency in 18 languages, XPOS in 16, transliteration in 5.
+  Danish/Hungarian lack complete XPOS in current data. Only Arabic/Chinese/Hindi/
+  Korean/Thai currently have complete per-token Translit. Missing data is not proof
+  of linguistic impossibility. See `docs/TASK_COVERAGE_PLAN.md`; candidates still
+  need task-definition, source-rights, token-budget, teaching and runtime validation.
+  For future additions use the explicit offline, additive CAS/journal flow in
+  `scripts/extend_qwen_registry.py`; do not manually replace markers or old scores.
+
+- Prioritize local development, complete business flows, professional frontend
+  design, and backend correctness before public deployment.
+- The owner finds the current frontend too dense: excessive simultaneous panels,
+  repeated explanations and developer text, weak focus, and insufficient whitespace.
+  Prioritize information architecture and concise user copy, not just larger padding.
+  Offer real, accessible product references and agree a direction before a visual
+  rewrite. Preserve all 18 languages; do not remove coverage to simplify the screen.
+  `docs/PRODUCT_UX_REVIEW.md` records the next-phase audit and reference choices.
+- A separate light, clickable three-view layout prototype now lives at
+  `web/assets/layout-preview.html` (relative to `src/linguistic_oj/`). It can be
+  opened directly as a file or at `http://127.0.0.1:8080/assets/layout-preview.html`.
+  It uses explicitly labelled fixture data, makes no API/model calls, and does
+  not replace the real workbench. The owner approved the three-view structure
+  and chose reference 1 (Apple-inspired restraint). They explicitly dislike dark
+  tones: use light surfaces, whitespace, clear type and restrained accents.
+  The same prototype now has a light high-fidelity treatment; do not offer dark
+  variants again unless the owner changes this preference.
+- The owner rejects thick outer focus rings around inputs. Use a subtle existing
+  border change for inputs, selects and textareas; retain visible keyboard focus.
+  Show the full name "Linguistic Online Judge" beside an original minimal mark,
+  with a two-line wordmark allowed. Their Mozilla example specifies arrangement,
+  not the icon's appearance. The owner rejected the first bracket mark in
+  `linguistic-mark.svg`. Keep it as a historical asset, not the default.
+  FINAL OWNER CHOICE: original option A (folded L), in Fudan blue. Use
+  `brand-option-a.svg` for the header and favicon, beside the full two-line name.
+  Do not substitute A1-A6 or reopen the choice unless the owner asks.
+  `brand-options.html` retains refinements and earlier options as design archives.
+  The layout renders the approved mark directly in HTML; explicit mark parameters
+  remain available solely for archived design comparisons.
+- The owner wants all blues to lean toward Fudan blue. The official color-system
+  graphic specifies R14 G65 B156: use `#0e419c` as the preview's shared primary blue
+  (`brand-palette.css`), with coordinated hover/tints for buttons, links, selection,
+  and marks. Source: `https://www.fudan.edu.cn/2405/list.htm`. Default the design
+  comparison to blue; retain monochrome only as a mark comparison, not a dark theme.
+  The original A and Fudan-blue combination is approved for subsequent UI integration.
+- The approved design is now connected to the actual root frontend: catalog at
+  `#challenges`, practice at `#challenge/<id>`, result at `#result/<submission_id>`,
+  separate owner history and identity-partitioned leaderboard, plus existing admin.
+  `app-shell.css` replaces the root's old stylesheet; the independent layout preview
+  remains a fixture. Search is labelled "搜索". Development tools are in the footer.
+  `GET /v1/submissions/{id}/prompt` now reads the exact saved prompt for its owner
+  only, with no-store. It uses existing SQLite/PostgreSQL columns (no migration).
+  Result reload and explicit continue-editing use this endpoint; copying a prompt
+  does not submit and must confirm before replacing a different in-memory draft.
+  Clear and fence prompt state across account/task/page changes as for other private data.
+  Verification: 547 Python passes / 32 skips, 8 Node contracts, 32 real-local student
+  browser groups and 16 real-local admin groups. Eighteen-language UI coverage used
+  explicit directory fixtures; normal 8080 still has five handwritten tasks.
+  The school 8090 instance was subsequently updated and verified on 2026-09-12;
+  see `docs/QWEN_DEVELOPMENT.md` for the deployment and real-browser evidence.
+- Previous school developer source: `artifacts/qwen-development-18-v1/snapshot-pages-20260911-v1`.
+  The upgrade preserved all 11 table fingerprints (5 accounts, 18 old runs).
+  Subsequent real browser acceptance added one test user and exactly two UPOS runs
+  (English/Chinese, 50 samples each). Final inspection: 6 accounts, 20 successful
+  runs, no outstanding work or uncertain-inference marker. Report:
+  `runtime/browser-tests/qwen-pages-1789191380780/report.json` (`passed: true`).
+  `tests/browser/qwen-pages.mjs --run-real-qwen` repeats those two real jobs and
+  must not be included in ordinary local regression. The docs link is now inside
+  the collapsed developer tools, and source bundles include web SVG assets.
+- The owner also rejects frames around page headings and redundant explanatory
+  subtitles (e.g. "选一种语言，开始练习。" under "选择任务"). Route-focused headings
+  must not receive a visible outline. Do not add automatic subtitle/tagline filler
+  beneath headings; include supporting text only when it adds necessary information.
+- Interface copy must be accurate, concise, and natural Chinese. State outcomes
+  directly; avoid personification, defensive claims, filler contrasts, and design
+  commentary in product text. The owner specifically rejected "服务故障不会伪装成零分".
+  Verify scoring/error wording against actual behavior and review hidden panels,
+  empty states and confirmations too. See `PROJECT_COMMUNICATION.md`.
+- V1 must cover all 18 languages. The owner explicitly rejected reducing delivery
+  to one or two languages. Small fixtures remain test tools, not the V1 language scope.
+- Real developer evaluation is available via the school-hosted
+  `linguistic_oj.qwen_development` app and application-only SSH forwarding to
+  `http://127.0.0.1:8090`. Keep the existing local Mock app on 8080 separate.
+  See `docs/QWEN_DEVELOPMENT.md` for the 18-language browser evidence and boundaries.
+- The current delivery adds private 18-language Qwen browser evaluation. On
+  2026-09-10 all 18 UPOS tasks completed 50 samples each through the actual browser,
+  database, queue, model and scoring path. Keep full concurrency/migration and
+  public-launch acceptance separate; completed jobs do not mean correct model outputs.
+- The real developer service uses an ownership-marked independent PostgreSQL
+  database and Redis namespace, reads existing candidate data, and serializes
+  the configured task workers (currently 56). It never falls back to Mock generation.
+- Its development cookie is `loj_qwen_dev_session`, separate from the 8080 Mock
+  cookie because browser cookies are not isolated by port. Email remains captured
+  in the developer inbox; neither environment sends production email.
+- `uncertain-inference.json` stops startup after a model request whose termination
+  was not confirmed. Do not delete this marker or restart blindly to resume traffic.
+- The product baseline is the teacher's linguistics LLM teaching and online
+  evaluation platform: multilingual tasks, learning and practice, automatic
+  scoring, result analysis, and rankings.
+- The only current real evaluation model is the school-server Qwen3.5-9B.
+  Multi-model support is deferred until the owner explicitly requests it.
+- Public DNS/ingress, HTTPS, production accounts/mail and supervised operation are
+  now part of the formal-deployment plan. Their actual school-provided settings
+  still need to be established. Keep internal services and private data private.
+- Treat local mock testing, school-server real-model testing, and public release
+  as distinct environments with accurately labelled results.
+
+## Verify Actual Implementation
+
+- The frontend is plain HTML, CSS, and JavaScript in
+  `src/linguistic_oj/web`, served by FastAPI at `/` and `/assets/*`.
+- Do not assume a top-level Next.js `web/` application or npm startup commands
+  exist. Inspect the current files before giving runnable instructions.
+- `linguistic_oj.local_dev` and `scripts/start_local_dev.ps1` now start the real
+  web/API stack with SQLite, in-memory queues, and a Mock worker. From the project
+  root, run `& .\scripts\start_local_dev.ps1`; the canonical browser address is
+  `http://127.0.0.1:8080`. `localhost` sends a different Host and is not accepted by
+  this launcher. Keep the process running; a documented URL is not a live service.
+- Use Python 3.11+ and the project `.venv`, installing `.[api,dev]`. If PowerShell
+  blocks the script, use `./.venv/Scripts/python.exe -m linguistic_oj.local_dev --root .`
+  at the same fixed port. Do not recommend execution-policy bypasses or global
+  policy changes. Node 22+ and installed Edge are test tools, not app dependencies.
+- The same-origin client supports email registration, explicit email verification,
+  password login/reset, logout, task lessons/templates, asynchronous submissions,
+  owner history/results, partitioned leaderboards, and teaching administration at
+  `#admin`. Backend auth is cookie-only;
+  the old frontend Bearer flow is only for an older deployment whose auth config
+  endpoint returns 404, not an authentication-error fallback.
+- The owner requested an 8-character password minimum. Current policy is 8-128
+  characters (512 UTF-8 bytes maximum), with no required character-class mixture.
+  Keep letters/digits, symbols, Unicode and existing password hashes compatible.
+  User-facing hints use plain language, not Unicode/byte jargon. Do not call the
+  eight-character choice compliant with a 15-character no-MFA recommendation.
+- Mutating auth/private/admin requests require the exact Origin, JSON, and
+  `X-LOJ-CSRF: 1`. `POST /v1/submissions` and all unsafe `/v1/admin/*` methods also
+  require `X-LOJ-Expected-User` to match the cookie account. BroadcastChannel
+  notifications and session revalidation synchronize tabs; the backend guard still
+  rejects stale-account requests.
+- Default state is isolated in ignored `runtime/local-development`. The five
+  handwritten local challenges have two samples each, not the real 18-language
+  dataset or Qwen benchmark. Local scores never represent Qwen performance.
+- Local seed accounts are `alice@example.test` / `LocalAlice`, `bob@example.test` /
+  `LocalBob`, and `admin@example.test` / `LocalAdmin`. Their common initial password
+  is `Local-only-passphrase-2026!`, exclusively for the isolated loopback Mock app.
+  Restart preserves changed credentials. The development panel still displays
+  the initial password after a reset; use the password actually chosen.
+- `LocalAdmin` has the local admin role and can open
+  `http://127.0.0.1:8080/#admin`. Seed provisioning does not restore a deliberately
+  changed role. Public registration creates users, and there is no role-assignment UI.
+- Administration is only for server-loaded `challenge_id` values: plain-text
+  draft/preview/check/publish and new-admission pause/resume. It cannot choose
+  arbitrary paths, create tasks, edit datasets/models/scorers/source rights, launch
+  services, or read another owner's private results. Published teaching is separate
+  from immutable evaluation `status: draft`; publication is not physical activation.
+- Teaching templates load only on a student's explicit click, with confirmation
+  before replacing an existing prompt. Published instructions are not silently
+  appended to model input; failed publication reads block template loading.
+- English `LocalPractice` XPOS uses Penn Treebank tags, not German HDT STTS.
+  Chinese `LocalPractice` transliteration uses toneless lowercase pinyin and
+  unchanged punctuation, not GSDSimp's tone-marked/punctuation-conversion rules.
+- Admin writes use `expected_revision` CAS and atomic state/audit commits. Current
+  database user ID/role/session is checked under the auth lock, then database time
+  is refreshed and authorization rechecked after the task lock; expiry while waiting
+  denies save/check/publish/admissions. Stale page roles or forged headers grant nothing.
+- Both stores fence new admission after idempotency replay/conflict detection and
+  before quota/new submission/outbox writes. Pause preserves accepted queues,
+  history/results, and replay; normal auth/contract/runtime gates still apply.
+  Resume only clears the switch under existing policy/runtime/source binding.
+- The local inbox retains at most 100 messages in process memory. Restart clears
+  that inbox, not accounts or passwords. The launcher locks its state directory
+  for one process and fails on port conflicts without killing another process.
+  Queued work can be restored; interrupted running work waits for lease expiry
+  handling, not instant successful recovery.
+- Local code sets a technical budget of 1000 submissions per user per challenge
+  per 24 hours. This does not change the existing real-contract limit of 5 per
+  24 hours and is neither a lifetime quota nor an unlimited-submission promise.
+- SQLite/PostgreSQL schema code is now v4: v3 added auth/roles; v4 appends
+  `challenge_admin_state` and `challenge_admin_revisions`, preserving prior rows.
+  Production rejects legacy users without credential bindings until trusted
+  enrollment or an isolated new database is arranged; never auto-link by nickname.
+  Current migration code does not prove a live database was migrated.
+- Production `qwen_api` requires a protected `--auth-config-file`, HTTPS and SMTP;
+  authentication callbacks are forbidden in production. Trust only exact actual
+  proxy IPs, with the proxy overwriting `X-LOJ-Client-IP`. Arbitrary forwarded
+  headers are not trusted. Production mail uses one thread and a nondurable queue
+  of 64 pending requests; accepted requests return 202 even if later SMTP delivery
+  fails. Monitor sanitized failure logs and support resend; local capture is dev-only.
+- Recheck these implementation facts as the project evolves. Never treat prior
+  conversation claims as proof that a feature exists in this worktree.
+
+## Verification and Preservation
+
+- The five-step local scope and commands are recorded in
+  `docs/LOCAL_DEVELOPMENT.md`; account/security details are in
+  `docs/AUTHENTICATION.md`; admin boundaries and operations are in
+  `docs/ADMINISTRATION.md`. No PostgreSQL server, Redis server, GPU, or SMTP service
+  is needed for the local Mock app.
+- `scripts/check_local_browser.py` starts an isolated temporary local app and a
+  real installed Edge browser. `node --test tests/browser/contracts.test.mjs` and
+  `node tests/browser/run.mjs --fixture` are separate synthetic checks. Do not
+  describe fixtures as backend or real-model verification, or invent test totals.
+- `scripts/check_admin_browser.py` starts a fresh SQLite/Mock app and runs student
+  and admin Edge suites, never daily port/state. Earlier student/admin counts and
+  intermediate Python results are not final current regression totals. The main
+  run must record actual results after the latest expiry/browser changes.
+- The earlier SSH `75` / `antlnp75` model-list and one `Cats sleep .` generation
+  probe remains narrow. `scripts/check_qwen_connection.py` is not the app chain.
+  The later actual `runtime/qwen-admin-acceptance-20260907.json` records `passed: true`
+  for cookie auth/owner guards, PostgreSQL outbox/Redis/Qwen scoring, admin
+  publish/pause/replay/resume/demotion, and logout with old-cookie replay rejection.
+- That run used `HTTP-inprocess-TestClient`, `browser_verified: false`, and captured
+  email. Exactly two generations evaluated one submission/two handwritten samples/
+  six gold items at score 1.0; a second guard-only submission was not evaluated.
+  It is synthetic, not a benchmark, real-email/HTTPS/browser proof, or public release.
+- The operator run used the existing PostgreSQL socket/port 5433 and a new random
+  schema; the report confirms removal of 11 tables and that schema. Redis DB 15
+  used four exact unique namespaced keys, three remaining keys deleted with cleanup
+  confirmed, no FLUSH. Temporary fixture cleanup is confirmed. This basic real-PG
+  run does not establish all concurrency/migration parameters; admin PostgreSQL
+  tests separately require `LOJ_ADMIN_POSTGRES_TEST_URL` and remain unverified when skipped.
+- The server source snapshot was
+  `/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/acceptance-20260907-admin-cookie-v1/snapshot`;
+  bundle SHA-256 was `ecb2c25d13b4805169c8bbc829a36aa9ebbbd4b757c117c59eca08411a2d4fea`.
+  It is a working-tree snapshot, not a reviewed Git release. Dependencies were
+  installed only in isolated sibling `deps/`; the vLLM environment, services, and
+  `app/current` were not changed. Later source changes require new evidence.
+- Attestation reads existing operator launch evidence, hashes local tokenizer/chat
+  template files, and compares live alias/resolved snapshot metadata. It is not
+  cryptographic proof of the running process's weights. Historical benchmarks were
+  not rerun; the full GPU stack was not relocated or reconfigured.
+- `build_acceptance_bundle.py` packages allowlisted source/config only, excluding
+  runtime, `.env`, `.venv`, and datasets. `check_qwen_pipeline.py` requires a new
+  0600 report in an existing private parent outside Git/snapshot, private temporary
+  fixtures, and ownership-proved RESTRICT PostgreSQL cleanup plus exact Redis keys.
+  It does not stop services or guarantee cleanup after SIGKILL/host failure.
+- Preserve existing ignored environments, build/egg metadata, caches, runtime
+  records, old acceptance directories, and user artifacts `opencode_error.png`
+  and `opencode_file`. See `docs/WORKSPACE_AUDIT.md`. Ignored does not mean disposable.
+- Do not edit OpenCode configuration for application work. Do not force-delete or
+  run `git clean`/`git reset`. Commit, push, live migration, service changes, and
+  deployment require a separate appropriate request, not a local feature check.
+
+These files persist project context; they do not prove remote deployment or
+guarantee that an assistant in an unrelated workspace has loaded the context.

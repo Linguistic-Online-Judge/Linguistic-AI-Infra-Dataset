@@ -1,0 +1,190 @@
+{
+  "acceptance_rule": "Each advertised task family must reach a typed succeeded result over all 50 frozen samples with at least one valid sample; scores are observations, not activation thresholds.",
+  "candidate": "candidate-20260903-v1-strict-upos-budget",
+  "checks": {
+    "api_submission_http_202": true,
+    "api_terminal_result_http_200": true,
+    "contract_snapshots_match_repository": true,
+    "five_task_families_succeeded": true,
+    "logs_contain_credentials_or_prompt_bodies": false,
+    "model_runtime_attestation_passed": true,
+    "result_identities_match_contracts": true,
+    "token_budget_audit_matches_repository": true
+  },
+  "dependency_deadline_calibration": [
+    {
+      "artifact_sha256": "bce920044048ead711d4b7570ed49f550a3885b30c06d4f94d3ae2dc55903be4",
+      "contract_snapshot_sha256": "c6bd242fdf82791efe383498d5d395b5dfcfc2f31ab6bea1881903d5133786f7",
+      "deadline_seconds": 300,
+      "elapsed_seconds": 300.009074,
+      "failure_code": "JOB_DEADLINE",
+      "outcome": "failed",
+      "submission_id": "b3307994a78b4f588d7bb13a03d1ea4b"
+    },
+    {
+      "artifact_sha256": "0b61d66de902164c3cfd7fc914170e9309b1d3308f231b9c0a0115fed4bc7007",
+      "contract_snapshot_sha256": "3859a002e35973e11de6feb75e94574747d16b91f532563245a0fecb18370039",
+      "deadline_seconds": 600,
+      "elapsed_seconds": 546.976488,
+      "outcome": "succeeded",
+      "remaining_seconds": 53.023512,
+      "submission_id": "ddee3f2f63ff4170ba3755901fb88313"
+    },
+    {
+      "contract_snapshot_sha256": "c8322d16b8f4ccecf3154d210841070863bc50b5b84d03cb87963e364e780c6f",
+      "deadline_seconds": 900,
+      "decision": "frozen",
+      "rationale": "The 600-second calibration left insufficient queue and runtime jitter headroom."
+    }
+  ],
+  "environment": {
+    "database": "isolated PostgreSQL linguistic_oj_test",
+    "gpu": {
+      "driver_version": "570.169",
+      "index": 0,
+      "memory_mib": 24576,
+      "name": "NVIDIA GeForce RTX 3090",
+      "uuid": "GPU-fdc0711d-d9ae-91aa-6388-65eb4735c37d"
+    },
+    "namespace": "linguistic-oj-v1-gpu-smoke-20260903",
+    "redis": "isolated Unix-socket database 15"
+  },
+  "results": [
+    {
+      "artifact_sha256": "2d02217345321d0230309e794828a80b0f7242fe1f68ed81f26d5121c8c5c927",
+      "challenge_id": "zh-gsdsimp-segmentation-v2",
+      "completed_at": "2026-09-02T20:49:13.778563+00:00",
+      "contract_snapshot_sha256": "ba7da1f56c8410f342ccba597784881fce87b1497b0f8e7415acbfa816215baa",
+      "errors": {
+        "INVALID_JSON": 3
+      },
+      "evaluation_identity_sha256": "a32c2fea541ab23e67c53b1348dbec35e7cad996266f9c38d7f2d9b3488f685c",
+      "metrics": {
+        "micro_f1": 0.6366812227074236,
+        "micro_precision": 0.6813084112149532,
+        "micro_recall": 0.5975409836065574
+      },
+      "outcome": "succeeded",
+      "primary_metric": "micro_f1",
+      "prompt_path": "prompts/reference/segmentation-gsdsimp-smoke-v1.txt",
+      "samples_invalid": 3,
+      "samples_total": 50,
+      "samples_valid": 47,
+      "score": 0.6366812227074236,
+      "student_prompt_sha256": "fcf58ec39848bcfa51b4725915712ce4c70b0b226a1f549467e01ee7dd4cda00",
+      "submission_id": "c01a0372d0554b27b0faf52459ada377",
+      "task": "segmentation"
+    },
+    {
+      "artifact_sha256": "2b08a50494b4a63aa971420f2f4bb1b50395ec2a3829118946707d901992192a",
+      "challenge_id": "zh-beginner-upos-v1",
+      "completed_at": "2026-09-02T20:51:16.961219+00:00",
+      "contract_snapshot_sha256": "d019f7bba9e28a93ef79deddfaafaace8287eba62b82bb9ac5833a3b38cc795f",
+      "errors": {
+        "LENGTH_MISMATCH": 7
+      },
+      "evaluation_identity_sha256": "2fc9cc7f45033c07ccf43a24a09837f7b5566789a11b3ba0660e44681b98f28d",
+      "metrics": {
+        "micro_accuracy": 0.5694444444444444
+      },
+      "outcome": "succeeded",
+      "primary_metric": "micro_accuracy",
+      "prompt_path": "prompts/reference/upos-independent-alpha-v1.txt",
+      "samples_invalid": 7,
+      "samples_total": 50,
+      "samples_valid": 43,
+      "score": 0.5694444444444444,
+      "student_prompt_sha256": "bfd9ae0e238564ca0552b08e757a13fb66e3d7ae2de7437766829d0808e07381",
+      "submission_id": "29d4e639d10d4d04877cfecf955c21b4",
+      "task": "upos"
+    },
+    {
+      "artifact_sha256": "26d7317d62fd59117754bd65dccbad20708c6838f46761d89a084167400ab737",
+      "challenge_id": "de-hdt-xpos-v1",
+      "completed_at": "2026-09-02T20:54:04.574335+00:00",
+      "contract_snapshot_sha256": "44da8d2c176d8645c9bb61aa693ca85c7f519ecc08f0a44ce69d642f65ed3a68",
+      "errors": {
+        "INVALID_JSON": 10,
+        "LENGTH_MISMATCH": 15
+      },
+      "evaluation_identity_sha256": "6a51cbda3784f8269859f50c4ebb87933d985c08701f5140ac268688206d97e2",
+      "metrics": {
+        "micro_accuracy": 0.12708333333333333
+      },
+      "outcome": "succeeded",
+      "primary_metric": "micro_accuracy",
+      "prompt_path": "prompts/reference/xpos-hdt-smoke-v1.txt",
+      "samples_invalid": 25,
+      "samples_total": 50,
+      "samples_valid": 25,
+      "score": 0.12708333333333333,
+      "student_prompt_sha256": "ea106fc052e09f8c3f70409dde906660fce5825cac201efa9f362e6f674b6c2d",
+      "submission_id": "29db729c2f7e4e488f75a194b203bb7c",
+      "task": "xpos"
+    },
+    {
+      "artifact_sha256": "f6ca864bf04c352500877df173c79d18a7f7e357fa1baaadd231ea836f5c34ae",
+      "challenge_id": "de-hdt-dependency-v1",
+      "completed_at": "2026-09-03T05:35:02.482616+00:00",
+      "contract_snapshot_sha256": "c8322d16b8f4ccecf3154d210841070863bc50b5b84d03cb87963e364e780c6f",
+      "errors": {
+        "INVALID_JSON": 2,
+        "TOKEN_ID_MISMATCH": 2
+      },
+      "evaluation_identity_sha256": "ac1e48f365806ffc76a0f2542f2b619a92c5a7f6aafd7924c36d9e1e042b604d",
+      "metrics": {
+        "las": 0.128125,
+        "uas": 0.25625
+      },
+      "outcome": "succeeded",
+      "primary_metric": "las",
+      "prompt_path": "prompts/reference/dependency-hdt-smoke-v1.txt",
+      "samples_invalid": 4,
+      "samples_total": 50,
+      "samples_valid": 46,
+      "score": 0.128125,
+      "student_prompt_sha256": "11129c2432f27f113e38688c1c665135b51cab64f8574067f83d702d0f1f7d3f",
+      "submission_id": "0cd99b0bce7049a09bd0a947a11cebb6",
+      "task": "dependency"
+    },
+    {
+      "artifact_sha256": "42fe0f6052f76995f34709d386657da82edb9f27b7298527cbd403cd1b619bd8",
+      "challenge_id": "zh-gsdsimp-transliteration-v1",
+      "completed_at": "2026-09-03T05:39:32.918205+00:00",
+      "contract_snapshot_sha256": "6cfdfa6fd0d24a1934d54e822691735cf642ce89108dc114b7154f8a44122464",
+      "errors": {
+        "INVALID_JSON": 2,
+        "LENGTH_MISMATCH": 20
+      },
+      "evaluation_identity_sha256": "9dbd5f5462aa364b9d65ffeeca4ab8422b489aed8f1a635e68e81c8c76d8fffc",
+      "metrics": {
+        "sentence_exact_match_rate": 0.0,
+        "token_accuracy": 0.33114754098360655
+      },
+      "outcome": "succeeded",
+      "primary_metric": "token_accuracy",
+      "prompt_path": "prompts/reference/transliteration-gsdsimp-smoke-v1.txt",
+      "samples_invalid": 22,
+      "samples_total": 50,
+      "samples_valid": 28,
+      "score": 0.33114754098360655,
+      "student_prompt_sha256": "2101738b319def47eb163bb1d969b5616e02c35cd8fe67d5067d87f55b27a4c1",
+      "submission_id": "2f9277616ba04ede8f7b7a2deff2a52f",
+      "task": "transliteration"
+    }
+  ],
+  "runtime": {
+    "language_model_only": true,
+    "launch_evidence_sha256": "b71270f6c90f0ab49cd63162556674ddabf07a47d7c6077f8e449a757c040a59",
+    "max_model_len": 4096,
+    "max_num_seqs": 1,
+    "model": "Qwen/Qwen3.5-9B",
+    "model_revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129"
+  },
+  "schema_version": "qwen-five-task-gpu-smoke-v1",
+  "token_budget_audit_report_sha256": "82ef537f26a4b25a7f585070438d4cf17e29c5b541dc2ebce39205151da8cd0f",
+  "verdict": "pass",
+  "report_sha256": "6555f3d656c25e7888de0ca9c96909128faae78aaa2ef740b81c7d03977d27c8"
+}

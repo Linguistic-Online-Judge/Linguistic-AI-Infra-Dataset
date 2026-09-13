@@ -6,9 +6,12 @@ import hashlib
 import json
 import math
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
+from .admin_store import AdminStoreMixin, assert_admissions_open
+from .auth_store import AuthConflictError, AuthStoreMixin, AuthTransaction
 from .mvp_contract import EvaluationContract, canonical_json
 from .postgres_migrations import (
     POSTGRES_CONNECT_TIMEOUT_SECONDS,
@@ -23,6 +26,7 @@ from .submission_store import (
     GlobalQueueFullError,
     IdempotencyConflictError,
     LeaderboardEntry,
+    OwnerPromptRecord,
     OwnerResultRecord,
     OwnerSubmissionRecord,
     SubmissionQuotaError,
@@ -34,7 +38,7 @@ from .submission_store import (
 )
 
 
-class PostgresSubmissionStore:
+class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
     """PostgreSQL persistence shared by the submission API and Workers."""
 
     def __init__(self, database_url: str) -> None:
@@ -57,6 +61,19 @@ class PostgresSubmissionStore:
     def _database_now(cursor: Any) -> datetime:
         cursor.execute("SELECT clock_timestamp()")
         return cursor.fetchone()[0]
+
+    @contextmanager
+    def _auth_transaction(self):
+        import psycopg
+
+        try:
+            with self._connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended('loj-auth-v3', 0))"
+                )
+                yield AuthTransaction(cursor, postgres=True)
+        except psycopg.IntegrityError:
+            raise AuthConflictError("account constraint rejected") from None
 
     def health_check(self) -> None:
         with self._connect() as connection:
@@ -94,7 +111,8 @@ class PostgresSubmissionStore:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT id, auth_subject, public_handle FROM users WHERE auth_subject = %s",
+                    "SELECT id, auth_subject, public_handle, role FROM users "
+                    "WHERE auth_subject = %s",
                     (auth_subject,),
                 )
                 row = cursor.fetchone()
@@ -107,6 +125,7 @@ class PostgresSubmissionStore:
         idempotency_key: str,
         student_prompt: str,
         contract: EvaluationContract,
+        source_fingerprint: str | None = None,
     ) -> CreatedSubmission:
         prompt_utf8 = student_prompt.encode("utf-8")
         request_sha256 = _request_sha256(
@@ -147,6 +166,11 @@ class PostgresSubmissionStore:
                         ),
                         replayed=True,
                     )
+                assert_admissions_open(
+                    AuthTransaction(cursor, postgres=True),
+                    contract.challenge_id,
+                    source_fingerprint,
+                )
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock("
                     "hashtextextended('global-submission-queue', 0))"
@@ -641,6 +665,19 @@ class PostgresSubmissionStore:
             )
             for row in rows
         )
+
+    def owner_prompt(self, submission_id: str, user_id: str) -> OwnerPromptRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id, challenge_id, student_prompt_utf8, student_prompt_sha256 "
+                    "FROM submissions WHERE id = %s AND user_id = %s",
+                    (submission_id, user_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return OwnerPromptRecord(row[0], row[1], bytes(row[2]).decode("utf-8"), row[3])
 
     def owner_result(self, submission_id: str, user_id: str) -> OwnerResultRecord | None:
         with self._connect() as connection:

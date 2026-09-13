@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-POSTGRES_SCHEMA_VERSION = 2
+from .admin_store import ADMIN_SCHEMA_V4
+from .auth_store import AUTH_SCHEMA_V3
+
+POSTGRES_SCHEMA_VERSION = 4
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
 POSTGRES_SESSION_OPTIONS = (
     "-c timezone=UTC "
@@ -92,6 +95,8 @@ ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC, submission_
 _POSTGRES_MIGRATIONS = {
     1: _SCHEMA_V1,
     2: _SCHEMA_V2,
+    3: AUTH_SCHEMA_V3,
+    4: ADMIN_SCHEMA_V4,
 }
 
 
