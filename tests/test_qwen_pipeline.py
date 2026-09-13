@@ -115,8 +115,10 @@ def test_output_never_overwrites_or_enters_git(tmp_path):
     with pytest.raises(pipeline.CheckFailed, match="new"):
         pipeline.validate_output(ROOT, existing)
     assert existing.read_text() == "operator-owned"
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "runtime").mkdir(parents=True)
     with pytest.raises(pipeline.CheckFailed, match="snapshot"):
-        pipeline.validate_output(ROOT, ROOT / "runtime" / "acceptance-report.json")
+        pipeline.validate_output(snapshot, snapshot / "runtime" / "acceptance-report.json")
     (tmp_path / ".git").write_text("gitdir: elsewhere")
     with pytest.raises(pipeline.CheckFailed, match="git"):
         pipeline.validate_output(ROOT, tmp_path / "new.json")
