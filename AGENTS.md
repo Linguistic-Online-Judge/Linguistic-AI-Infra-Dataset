@@ -36,6 +36,11 @@ present planned work or skipped checks as completed results.
   without merging or deploying. Current branch: `integration/public-release-prep-20260913`.
   This is a complete development-source baseline; main integration and public
   deployment remain separate actions. Keep runtime/private material out of commits.
+  Baseline commit `3040157` and fixes `61c7864`, `a972601` were pushed. GitHub run
+  `34760180305` on `a972601` passed 589 Python tests with no skips, required real
+  database coverage, 8 Node contracts, 32 student/16 admin browser groups and
+  installed-wheel acceptance. The main branch stayed at `b69d3ff`. This Git push
+  did not redeploy the school app or create a public website endpoint.
 
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
