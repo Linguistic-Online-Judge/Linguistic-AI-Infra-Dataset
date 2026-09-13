@@ -67,6 +67,20 @@ present planned work or skipped checks as completed results.
   controlled local fixtures, not the school model. Production templates now include
   executor config and a service with restart prevention for exit 75/78.
 
+- Classroom target is approximately 30 students. New `qwen_performance` provides
+  private per-sample timing/token/score statistics, read-only GPU sampling and matched
+  1/2/4 client comparisons. It uses a separate calibration attestation path, never edits
+  contracts or online concurrency. Performance requests require --run-real-qwen and
+  sufficient actual launch evidence; reuse one dedicated persistent experiment state.
+  Its barrier covers the entire batch: recovery must confirm ALL experiment requests
+  terminated. Reports contain no prompt/gold/raw-response text and are not classroom
+  capacity evidence. See `docs/QWEN_PERFORMANCE.md`. School SSH 75 and jump both closed
+  the connection on 2026-09-14; no new school benchmark requests were sent. Connection
+  evidence is ignored `runtime/qwen-performance-connection-20260914.json`. Local tests:
+  648 passed / 33 skipped, including real local HTTP client concurrency with a fixture
+  service. Keep real school performance results pending until connection and testing
+  windows permit them; do not describe GitHub Linux checks as school-server tests.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

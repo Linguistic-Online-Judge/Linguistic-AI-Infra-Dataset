@@ -12,6 +12,8 @@ Linux依赖锁定、定时备份、生产执行器监督及故障演练仍待完
 后续执行器整改已实现统一串行入口、请求前持久记录、排他锁和带审计的恢复，
 并完成本机子进程/HTTP隔离故障检查。学校安装与真实模型、负载及就绪联动尚待验收，
 详见`PRODUCTION_EXECUTOR.md`。
+课堂规模随后确认约30人。现已增加逐样本性能实验与1／2／4并发对比工具，
+说明见`QWEN_PERFORMANCE.md`；学校跳板连接关闭，新的真实性能数据尚未采集。
 详见`PUBLIC_DEPLOYMENT.md`、`PRODUCTION_PREPARATION.md`和
 `QWEN_DEVELOPMENT_OPERATIONS.md`。以下问题列表保留原审查事实及完整验收目标。
 

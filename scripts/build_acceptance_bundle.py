@@ -9,7 +9,8 @@ from pathlib import Path
 
 
 def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
-                 registry_name: str = "config/challenge_contract_registry_v1.json") -> dict:
+                 registry_name: str = "config/challenge_contract_registry_v1.json",
+                 include_performance: bool = False) -> dict:
     root = root.resolve()
     output = output.resolve()
     if not output.is_relative_to(root / "runtime"):
@@ -23,6 +24,11 @@ def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
         root / "config/mvp_evaluation_v2.json",
         root / "scripts/check_qwen_pipeline.py",
     ]
+    if include_performance:
+        files.extend(root / name for name in (
+            "prompts/performance/upos-v1.txt", "prompts/performance/dependency-v1.txt",
+            "docs/QWEN_PERFORMANCE.md",
+        ))
     if include_catalog:
         if (not registry_name.startswith('config/') or '..' in registry_name.split('/')
                 or '\\' in registry_name or ':' in registry_name
@@ -89,6 +95,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--include-catalog", action="store_true")
+    parser.add_argument("--include-performance", action="store_true")
     parser.add_argument('--registry', default='config/challenge_contract_registry_v1.json')
     args = parser.parse_args()
     print(
@@ -98,6 +105,7 @@ if __name__ == "__main__":
                 args.output,
                 include_catalog=args.include_catalog,
                 registry_name=args.registry,
+                include_performance=args.include_performance,
             ),
             indent=2,
         )

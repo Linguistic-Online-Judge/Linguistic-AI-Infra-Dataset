@@ -72,3 +72,18 @@ def test_catalog_bundle_rejects_private_references(source):
     with pytest.raises(ValueError, match="allowlisted"):
         build_bundle(source, source / "runtime/catalog.tar.gz", include_catalog=True)
     assert not (source / "runtime/catalog.tar.gz").exists()
+
+
+def test_performance_bundle_includes_only_explicit_prompts_and_guide(source):
+    included = {"prompts/performance/upos-v1.txt", "prompts/performance/dependency-v1.txt",
+                "docs/QWEN_PERFORMANCE.md"}
+    for name in included | {"prompts/performance/private-prompt.txt"}:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name, encoding="utf-8")
+    output = source / "runtime/performance.tar.gz"
+    build_bundle(source, output, include_performance=True)
+    with tarfile.open(output) as archive:
+        names = set(archive.getnames())
+        assert included <= names
+        assert "prompts/performance/private-prompt.txt" not in names

@@ -1,0 +1,1 @@
+Assign one Universal Dependencies UPOS tag to each input token, preserving token order. Return only a JSON object with a tags array containing exactly one tag per token. Do not add explanations, code fences, or additional fields.

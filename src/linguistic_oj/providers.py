@@ -190,10 +190,15 @@ class ModelGeneration:
     raw_text: str
     generated_token_count: int | None = None
     finish_reason: str | None = None
+    prompt_token_count: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.raw_text, str):
             raise TypeError("raw_text must be a string")
+        if self.prompt_token_count is not None and (
+            type(self.prompt_token_count) is not int or self.prompt_token_count < 0
+        ):
+            raise ValueError("prompt_token_count must be a non-negative integer or None")
         if self.generated_token_count is not None and (
             type(self.generated_token_count) is not int or self.generated_token_count < 0
         ):
@@ -712,16 +717,21 @@ class OpenAICompatibleProvider:
             finish_reason = "other"
 
         generated_token_count = None
+        prompt_token_count = None
         usage = payload.get("usage")
         if isinstance(usage, dict):
             reported_token_count = usage.get("completion_tokens")
             if type(reported_token_count) is int and reported_token_count >= 0:
                 generated_token_count = reported_token_count
+            reported_prompt_count = usage.get("prompt_tokens")
+            if type(reported_prompt_count) is int and reported_prompt_count >= 0:
+                prompt_token_count = reported_prompt_count
 
         return ModelGeneration(
             raw_text=content,
             generated_token_count=generated_token_count,
             finish_reason=finish_reason,
+            prompt_token_count=prompt_token_count,
         )
 
     def _read_response_body(self, response: object) -> bytes:
