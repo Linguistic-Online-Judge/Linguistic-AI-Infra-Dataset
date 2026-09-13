@@ -54,6 +54,19 @@ present planned work or skipped checks as completed results.
   contract identities. Local regression: 620 passes / 32 skips, 8 Node contracts,
   32 student and 16 admin browser groups. This source change has not been deployed.
 
+- A new production-only `linguistic_oj.qwen_executor` offers check/init/run/status/recover,
+  one serial consumer loop and per-request durable write-ahead barriers in a dedicated
+  local state directory. `executor_state.py` holds a process-lifetime file lock;
+  ambiguous requests block every queue and future startup. Recovery requires exact
+  operation/binding plus private operator evidence, archives before clearing and never
+  replays submissions. See `docs/PRODUCTION_EXECUTOR.md`. Never remove these state/lock
+  or audit files to restart. It does not coordinate unmanaged model clients or replace
+  the school's running development loop. Actual school rollout, live readiness/admission
+  linkage and capacity checks remain pending. Local regression: 636 passed / 33 skipped;
+  the extra skip is the Linux SIGTERM drain test. New subprocess/HTTP fault tests use
+  controlled local fixtures, not the school model. Production templates now include
+  executor config and a service with restart prevention for exit 75/78.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

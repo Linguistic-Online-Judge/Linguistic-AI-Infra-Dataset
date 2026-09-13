@@ -50,14 +50,16 @@ def _check_windows_acl(path: Path) -> None:
         raise ValueError("private file permissions required")
 
 
-def _read_protected(path: Path) -> str:
+def _read_protected(path: Path, *, max_bytes: int = 16384) -> str:
     try:
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
+            raise ValueError
         if path.is_symlink():
             raise ValueError
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(descriptor, "rb") as stream:
             metadata = os.fstat(stream.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 16384:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
                 raise ValueError
             if os.name == "nt":
                 _check_windows_acl(path)
@@ -65,8 +67,8 @@ def _read_protected(path: Path) -> str:
                     raise ValueError
             elif metadata.st_mode & 0o077 or metadata.st_uid not in {0, os.getuid()}:
                 raise ValueError
-            raw = stream.read(16385)
-            if len(raw) > 16384:
+            raw = stream.read(max_bytes + 1)
+            if len(raw) > max_bytes:
                 raise ValueError
             return raw.decode("utf-8")
     except Exception:

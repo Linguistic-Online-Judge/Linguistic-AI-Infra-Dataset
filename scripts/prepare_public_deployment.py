@@ -207,9 +207,47 @@ server {{
     }}
 }}
 '''
+    executor = {
+        'version': 'qwen-serial-executor-v1', 'root': settings['release_root'],
+        'registry': settings['registry'], 'state_dir': shared + '/executor-state',
+        'postgres_database_url_file': shared + '/postgres.url',
+        'redis_url_file': shared + '/redis.url', 'namespace': 'loj-public',
+        'vllm_base_url': 'http://127.0.0.1:8000/v1',
+        'tokenizer_snapshot': None, 'launch_evidence': None,
+        'artifacts': {key: {
+            'public_challenge': settings['release_root'] + '/challenges/public/' + key + '.json',
+            'private_challenge': None, 'dataset': None,
+        } for key in settings['runtime_available_challenges']},
+    }
+    executor_command = (f"{settings['python']} -m linguistic_oj.qwen_executor run "
+                        f"--config {shared}/executor.json")
+    executor_unit = f'''[Unit]
+Description=Linguistic Online Judge serial Qwen executor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={settings['service_user'] or '__SERVICE_USER__'}
+WorkingDirectory={settings['release_root']}
+ExecStart={executor_command}
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartPreventExitStatus=75 78
+RestartSec=5
+TimeoutStopSec=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+'''
     return {'auth.json.template': json.dumps(auth, ensure_ascii=False, indent=2) + '\n',
             'loj-api.service.template': unit, 'nginx.conf.template': nginx,
-            'api-command.json': json.dumps(command, indent=2) + '\n'}
+            'api-command.json': json.dumps(command, indent=2) + '\n',
+            'executor.json.template': json.dumps(executor, ensure_ascii=False, indent=2) + '\n',
+            'loj-executor.service.template': executor_unit}
 
 
 def main(arguments=None):

@@ -66,6 +66,14 @@ def test_generated_templates_match_real_auth_and_cli_interfaces(settings, monkey
     assert 'https://judge.school.edu$request_uri' in proxy
     assert '$host' not in proxy
     assert 'fixture-only-password' not in ''.join(files.values())
+    executor = json.loads(files['executor.json.template'])
+    assert executor['namespace'] == args.namespace
+    assert executor['root'] == str(args.root).replace('\\', '/')
+    assert executor['artifacts'] == {}
+    service = files['loj-executor.service.template']
+    assert 'RestartPreventExitStatus=75 78' in service
+    assert 'TimeoutStopSec=infinity' in service
+    assert '-m linguistic_oj.qwen_executor run --config ' in service
 
 
 @pytest.mark.parametrize(('field', 'value'), [

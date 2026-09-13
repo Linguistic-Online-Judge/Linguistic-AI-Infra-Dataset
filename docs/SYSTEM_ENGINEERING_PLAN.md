@@ -9,6 +9,9 @@
 最新异机副本仍因连接问题未传完，早期完整副本保留。本轮继续补生产连接保护、
 静态模型配置检查及域名待填的离线部署模板，本机620项Python通过、32项跳过。
 Linux依赖锁定、定时备份、生产执行器监督及故障演练仍待完成。
+后续执行器整改已实现统一串行入口、请求前持久记录、排他锁和带审计的恢复，
+并完成本机子进程/HTTP隔离故障检查。学校安装与真实模型、负载及就绪联动尚待验收，
+详见`PRODUCTION_EXECUTOR.md`。
 详见`PUBLIC_DEPLOYMENT.md`、`PRODUCTION_PREPARATION.md`和
 `QWEN_DEVELOPMENT_OPERATIONS.md`。以下问题列表保留原审查事实及完整验收目标。
 
