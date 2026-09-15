@@ -364,6 +364,8 @@ def main(arguments=None):
     parser.add_argument("--repetitions", type=int, choices=range(1, 11), default=1)
     parser.add_argument("--warmup-requests", type=int, choices=(0, 1), default=1)
     parser.add_argument("--gpu-index", type=int, default=0)
+    parser.add_argument("--model-port", type=int, default=8000,
+                        help="loopback model port; use a separate port for isolated tests")
     parser.add_argument("--initialize-state", action="store_true")
     parser.add_argument("--run-real-qwen", action="store_true")
     args = parser.parse_args(arguments)
@@ -373,6 +375,8 @@ def main(arguments=None):
         validate_output(args.output, args.state_dir)
         if args.gpu_index < 0:
             raise ValueError("GPU index must not be negative")
+        if not 1024 <= args.model_port <= 65535:
+            raise ValueError("model port must be in 1024..65535")
         contract = EvaluationContract.from_path(args.contract)
         model, tokenizer, token_identity, launch = verify_experiment_runtime(
             contract, args.tokenizer_snapshot, args.launch_evidence, args.concurrency,
@@ -386,7 +390,7 @@ def main(arguments=None):
                                      prompt, args.sample_limit)
         settings = GenerationSettings(**contract.evaluation_identity["generation_settings"])
         providers = [OpenAICompatibleProvider(
-            base_url="http://127.0.0.1:8000/v1", identity=model, settings=settings,
+            base_url=f"http://127.0.0.1:{args.model_port}/v1", identity=model, settings=settings,
             timeout_seconds=contract.provider_request_timeout_seconds,
             max_response_body_bytes=contract.provider_response_body_bytes,
         ) for _ in range(args.concurrency)]
@@ -400,6 +404,7 @@ def main(arguments=None):
             "tokenizer_identity": token_identity.to_dict(),
             "launch_evidence_sha256": hashlib.sha256(args.launch_evidence.read_bytes()).hexdigest(),
             "declared_server_max_num_seqs": launch.max_num_seqs,
+            "model_endpoint": providers[0].base_url, "gpu_index": args.gpu_index,
             "client_concurrency": args.concurrency, "samples_per_repetition": len(cases),
             "repetitions": args.repetitions, "warmup_requests": args.warmup_requests,
             "planned_model_requests": len(cases) * args.repetitions + args.warmup_requests,

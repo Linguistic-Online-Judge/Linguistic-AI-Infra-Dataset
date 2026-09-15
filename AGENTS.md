@@ -81,6 +81,22 @@ present planned work or skipped checks as completed results.
   service. Keep real school performance results pending until connection and testing
   windows permit them; do not describe GitHub Linux checks as school-server tests.
 
+- The owner later explicitly authorized a GPU0 maintenance window after authorized
+  GPU1 became occupied by another user's job. Actual c1/c2/c4 school comparisons
+  completed in `artifacts/performance-gpu0-window-20260916-v4`: six groups, 114 client
+  requests, matching inputs/model/settings. Four clients improved batch throughput
+  2.55x (English UPOS) and 3.39x (German dependency), but German score statistics
+  varied across settings and one sample varied across three c4 repetitions. Do not
+  call this a quality or 30-student capacity pass. See `docs/QWEN_CONCURRENCY_RESULTS.md`.
+  Services were restored with matching argv/cwd and all 11 table fingerprints, 7
+  accounts / 68 results, no pending experiment request. Restored observed PIDs:
+  model API 1919069, engine 1919681, app 1920554; rediscover current identities before
+  operations. Model is STILL max_num_seqs=1 on 8000, app on 8090; test 8001 is closed.
+  Private restore environments stay on the school server and out of Git. Verified
+  local report bundle/analysis lives under ignored `runtime/gpu0-comparison-20260916`.
+  Benchmark CLI now supports --model-port for an independent loopback endpoint;
+  this does not enable parallel production workers or change existing contracts.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

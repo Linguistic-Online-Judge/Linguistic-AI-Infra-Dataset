@@ -332,15 +332,19 @@ def test_cli_dry_run_and_explicit_run_keep_outputs_private_and_non_overwriting(
             "--dataset", str(experiment.artifacts.dataset_path), "--prompt-file", str(prompt),
             "--tokenizer-snapshot", str(experiment.snapshot), "--launch-evidence", str(evidence),
             "--state-dir", str(state), "--output", str(output),
-            "--sample-limit", "2", "--repetitions", "2"]
+            "--sample-limit", "2", "--repetitions", "2", "--model-port", "8001"]
     assert perf.main(args) == 0
     assert calls == [] and not output.exists() and not (state / "state.json").exists()
+    for invalid in ("0", "65536"):
+        assert perf.main([*args, "--model-port", invalid]) == 78
+    assert calls == [] and not output.exists()
     assert perf.main([*args, "--run-real-qwen", "--initialize-state"]) == 0
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert calls.count("generate") == report["planned_model_requests"] == 5
     assert report["measurement"]["completed_requests"] == 4
     assert report["status"] == "completed" and report["platform_scores_written"] is False
     assert report["application_queue_wait_seconds"] is None
+    assert report["model_endpoint"] == "http://127.0.0.1:8001/v1"
     original = (output / "report.json").read_bytes()
     assert perf.main([*args, "--run-real-qwen"]) == 78
     assert (output / "report.json").read_bytes() == original
