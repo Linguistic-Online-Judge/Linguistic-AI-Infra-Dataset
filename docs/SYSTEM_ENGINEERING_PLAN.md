@@ -16,6 +16,10 @@ Linux依赖锁定、定时备份、生产执行器监督及故障演练仍待完
 说明见`QWEN_PERFORMANCE.md`。连接恢复后，已在授权的0号显卡维护窗口完成真实对照，
 4并发吞吐提升约2.55／3.39倍，但德语输出出现重复性变化；见
 `QWEN_CONCURRENCY_RESULTS.md`。原模型、应用已恢复，11张表指纹一致。
+用户进一步确认全任务、30人各50样本、全部50秒内返回最终成绩。已在0号卡完成
+8／16／32并发的完整计划工作量预算筛查，六组均未达模型层必要条件；详见
+`CLASSROOM_CAPACITY_TARGET.md`和`CLASSROOM_CAPACITY_RESULTS.md`。这是未达标证据，
+不能改写为30人容量验收通过，也不能用缩小样本数或提前返回受理来满足目标。
 详见`PUBLIC_DEPLOYMENT.md`、`PRODUCTION_PREPARATION.md`和
 `QWEN_DEVELOPMENT_OPERATIONS.md`。以下问题列表保留原审查事实及完整验收目标。
 

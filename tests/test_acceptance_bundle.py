@@ -76,7 +76,7 @@ def test_catalog_bundle_rejects_private_references(source):
 
 def test_performance_bundle_includes_only_explicit_prompts_and_guide(source):
     included = {"prompts/performance/upos-v1.txt", "prompts/performance/dependency-v1.txt",
-                "docs/QWEN_PERFORMANCE.md"}
+                "docs/QWEN_PERFORMANCE.md", "config/classroom_capacity_target_v1.json"}
     for name in included | {"prompts/performance/private-prompt.txt"}:
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,7 @@ import pytest
 
 from linguistic_oj import auth_config
 from linguistic_oj import qwen_performance as perf
+from linguistic_oj.capacity_target import assess_model_budget, project_capacity
 from linguistic_oj.challenge import build_challenge, write_challenge
 from linguistic_oj.executor_state import ExecutorState, RecoveryRequired, executor_lock
 from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
@@ -162,6 +163,86 @@ def test_stop_event_prevents_new_assignments(experiment):
     assert not result["termination_unconfirmed"]
 
 
+def test_deadline_stops_assignment_but_drains_and_counts_late_results(experiment, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(perf, "monotonic", lambda: clock[0])
+
+    class Slow(FakeProvider):
+        def generate(self, request):
+            clock[0] += 2
+            return super().generate(request)
+
+    with executor_lock(experiment.state_dir):
+        state = ExecutorState(experiment.state_dir, "a" * 64)
+        result = perf.guarded_experiment(state, experiment.cases, [Slow()], repetitions=2,
+                                         warmup_requests=1, budget_seconds=3)
+        measured = result["measurement"]
+        assert result["warmup"]["batch_wall_seconds"] == 2
+        assert measured["planned_requests"] == 4
+        assert measured["started_requests"] == measured["completed_requests"] == 2
+        assert measured["not_started_requests"] == 2
+        assert measured["samples_completed_within_budget"] == 1
+        assert measured["model_budget_verdict"] == "not_met"
+        assert measured["drain_seconds_after_budget"] == 1
+        assert not any(copy["all_samples_within_budget"] for copy in measured["workload_copies"])
+        state.require_clean()
+
+
+def test_all_results_returning_late_is_not_a_deadline_pass(experiment, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(perf, "monotonic", lambda: clock[0])
+
+    class Slow(FakeProvider):
+        def generate(self, request):
+            clock[0] += 2
+            return super().generate(request)
+
+    measured = perf.measure_batch(experiment.cases, [Slow()], budget_seconds=3)
+    assert measured["completed_requests"] == measured["planned_requests"] == 2
+    assert measured["model_budget_verdict"] == "not_met"
+    assert measured["samples_completed_within_budget"] == 1
+
+
+def test_model_only_budget_cannot_become_a_classroom_acceptance(experiment):
+    measured = perf.measure_batch(experiment.cases, [FakeProvider()], repetitions=2,
+                                  budget_seconds=100)
+    target = {"schema_version": "classroom-capacity-target-v1", "simultaneous_students": 2,
+              "samples_per_submission": 2, "completion_budget_seconds": 100,
+              "model": "Qwen/Qwen3.5-9B"}
+    report = {"samples_per_repetition": 2, "repetitions": 2, "measurement_budget_seconds": 100,
+              "measurement": measured, "real_model_requests_started": True,
+              "model_identity": {"model": target["model"]}}
+    assessed = assess_model_budget(report, target)
+    assert assessed["necessary_condition"] == "met"
+    assert assessed["complete_model_work_copies_within_budget"] == 2
+    assert not assessed["end_to_end_acceptance_verified"]
+    assert not assessed["distinct_authenticated_students_tested"]
+    # A duplicated sample cannot stand in for a missing sample, even if counters claim success.
+    measured["rows"][1] = dict(measured["rows"][0])
+    assert assess_model_budget(report, target)["necessary_condition"] == "not_met"
+
+
+def test_capacity_projection_preserves_30_full_submissions():
+    target = json.loads((ROOT / 'config/classroom_capacity_target_v1.json').read_text())
+    report = {"status": "completed", "real_model_requests_started": True,
+              "measurement": {"completed_requests": 18, "planned_requests": 18,
+                              "batch_wall_seconds": 54, "termination_unconfirmed": False}}
+    projection = project_capacity(report, target)
+    assert projection["required_model_requests"] == 1500
+    assert projection["required_model_requests_per_second"] == 30
+    assert projection["throughput_factor_needed_at_observed_rate"] == 90
+    assert projection["projected_model_seconds_at_observed_rate"] == 4500
+    assert not projection["is_required_gpu_count"]
+    assert not projection["is_hardware_upper_bound"]
+
+
+def test_workload_allows_30_copies_without_reducing_samples(experiment):
+    measured = perf.measure_batch(experiment.cases, [FakeProvider()], repetitions=30)
+    assert measured["planned_requests"] == 60
+    assert len(measured["workload_copies"]) == 30
+    assert all(copy["completed_samples"] == 2 for copy in measured["workload_copies"])
+
+
 def test_calibration_capacity_does_not_relax_production_attestation(experiment, tmp_path):
     contract = experiment.contract
     before = contract.snapshot_json
@@ -188,6 +269,13 @@ def test_calibration_capacity_does_not_relax_production_attestation(experiment, 
     with pytest.raises(QwenRuntimeAttestationError, match="concurrency"):
         verify_qwen_runtime(contract, provider, QwenRuntimeAttestation(
             model, token_identity, contract.model_context_tokens, 2, True))
+    assert contract.snapshot_json == before
+    for capacity in (8, 16, 32):
+        expanded = json.loads(evidence.read_text())
+        expanded['max_num_seqs'] = capacity
+        evidence.write_text(json.dumps(expanded), encoding='utf-8')
+        assert perf.verify_experiment_runtime(
+            contract, experiment.snapshot, evidence, capacity)[3].max_num_seqs == capacity
     assert contract.snapshot_json == before
 
 
@@ -349,3 +437,10 @@ def test_cli_dry_run_and_explicit_run_keep_outputs_private_and_non_overwriting(
     assert perf.main([*args, "--run-real-qwen"]) == 78
     assert (output / "report.json").read_bytes() == original
     assert calls.count("generate") == 5
+    deadline_output = tmp_path / "deadline-report"
+    assert perf.main([*args, "--output", str(deadline_output), "--run-real-qwen",
+                      "--measurement-budget-seconds", "0.000000000001"]) == 3
+    missed = json.loads((deadline_output / "report.json").read_text())
+    assert missed["status"] == "budget_exceeded"
+    assert missed["measurement"]["planned_requests"] == 4
+    assert missed["measurement"]["samples_completed_within_budget"] == 0

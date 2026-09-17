@@ -52,7 +52,7 @@ def _check_windows_acl(path: Path) -> None:
 
 def _read_protected(path: Path, *, max_bytes: int = 16384) -> str:
     try:
-        if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 8388608:
             raise ValueError
         if path.is_symlink():
             raise ValueError

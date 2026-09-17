@@ -48,6 +48,8 @@ from .qwen_runtime import (
 from .responses import TaskType
 from .runner import _prepare_samples, evaluate_raw_response
 
+EXPERIMENT_CONCURRENCIES = (1, 2, 4, 8, 16, 32)
+
 
 def distribution(values):
     values = sorted(values)
@@ -123,7 +125,7 @@ def verify_experiment_runtime(contract, snapshot, evidence_path, concurrency):
             or launch.max_model_len != contract.model_context_tokens
             or not launch.language_model_only):
         raise ValueError("performance runtime evidence does not match pinned configuration")
-    if concurrency not in (1, 2, 4) or launch.max_num_seqs < concurrency:
+    if concurrency not in EXPERIMENT_CONCURRENCIES or launch.max_num_seqs < concurrency:
         raise ValueError("declared model capacity is below requested client concurrency")
     tokenizer = load_huggingface_tokenizer(snapshot)
     template_hash = hashlib.sha256(tokenizer.chat_template.encode()).hexdigest()
@@ -179,13 +181,20 @@ class GPUSampler:
                 "samples": self.rows}
 
 
-def measure_batch(cases, providers, *, repetitions=1, score=evaluate_raw_response, stop_event=None):
+def measure_batch(cases, providers, *, repetitions=1, score=evaluate_raw_response, stop_event=None,
+                  budget_seconds=None):
     """One provider per slot; stop assigning new cases on failure and drain assigned requests."""
-    if not cases or not providers or type(repetitions) is not int or not 1 <= repetitions <= 10:
-        raise ValueError("non-empty cases/providers and 1..10 repetitions are required")
+    if not cases or not providers or type(repetitions) is not int or not 1 <= repetitions <= 30:
+        raise ValueError("non-empty cases/providers and 1..30 repetitions are required")
+    if budget_seconds is not None and (
+        type(budget_seconds) not in (int, float) or not math.isfinite(budget_seconds)
+        or budget_seconds <= 0
+    ):
+        raise ValueError("measurement budget must be positive and finite")
     work = list(enumerate(case for _ in range(repetitions) for case in cases))
     lock, abort, uncertain = Lock(), stop_event if stop_event is not None else Event(), Event()
     cursor, rows = 0, []
+    expired, failed = Event(), Event()
     started = monotonic()
 
     def consume(provider):
@@ -193,6 +202,9 @@ def measure_batch(cases, providers, *, repetitions=1, score=evaluate_raw_respons
         while True:
             with lock:
                 if abort.is_set() or cursor == len(work):
+                    return
+                if budget_seconds is not None and monotonic() - started >= budget_seconds:
+                    expired.set()
                     return
                 sequence, case = work[cursor]
                 cursor += 1
@@ -219,6 +231,7 @@ def measure_batch(cases, providers, *, repetitions=1, score=evaluate_raw_respons
                            score_statistics=asdict(outcome.score) if outcome.score else None,
                            format_error=outcome.error_code.value if outcome.error_code else None)
             except BaseException as error:
+                failed.set()
                 abort.set()
                 row["request_seconds"] = row.get("request_seconds", monotonic() - request_started)
                 if isinstance(error, ProviderRequestError):
@@ -248,6 +261,28 @@ def measure_batch(cases, providers, *, repetitions=1, score=evaluate_raw_respons
     rows.sort(key=lambda row: row["sequence"])
     completed = [row for row in rows if row["status"] == "completed"]
     tokens = [row["output_tokens"] for row in completed if row["output_tokens"] is not None]
+    on_time = ([] if budget_seconds is None else [
+        row for row in completed if row["completion_seconds"] <= budget_seconds])
+    copies = []
+    for repetition in range(1, repetitions + 1):
+        finished = sum(row["repetition"] == repetition for row in completed)
+        before_deadline = sum(row["repetition"] == repetition for row in on_time)
+        copies.append({"repetition": repetition, "planned_samples": len(cases),
+                       "completed_samples": finished,
+                       "samples_completed_within_budget": (None if budget_seconds is None
+                                                           else before_deadline),
+                       "all_samples_within_budget": (None if budget_seconds is None
+                                                     else before_deadline == len(cases))})
+    if failed.is_set() or uncertain.is_set():
+        verdict = "incomplete"
+    elif budget_seconds is not None and len(on_time) == len(work):
+        verdict = "met"
+    elif abort.is_set():
+        verdict = "interrupted"
+    elif budget_seconds is None:
+        verdict = "not_measured"
+    else:
+        verdict = "not_met"
     return {
         "planned_requests": len(work), "started_requests": len(rows),
         "completed_requests": len(completed), "not_started_requests": len(work) - len(rows),
@@ -263,11 +298,19 @@ def measure_batch(cases, providers, *, repetitions=1, score=evaluate_raw_respons
         "completion_seconds": distribution([row["completion_seconds"] for row in completed]),
         "scoring_seconds_total": sum(row["scoring_seconds"] for row in completed),
         "format_invalid_count": sum(row["format_error"] is not None for row in completed),
+        "measurement_budget_seconds": budget_seconds,
+        "model_budget_verdict": verdict,
+        "deadline_stopped_new_assignments": expired.is_set(),
+        "samples_completed_within_budget": None if budget_seconds is None else len(on_time),
+        "workload_copies": copies,
+        "drain_seconds_after_budget": (None if budget_seconds is None
+                                       else max(0.0, elapsed - budget_seconds)),
         "rows": rows,
     }
 
 
-def guarded_experiment(state, cases, providers, *, repetitions, warmup_requests, stop_event=None):
+def guarded_experiment(state, cases, providers, *, repetitions, warmup_requests, stop_event=None,
+                       budget_seconds=None):
     state.require_clean()
     operation = state.begin("private-performance-experiment")
     warmup = None
@@ -277,7 +320,8 @@ def guarded_experiment(state, cases, providers, *, repetitions, warmup_requests,
             if not warmup["termination_unconfirmed"]:
                 state.finish(operation)
             return {"operation_id": operation, "warmup": warmup, "measurement": None}
-    measurement = measure_batch(cases, providers, repetitions=repetitions, stop_event=stop_event)
+    measurement = measure_batch(cases, providers, repetitions=repetitions, stop_event=stop_event,
+                                budget_seconds=budget_seconds)
     if not measurement["termination_unconfirmed"]:
         state.finish(operation)
     return {"operation_id": operation, "warmup": warmup, "measurement": measurement}
@@ -294,6 +338,8 @@ def compare_reports(reports):
         if (report.get("schema_version") != "qwen-performance-v1"
                 or report.get("status") != "completed"
                 or not report.get("real_model_requests_started")
+                or report.get("measurement_budget_seconds")
+                != first.get("measurement_budget_seconds")
                 or any(key not in report or report[key] != first.get(key) for key in matching)
                 or not isinstance(report.get("measurement"), dict)
                 or report["measurement"].get("termination_unconfirmed")
@@ -348,7 +394,7 @@ def main(arguments=None):
         comparison.add_argument("reports", type=Path, nargs="+")
         args = comparison.parse_args(arguments[1:])
         try:
-            reports = [json.loads(_read_protected(path, max_bytes=1048576))
+            reports = [json.loads(_read_protected(path, max_bytes=8388608))
                        for path in args.reports]
             print(json.dumps(compare_reports(reports), ensure_ascii=False, indent=2))
             return 0
@@ -359,9 +405,11 @@ def main(arguments=None):
     for field in ("contract", "public-challenge", "private-challenge", "dataset",
                   "prompt-file", "tokenizer-snapshot", "launch-evidence", "state-dir", "output"):
         parser.add_argument("--" + field, type=Path, required=True)
-    parser.add_argument("--concurrency", type=int, choices=(1, 2, 4), default=1)
+    parser.add_argument("--concurrency", type=int, choices=EXPERIMENT_CONCURRENCIES, default=1)
     parser.add_argument("--sample-limit", type=int, default=6)
-    parser.add_argument("--repetitions", type=int, choices=range(1, 11), default=1)
+    parser.add_argument("--repetitions", type=int, choices=range(1, 31), default=1)
+    parser.add_argument("--measurement-budget-seconds", type=float,
+                        help="model-only time budget; stop assigning and drain sent requests")
     parser.add_argument("--warmup-requests", type=int, choices=(0, 1), default=1)
     parser.add_argument("--gpu-index", type=int, default=0)
     parser.add_argument("--model-port", type=int, default=8000,
@@ -377,6 +425,11 @@ def main(arguments=None):
             raise ValueError("GPU index must not be negative")
         if not 1024 <= args.model_port <= 65535:
             raise ValueError("model port must be in 1024..65535")
+        if args.measurement_budget_seconds is not None and (
+            not math.isfinite(args.measurement_budget_seconds)
+            or args.measurement_budget_seconds <= 0
+        ):
+            raise ValueError("measurement budget must be positive and finite")
         contract = EvaluationContract.from_path(args.contract)
         model, tokenizer, token_identity, launch = verify_experiment_runtime(
             contract, args.tokenizer_snapshot, args.launch_evidence, args.concurrency,
@@ -398,6 +451,7 @@ def main(arguments=None):
             PromptEnvelope.from_request(case.request).to_dict() for case in cases])
         report = {
             "schema_version": "qwen-performance-v1", "assurance": "private-calibration-only",
+            "challenge_id": contract.challenge_id, "task": artifacts.public.task,
             "source_contract_sha256": contract.contract_snapshot_sha256,
             "request_set_sha256": request_hash, "model_identity": model.to_dict(),
             "generation_settings": settings.to_dict(),
@@ -407,6 +461,8 @@ def main(arguments=None):
             "model_endpoint": providers[0].base_url, "gpu_index": args.gpu_index,
             "client_concurrency": args.concurrency, "samples_per_repetition": len(cases),
             "repetitions": args.repetitions, "warmup_requests": args.warmup_requests,
+            "measurement_budget_seconds": args.measurement_budget_seconds,
+            "workload_kind": "same_prompt_model_work_copies_not_authenticated_students",
             "planned_model_requests": len(cases) * args.repetitions + args.warmup_requests,
             "preparation": {"artifact_load_seconds": load_seconds, **phases},
             "platform_scores_written": False, "application_queue_wait_seconds": None,
@@ -437,6 +493,7 @@ def main(arguments=None):
                     results = guarded_experiment(
                         state, cases, providers, repetitions=args.repetitions,
                         warmup_requests=args.warmup_requests, stop_event=stop,
+                        budget_seconds=args.measurement_budget_seconds,
                     )
             finally:
                 for sig, handler in previous.items():
@@ -444,15 +501,20 @@ def main(arguments=None):
             measurement = results["measurement"]
             complete = (measurement is not None and not measurement["termination_unconfirmed"]
                         and measurement["completed_requests"] == measurement["planned_requests"])
+            if args.measurement_budget_seconds is not None:
+                complete = complete and measurement["model_budget_verdict"] == "met"
+            budget_missed = (measurement is not None
+                             and measurement["model_budget_verdict"] == "not_met")
             attempts = sum(result["started_requests"] for result in (
                 results["warmup"], measurement) if result is not None)
             report.update(results, gpu=gpu.report(), real_model_requests_started=attempts > 0,
-                          status="completed" if complete else "incomplete")
+                          status=("budget_exceeded" if budget_missed else
+                                  "completed" if complete else "incomplete"))
             _write_atomic(args.output / "report.json", report)
             print(json.dumps({"status": report["status"],
                               "report": str(args.output / "report.json"),
                               "operation_id": results["operation_id"]}))
-            return 0 if complete else 1
+            return 3 if budget_missed else 0 if complete else 1
     except RecoveryRequired:
         print("performance_state_requires_recorded_termination_confirmation")
         return 75

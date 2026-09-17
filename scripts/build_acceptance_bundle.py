@@ -28,6 +28,7 @@ def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
         files.extend(root / name for name in (
             "prompts/performance/upos-v1.txt", "prompts/performance/dependency-v1.txt",
             "docs/QWEN_PERFORMANCE.md",
+            "config/classroom_capacity_target_v1.json",
         ))
     if include_catalog:
         if (not registry_name.startswith('config/') or '..' in registry_name.split('/')

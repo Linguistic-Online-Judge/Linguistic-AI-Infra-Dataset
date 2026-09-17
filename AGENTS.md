@@ -97,6 +97,24 @@ present planned work or skipped checks as completed results.
   Benchmark CLI now supports --model-port for an independent loopback endpoint;
   this does not enable parallel production workers or change existing contracts.
 
+- Owner's confirmed classroom target is 30 simultaneous full 50-sample evaluations,
+  ALL final scores within 50 seconds, across ALL tasks including dependency. Only
+  increased batch concurrency was authorized for this next optimization. Target is
+  config/classroom_capacity_target_v1.json; do not reduce sample counts or substitute
+  acceptance acknowledgments/cached counters for actual completed work.
+  Model-only c8/c16/c32 budget screens completed on GPU0 in
+  artifacts/performance-target50-20260916-v2. English completed 361/504/593 of 1500
+  samples within 50s, German 34/53/74; ALL six necessary conditions failed. These
+  same-prompt workload copies are not authenticated classroom users, and this is not
+  a hardware upper bound. See docs/CLASSROOM_CAPACITY_RESULTS.md. Services restored
+  with matching argv/cwd/all 11 table fingerprints, 69 successful results, no pending
+  inference. Observed restored API/app PIDs: 3614331 / 3615687; rediscover before use.
+  Runtime evidence stays private under runtime/target50-results-20260916.
+  CLI supports up to 32 client slots, 30 workload copies, and an optional measurement
+  budget: stop assigning at the budget, drain sent requests, exclude late results,
+  and return budget_exceeded/exit 3 for an unmet model-only budget. Production limits
+  and contracts remain unchanged; target achievement is still pending.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
