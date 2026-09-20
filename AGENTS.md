@@ -115,6 +115,19 @@ present planned work or skipped checks as completed results.
   and return budget_exceeded/exit 3 for an unmet model-only budget. Production limits
   and contracts remain unchanged; target achievement is still pending.
 
+- The owner subsequently authorized compact dependency protocol investigation with
+  a requirement to contain impact. New compact_dependency.py implements strict
+  parallel-array/triple adapters, without registering them in production parsers.
+  ProtocolProvider is explicitly rejected by frozen-contract runtime verification.
+  Gold conversion on all 50 HDT samples preserved scores; 128 synthetic prediction
+  combinations were checked for each adapter. Two small school studies (24 requests
+  total, 2026-09-20, archive names retain 20260917) found BOTH naive candidates unfit
+  for adoption: arrays produced two invalid long JSON outputs, triples two token-ID
+  mismatches; both reduced selected-sample accuracy. See COMPACT_DEPENDENCY_STUDY.md.
+  Do not promote these protocols based on token savings. Live app/model were not
+  restarted or reconfigured, app PID stayed 3615687, successful submission count 69.
+  Private evidence remains in runtime. Local regression: 687 passed / 33 skipped.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

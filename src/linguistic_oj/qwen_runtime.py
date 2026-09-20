@@ -485,6 +485,9 @@ def verify_qwen_runtime(
         raise TypeError("Qwen runtime requires OpenAICompatibleProvider")
     if not isinstance(attestation, QwenRuntimeAttestation):
         raise TypeError("attestation must be a QwenRuntimeAttestation")
+    if getattr(provider, 'experimental_protocol', None) is not None:
+        raise QwenRuntimeAttestationError(
+            'experimental protocol providers cannot execute frozen evaluation contracts')
     if provider.structured_json:
         raise QwenRuntimeAttestationError(
             "structured JSON is not declared by the evaluation contract"
