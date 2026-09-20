@@ -156,6 +156,21 @@ present planned work or skipped checks as completed results.
   occurred. App remained3615687/ready,69 results, no uncertain inference. Private
   evidence: runtime/input-processing-results-20260920-v2. Classroom target still unmet.
 
+- Owner-authorized prefix-cache off/on GPU0 window completed76 requests on2026-09-20,
+  original protocol/layout, c1,6 samples x3 plus1 warmup per task/config. English
+  batch7.196->7.338s, German177.607->179.136s: no observed throughput benefit.
+  On-mode align achieved0/4228 English and3696/10222 German token hits including
+  warmups. Actual attention blocks528 tokens. German outputs changed6/18 and score
+  statistics3/18; invalid counts3->0, not a general quality/equivalence pass. Within
+  each condition, three repetitions were identical per sample. See PREFIX_CACHE_STUDY.md.
+  Window artifacts/prefix-cache-20260920-v1 is finished, original services restored:
+  observed API1581888/app1583475, rediscover identities before use. Argv/cwd and all11
+  table fingerprints matched after ready,8 accounts/69 results, no unfinished work or
+  pending inference, test8001 closed. Production remains original c1/cache defaults.
+  Verified35-file private copy: runtime/prefix-cache-results-20260920; no restoration
+  environment included. Next investigation is generation-phase timing, not a claim
+  that cache hits equal wall-time savings or classroom target achieved.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
