@@ -140,6 +140,22 @@ present planned work or skipped checks as completed results.
   stable. Local regression:691 passed/33 skipped. Private evidence is under ignored
   runtime/guided-dependency-results-20260920; do not tune against retained answers.
 
+- CPU-only input study completed on 2026-09-20, full50 English/German samples,
+  five interleaved repetitions, zero model requests. Warm selected-corpus caching
+  reduced preparation medians0.336064->0.048530s /0.662106->0.100141s; batch-local
+  prompt counting saved only7.3/9.8ms while preserving all50 rendered checks.
+  Exact prepared samples/token sequences matched. Cache rehashes files on every use,
+  verifies parsed bytes on misses and returns deep copies;16 entries/8MiB encoded
+  payload is not an RSS bound. Runner injection is opt-in, NOT wired into workers or
+  deployed. See docs/INPUT_PROCESSING_RESULTS.md. V1 prefix statistics were wrong
+  because a tokenizer mapping was iterated as keys; corrected and rerun in v2 with
+  mapping regression coverage. Current shared prefixes88/90 tokens; offline reordered
+  candidates204/343. No reordered request was sent, no output equivalence established.
+  Installed vLLM source requires Qwen3.5 align mode for prefix caching; actual cache
+  hits depend on block/state configuration. No cache-enabled model test or restart
+  occurred. App remained3615687/ready,69 results, no uncertain inference. Private
+  evidence: runtime/input-processing-results-20260920-v2. Classroom target still unmet.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -31,6 +33,36 @@ class SelectedSampleSetError(ValueError):
     """Raised when manifest-selected samples cannot be loaded exactly once."""
 
 
+class _HashingReader(io.RawIOBase):
+    """Hash the exact bytes consumed by the text decoder, including BOM/newline bytes."""
+
+    def __init__(self, raw, digest):
+        self.raw = raw
+        self.digest = digest
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        count = self.raw.readinto(buffer)
+        if count:
+            self.digest.update(memoryview(buffer)[:count])
+        return count
+
+
+def _validated_lines(dataset_file, path):
+    for line_number, line in enumerate(dataset_file, start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+            yield DatasetSample.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as error:
+            raise DatasetFormatError(
+                f"Invalid dataset sample at {path}:{line_number}: {error}"
+            ) from error
+
+
 def iter_dataset_samples(path: Path) -> Iterator[DatasetSample]:
     """Yield validated samples one line at a time without loading the full file."""
 
@@ -38,16 +70,17 @@ def iter_dataset_samples(path: Path) -> Iterator[DatasetSample]:
         raise FileNotFoundError(f"Dataset file not found: {path}")
 
     with path.open(encoding="utf-8-sig") as dataset_file:
-        for line_number, line in enumerate(dataset_file, start=1):
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-                yield DatasetSample.model_validate(payload)
-            except (json.JSONDecodeError, ValidationError) as error:
-                raise DatasetFormatError(
-                    f"Invalid dataset sample at {path}:{line_number}: {error}"
-                ) from error
+        yield from _validated_lines(dataset_file, path)
+
+
+def _verified_dataset_samples(path, expected_sha256):
+    digest = hashlib.sha256()
+    with path.open('rb') as raw:
+        with io.TextIOWrapper(io.BufferedReader(_HashingReader(raw, digest)),
+                              encoding='utf-8-sig') as text:
+            yield from _validated_lines(text, path)
+    if digest.hexdigest() != expected_sha256:
+        raise SelectedSampleSetError('dataset bytes changed during selected-sample loading')
 
 
 def iter_matching_samples(
@@ -71,6 +104,8 @@ def iter_matching_samples(
 def load_dataset_samples_by_id(
     path: Path,
     sample_ids: Sequence[str],
+    *,
+    expected_sha256: str | None = None,
 ) -> tuple[DatasetSample, ...]:
     """Load a bounded sample set in manifest order while streaming the dataset."""
 
@@ -83,7 +118,9 @@ def load_dataset_samples_by_id(
 
     expected_ids = set(sample_ids)
     selected: dict[str, DatasetSample] = {}
-    for sample in iter_dataset_samples(path):
+    samples = (iter_dataset_samples(path) if expected_sha256 is None
+               else _verified_dataset_samples(path, expected_sha256))
+    for sample in samples:
         if sample.id not in expected_ids:
             continue
         if sample.id in selected:

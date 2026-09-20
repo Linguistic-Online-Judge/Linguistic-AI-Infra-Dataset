@@ -59,6 +59,7 @@ from .responses import (
     TransliterationResponse,
     parse_model_response,
 )
+from .sample_cache import VerifiedSelectionCache
 
 
 class EvaluationPreflightError(ValueError):
@@ -354,13 +355,17 @@ def evaluate_raw_response(
     return SampleEvaluationOutcome.scored(sample.id, task_type, score)
 
 
-def _prepare_samples(artifacts: ChallengeArtifacts) -> tuple[_PreparedSample, ...]:
-    validate_challenge_artifacts(artifacts)
+def _prepare_samples(artifacts: ChallengeArtifacts, *,
+                     selection_cache: VerifiedSelectionCache | None = None
+                     ) -> tuple[_PreparedSample, ...]:
+    if selection_cache is None:
+        validate_challenge_artifacts(artifacts)
+        dataset_samples = load_dataset_samples_by_id(
+            artifacts.dataset_path, artifacts.private.sample_ids,
+        )
+    else:
+        dataset_samples = selection_cache.load(artifacts)
     task = TaskType(artifacts.public.task)
-    dataset_samples = load_dataset_samples_by_id(
-        artifacts.dataset_path,
-        artifacts.private.sample_ids,
-    )
     prepared: list[_PreparedSample] = []
     for manifest_sample, dataset_sample in zip(
         artifacts.private.samples,
@@ -404,6 +409,7 @@ def run_challenge(
     request_preflight: Callable[[tuple[ModelRequest, ...]], None] | None = None,
     deadline: JobDeadline | None = None,
     diagnostics: ChallengeRunDiagnostics | None = None,
+    selection_cache: VerifiedSelectionCache | None = None,
 ) -> ChallengeAggregateResult:
     """Run one complete challenge without returning partial results."""
 
@@ -419,7 +425,7 @@ def run_challenge(
         raise TypeError("diagnostics must be ChallengeRunDiagnostics")
 
     execution_started = monotonic() if diagnostics is not None else None
-    prepared_samples = _prepare_samples(artifacts)
+    prepared_samples = _prepare_samples(artifacts, selection_cache=selection_cache)
     task = TaskType(artifacts.public.task)
     requests = tuple(
         ModelRequest(

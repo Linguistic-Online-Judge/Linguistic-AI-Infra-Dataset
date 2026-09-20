@@ -124,6 +124,42 @@ def test_qwen_preflight_counts_every_fully_rendered_request() -> None:
     assert all(messages[-1]["role"] == "user" for messages in tokenizer.rendered_messages)
 
 
+def test_prompt_counts_are_reused_only_inside_one_batch():
+    identity = _tokenizer_identity()
+
+    class Counting(_FakeTokenizer):
+        def __init__(self):
+            super().__init__()
+            self.prompts = []
+
+        def encode(self, text, **kwargs):
+            self.prompts.append(text)
+            return super().encode(text, **kwargs)
+
+    tokenizer = Counting()
+    preflight = QwenTokenizerPreflight(_contract(tokenizer_identity=identity), tokenizer, identity)
+    requests = tuple(_request('Prompt A') for _ in range(50)) + (_request('Prompt B'),)
+    preflight(requests)
+    assert tokenizer.prompts == ['Prompt A', 'Prompt B']
+    assert len(tokenizer.rendered_messages) == 51
+    preflight(requests)
+    assert tokenizer.prompts == ['Prompt A', 'Prompt B', 'Prompt A', 'Prompt B']
+
+
+def test_later_different_overbudget_prompt_is_not_hidden_by_memoization():
+    identity = _tokenizer_identity()
+    contract = _contract(tokenizer_identity=identity)
+
+    class Variable(_FakeTokenizer):
+        def encode(self, text, **kwargs):
+            return list(range(contract.student_prompt_tokens + 1)) if text == 'long' else [1]
+
+    tokenizer = Variable()
+    with pytest.raises(QwenTokenLimitExceeded, match='student prompt'):
+        QwenTokenizerPreflight(contract, tokenizer, identity)((_request('short'), _request('long')))
+    assert len(tokenizer.rendered_messages) == 1
+
+
 def test_qwen_preflight_accepts_transformers_batch_encoding() -> None:
     identity = _tokenizer_identity()
     tokenizer = _BatchEncodingTokenizer()

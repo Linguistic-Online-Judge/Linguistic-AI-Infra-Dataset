@@ -452,12 +452,13 @@ class QwenTokenizerPreflight:
                 "generation thinking mode does not match the tokenizer contract"
             )
 
+        # Batch-local only: never retain private prompts across calls or users.
+        prompt_counts: dict[str, int] = {}
         for request in requests:
-            prompt_tokens = self._tokenizer.encode(
-                request.student_prompt,
-                add_special_tokens=False,
-            )
-            if _token_count(prompt_tokens) > self._contract.student_prompt_tokens:
+            if request.student_prompt not in prompt_counts:
+                prompt_counts[request.student_prompt] = _token_count(self._tokenizer.encode(
+                    request.student_prompt, add_special_tokens=False))
+            if prompt_counts[request.student_prompt] > self._contract.student_prompt_tokens:
                 raise QwenTokenLimitExceeded("student prompt exceeds the Qwen token limit")
             rendered_tokens = self._tokenizer.apply_chat_template(
                 list(PromptEnvelope.from_request(request).to_messages()),
