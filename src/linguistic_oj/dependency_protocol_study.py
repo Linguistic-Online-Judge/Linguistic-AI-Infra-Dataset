@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic, sleep
 from urllib.request import ProxyHandler, build_opener, getproxies
@@ -23,6 +24,8 @@ from .compact_dependency import (
     TRIPLES_PROTOCOL,
     experiment_messages,
     experiment_prompt,
+    guided_schema,
+    handwritten_example,
     parse_compact_dependency,
 )
 from .executor_state import ExecutorState, GuardedQwenProvider, _write_atomic, executor_lock
@@ -30,7 +33,7 @@ from .mvp_contract import EvaluationContract, canonical_sha256
 from .providers import GenerationSettings, ModelRequest
 from .qwen_performance import validate_output, verify_experiment_runtime
 from .qwen_runtime import _token_count
-from .responses import TaskType
+from .responses import TaskType, parse_model_response
 from .runner import _prepare_samples, evaluate_raw_response
 
 
@@ -39,16 +42,29 @@ class ProtocolProvider(GuardedQwenProvider):
     def experimental_protocol(self):
         return 'dependency-protocol-study-v1'
 
-    def __init__(self, *, protocol, **kwargs):
+    def __init__(self, *, protocol, constrained=False, **kwargs):
         if protocol not in PROTOCOLS:
             raise ValueError('unknown experimental protocol')
         self._protocol = protocol
-        super().__init__(**kwargs)
+        super().__init__(structured_json=constrained, **kwargs)
 
     def _request_body(self, request):
         payload = json.loads(super()._request_body(request))
         payload['messages'] = list(experiment_messages(request, self._protocol))
+        if self.structured_json:
+            # Omit the legacy whitespace override; the JSON schema is the complete constraint.
+            payload['structured_outputs'] = {'json': guided_schema(request, self._protocol)}
         return json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+
+
+def constraint_honored(raw, request, protocol):
+    ids = tuple(token.token_id for token in request.model_input.tokens)
+    if protocol == BASELINE_PROTOCOL:
+        result = parse_model_response(TaskType.DEPENDENCY, raw, expected_count=len(ids),
+                                       expected_token_ids=ids)
+    else:
+        result = parse_compact_dependency(raw, expected_token_ids=ids, protocol=protocol)
+    return result.error is None and tuple(arc.token_id for arc in result.value.arcs) == ids
 
 
 def _score(prepared, raw, protocol, byte_limit):
@@ -103,7 +119,8 @@ def preflight(request, protocol, tokenizer, contract):
 
 
 def run_pairs(prepared, contract, tokenizer, providers, state, positions, repetitions, can_run,
-              checkpoint=None, cooldown_seconds=0, candidate=PROTOCOL):
+              checkpoint=None, cooldown_seconds=0, candidate=PROTOCOL, with_example=False,
+              constrained=False):
     protocols = (BASELINE_PROTOCOL, candidate)
     rows = []
     for repetition in range(1, repetitions + 1):
@@ -117,7 +134,8 @@ def run_pairs(prepared, contract, tokenizer, providers, state, positions, repeti
                 request = ModelRequest(task=TaskType.DEPENDENCY,
                     language=sample.dataset_sample.language,
                     treebank=sample.dataset_sample.treebank,
-                    student_prompt=experiment_prompt(protocol), model_input=sample.model_input)
+                    student_prompt=experiment_prompt(protocol, with_example=with_example),
+                    model_input=sample.model_input)
                 input_count = preflight(request, protocol, tokenizer, contract)
                 started = monotonic()
                 generation = providers[protocol].generate(request)
@@ -130,6 +148,8 @@ def run_pairs(prepared, contract, tokenizer, providers, state, positions, repeti
                     'input_tokens_reported': generation.prompt_token_count,
                     'output_tokens': generation.generated_token_count, 'request_seconds': duration,
                     'finish_reason': generation.finish_reason,
+                    'constraint_honored': (constraint_honored(
+                        generation.raw_text, request, protocol) if constrained else None),
                     'output_sha256': hashlib.sha256(generation.raw_text.encode()).hexdigest(),
                     'parse_error': outcome.error_code.value if outcome.error_code else None,
                     'gold_items': outcome.gold_items,
@@ -149,6 +169,8 @@ def main(arguments=None):
     parser.add_argument('--positions', type=int, nargs='+', default=[1, 2, 4])
     parser.add_argument('--repetitions', type=int, choices=(1, 2), default=2)
     parser.add_argument('--candidate', choices=(PROTOCOL, TRIPLES_PROTOCOL), default=PROTOCOL)
+    parser.add_argument('--format-example', action='store_true')
+    parser.add_argument('--constrained', action='store_true')
     parser.add_argument('--initialize-state', action='store_true')
     parser.add_argument('--run-real-qwen', action='store_true')
     args = parser.parse_args(arguments)
@@ -168,32 +190,62 @@ def main(arguments=None):
                                               dataset_path=args.dataset)
         validate_contract_matches_public(contract, artifacts.public)
         prepared = _prepare_samples(artifacts)
+        if args.format_example:
+            example_words = tuple(token['form'] for token in handwritten_example(BASELINE_PROTOCOL)[
+                'input']['tokens'])
+            if any(tuple(token.form for token in item.model_input.tokens) == example_words
+                   for item in prepared):
+                raise ValueError('handwritten example overlaps the evaluation selection')
         if (len(set(args.positions)) != len(args.positions) or not args.positions
                 or len(args.positions) > 6
                 or any(not 1 <= p <= len(prepared) for p in args.positions)):
             raise ValueError('choose at most six distinct existing sample positions')
         audit = audit_gold(prepared, tokenizer, contract.provider_response_body_bytes)
+        grammar_compiler_version = None
+        if args.constrained:
+            import importlib.metadata
+
+            import xgrammar
+
+            grammar_compiler_version = importlib.metadata.version('xgrammar')
         for position in args.positions:
             for protocol in protocols:
-                preflight(ModelRequest(task=TaskType.DEPENDENCY, language=artifacts.public.language,
-                    treebank=artifacts.public.treebank, student_prompt=experiment_prompt(protocol),
-                    model_input=prepared[position - 1].model_input), protocol, tokenizer, contract)
+                request = ModelRequest(task=TaskType.DEPENDENCY, language=artifacts.public.language,
+                    treebank=artifacts.public.treebank,
+                    student_prompt=experiment_prompt(protocol, with_example=args.format_example),
+                    model_input=prepared[position - 1].model_input)
+                preflight(request, protocol, tokenizer, contract)
+                if args.constrained:
+                    xgrammar.Grammar.from_json_schema(json.dumps(guided_schema(request, protocol)))
         report = {'schema_version': 'dependency-protocol-study-v1',
+            'prepared_at': datetime.now(UTC).isoformat(),
             'source_contract_sha256': contract.contract_snapshot_sha256,
             'model_identity': model.to_dict(),
             'generation_settings': contract.evaluation_identity['generation_settings'],
             'protocols': list(protocols), 'semantic_instruction_sha256': hashlib.sha256(
                 SEMANTIC_INSTRUCTION.encode()).hexdigest(), 'gold_audit': audit,
             'sample_positions': args.positions, 'repetitions': args.repetitions,
+            'format_example': args.format_example, 'constrained_decoding': args.constrained,
+            'grammar_compiler_version': grammar_compiler_version,
+            'example_semantics_sha256': (canonical_sha256(handwritten_example(BASELINE_PROTOCOL))
+                                        if args.format_example else None),
             'semantic_inputs_sha256': canonical_sha256([
                 {'position': p, 'input': prepared[p - 1].model_input.model_dump(mode='json')}
                 for p in args.positions]),
             'condition_fingerprints': {protocol: {
-                'prompt_sha256': hashlib.sha256(experiment_prompt(protocol).encode()).hexdigest(),
+                'prompt_sha256': hashlib.sha256(experiment_prompt(
+                    protocol, with_example=args.format_example).encode()).hexdigest(),
                 'messages_sha256': canonical_sha256([experiment_messages(ModelRequest(
                     task=TaskType.DEPENDENCY, language=artifacts.public.language,
-                    treebank=artifacts.public.treebank, student_prompt=experiment_prompt(protocol),
+                    treebank=artifacts.public.treebank,
+                    student_prompt=experiment_prompt(protocol, with_example=args.format_example),
                     model_input=prepared[p - 1].model_input), protocol) for p in args.positions]),
+                'guidance_sha256': (canonical_sha256([guided_schema(ModelRequest(
+                    task=TaskType.DEPENDENCY, language=artifacts.public.language,
+                    treebank=artifacts.public.treebank,
+                    student_prompt=experiment_prompt(protocol, with_example=args.format_example),
+                    model_input=prepared[p - 1].model_input), protocol) for p in args.positions])
+                    if args.constrained else None),
             } for protocol in protocols},
             'planned_requests': len(args.positions) * len(protocols) * args.repetitions,
             'platform_scores_written': False, 'live_protocol_changed': False,
@@ -236,6 +288,7 @@ def main(arguments=None):
             if not can_run():
                 raise RuntimeError('online work is not idle')
             providers = {protocol: ProtocolProvider(protocol=protocol, executor_state=state,
+                constrained=args.constrained,
                 challenge_id=contract.challenge_id, base_url='http://127.0.0.1:8000/v1',
                 identity=model,
                 settings=GenerationSettings(**contract.evaluation_identity['generation_settings']),
@@ -253,9 +306,11 @@ def main(arguments=None):
 
             result = run_pairs(prepared, contract, tokenizer, providers, state, args.positions,
                                args.repetitions, can_run, checkpoint, cooldown_seconds=5,
-                               candidate=args.candidate)
+                               candidate=args.candidate, with_example=args.format_example,
+                               constrained=args.constrained)
             can_run()
             report.update(result, application_observations=observations,
+                          finished_at=datetime.now(UTC).isoformat(),
                           experiment_pending=state.snapshot()['pending'],
                           application_submission_counts_unchanged=all(
                               item['submissions'] == observations[0]['submissions']

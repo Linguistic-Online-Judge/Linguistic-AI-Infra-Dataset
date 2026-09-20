@@ -25,7 +25,24 @@ SEMANTIC_INSTRUCTION = (
 )
 
 
-def experiment_prompt(protocol: str) -> str:
+def handwritten_example(protocol: str) -> dict:
+    """Independent formatting example; never derived from evaluation answers."""
+    tokens = [{'token_id': 1, 'form': 'Ich'}, {'token_id': 2, 'form': 'lese'},
+              {'token_id': 3, 'form': '.'}]
+    if protocol == BASELINE_PROTOCOL:
+        output = {'arcs': [{'token_id': 1, 'head_id': 2, 'deprel': 'nsubj'},
+                           {'token_id': 2, 'head_id': 0, 'deprel': 'root'},
+                           {'token_id': 3, 'head_id': 2, 'deprel': 'punct'}]}
+    elif protocol == TRIPLES_PROTOCOL:
+        output = {'arcs': [[1, 2, 'nsubj'], [2, 0, 'root'], [3, 2, 'punct']]}
+    elif protocol == PROTOCOL:
+        output = {'heads': [2, 0, 2], 'deprels': ['nsubj', 'root', 'punct']}
+    else:
+        raise ValueError('unsupported example protocol')
+    return {'input': {'tokens': tokens}, 'output': output}
+
+
+def experiment_prompt(protocol: str, *, with_example: bool = False) -> str:
     if protocol == BASELINE_PROTOCOL:
         output = "Return an arcs array of objects containing token_id, head_id, and deprel. "
     elif protocol == PROTOCOL:
@@ -36,7 +53,46 @@ def experiment_prompt(protocol: str) -> str:
                   "Each entry must be [token_id, head_id, deprel]. ")
     else:
         raise ValueError("unsupported experimental protocol")
-    return SEMANTIC_INSTRUCTION + output + "Return only JSON, without explanations or extra fields."
+    prompt = (SEMANTIC_INSTRUCTION + output
+              + "Return only JSON, without explanations or extra fields.")
+    if with_example:
+        prompt += (' Handwritten formatting example: ' + json.dumps(handwritten_example(protocol),
+                   ensure_ascii=False, separators=(',', ':'))
+                   + ' Predict the actual input independently; do not copy the example length.')
+    return prompt
+
+
+def guided_schema(request: ModelRequest, protocol: str) -> dict:
+    """Only public input IDs/count bound the grammar; no label or correct-head information."""
+    if request.task is not TaskType.DEPENDENCY or protocol not in PROTOCOLS:
+        raise ValueError('unsupported guided dependency request')
+    safe = PromptEnvelope.from_request(request).model_input
+    ids = tuple(token.token_id for token in safe.tokens)
+    if ids != tuple(range(1, len(ids) + 1)):
+        raise ValueError('expected ordered contiguous input IDs')
+    count = len(ids)
+    head = {'type': 'integer', 'minimum': 0, 'maximum': count}
+    relation = {'type': 'string', 'minLength': 1}
+    if protocol == PROTOCOL:
+        return {'type': 'object', 'additionalProperties': False, 'required': ['heads', 'deprels'],
+                'properties': {
+                    'heads': {'type': 'array', 'minItems': count, 'maxItems': count, 'items': head},
+                    'deprels': {'type': 'array', 'minItems': count, 'maxItems': count,
+                                'items': relation}}}
+    entries = []
+    for token_id in ids:
+        identity = {'type': 'integer', 'const': token_id}
+        if protocol == BASELINE_PROTOCOL:
+            entries.append({'type': 'object', 'additionalProperties': False,
+                            'required': ['token_id', 'head_id', 'deprel'],
+                            'properties': {'token_id': identity, 'head_id': dict(head),
+                                           'deprel': dict(relation)}})
+        else:
+            entries.append({'type': 'array', 'minItems': 3, 'maxItems': 3,
+                            'prefixItems': [identity, dict(head), dict(relation)], 'items': False})
+    return {'type': 'object', 'additionalProperties': False, 'required': ['arcs'],
+            'properties': {'arcs': {'type': 'array', 'minItems': count, 'maxItems': count,
+                                     'prefixItems': entries, 'items': False}}}
 
 
 def response_schema(protocol=PROTOCOL) -> dict:

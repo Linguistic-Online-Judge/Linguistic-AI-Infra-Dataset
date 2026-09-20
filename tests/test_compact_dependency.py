@@ -12,9 +12,11 @@ from linguistic_oj.compact_dependency import (
     TRIPLES_PROTOCOL,
     experiment_messages,
     experiment_prompt,
+    guided_schema,
+    handwritten_example,
     parse_compact_dependency,
 )
-from linguistic_oj.dependency_protocol_study import ProtocolProvider, run_pairs
+from linguistic_oj.dependency_protocol_study import ProtocolProvider, constraint_honored, run_pairs
 from linguistic_oj.model_inputs import DependencyModelInput
 from linguistic_oj.mvp_contract import EvaluationContract
 from linguistic_oj.providers import GenerationSettings, ModelIdentity, ModelRequest, PromptEnvelope
@@ -173,3 +175,76 @@ def test_triples_preserve_ids_and_original_duplicate_detection():
     duplicated = parse_compact_dependency('{"arcs":[[1,0,"root"],[1,1,"dep"]]}',
         expected_token_ids=(1, 2), protocol=TRIPLES_PROTOCOL)
     assert duplicated.error.code == ParseErrorCode.DUPLICATE_TOKEN_ID
+
+
+def _demo_request():
+    return ModelRequest(task=TaskType.DEPENDENCY, language='German', treebank='Fixture',
+        student_prompt='Predict dependencies.',
+        model_input=DependencyModelInput.model_validate_json(
+            json.dumps(handwritten_example(BASELINE_PROTOCOL)['input'])))
+
+
+def test_guidance_contains_only_input_ids_counts_and_unrestricted_relation_strings():
+    request = _demo_request()
+    for protocol in (BASELINE_PROTOCOL, TRIPLES_PROTOCOL):
+        schema = guided_schema(request, protocol)
+        entries = schema['properties']['arcs']['prefixItems']
+        assert schema['properties']['arcs']['minItems'] == 3
+        assert schema['properties']['arcs']['maxItems'] == 3
+        assert schema['properties']['arcs']['items'] is False
+        for token_id, entry in enumerate(entries, 1):
+            if protocol == BASELINE_PROTOCOL:
+                identity, head, label = (entry['properties'][key] for key in
+                                         ('token_id', 'head_id', 'deprel'))
+            else:
+                identity, head, label = entry['prefixItems']
+            assert identity == {'type': 'integer', 'const': token_id}
+            assert head == {'type': 'integer', 'minimum': 0, 'maximum': 3}
+            assert label == {'type': 'string', 'minLength': 1}
+        assert 'Ich' not in json.dumps(schema) and 'nsubj' not in json.dumps(schema)
+    schema['properties']['arcs']['prefixItems'].clear()
+    assert len(guided_schema(request, TRIPLES_PROTOCOL)['properties']['arcs']['prefixItems']) == 3
+
+
+def test_handwritten_example_has_the_same_semantic_prediction_in_each_protocol():
+    baseline = parse_model_response(TaskType.DEPENDENCY,
+        json.dumps(handwritten_example(BASELINE_PROTOCOL)['output']), expected_count=3,
+        expected_token_ids=(1, 2, 3))
+    for protocol in (PROTOCOL, TRIPLES_PROTOCOL):
+        example = handwritten_example(protocol)
+        assert example['input'] == handwritten_example(BASELINE_PROTOCOL)['input']
+        parsed = parse_compact_dependency(json.dumps(example['output']),
+            expected_token_ids=(1, 2, 3), protocol=protocol)
+        assert parsed == baseline
+        assert experiment_prompt(protocol) not in ('', None)
+        assert 'Ich' not in experiment_prompt(protocol)
+        assert 'Ich' in experiment_prompt(protocol, with_example=True)
+
+
+def test_guided_wire_payload_keeps_generation_controls_and_has_no_whitespace_override():
+    root = Path(__file__).parents[1]
+    contract = EvaluationContract.from_path(
+        root / 'config/evaluation_contracts/v1/de-hdt-dependency-v1.json')
+    providers = [ProtocolProvider(protocol=TRIPLES_PROTOCOL, constrained=constrained,
+        executor_state=None, challenge_id=contract.challenge_id,
+        base_url='http://127.0.0.1:8000/v1',
+        identity=ModelIdentity(**contract.evaluation_identity['model_identity']),
+        settings=GenerationSettings(**contract.evaluation_identity['generation_settings']))
+        for constrained in (False, True)]
+    free, guided = [json.loads(provider._request_body(_demo_request())) for provider in providers]
+    constraint = guided.pop('structured_outputs')
+    assert set(constraint) == {'json'}
+    assert constraint['json'] == guided_schema(_demo_request(), TRIPLES_PROTOCOL)
+    assert guided == free
+    assert providers[1].structured_json is True
+
+
+def test_constraint_check_rejects_ignored_position_constraints_without_repair():
+    request = _demo_request()
+    assert constraint_honored(json.dumps(handwritten_example(TRIPLES_PROTOCOL)['output']),
+                              request, TRIPLES_PROTOCOL)
+    # Old scoring accepts reordered arcs, but the declared positional grammar does not.
+    reordered = {'arcs': [[2, 0, 'root'], [1, 2, 'nsubj'], [3, 2, 'punct']]}
+    assert parse_compact_dependency(json.dumps(reordered), expected_token_ids=(1, 2, 3),
+                                    protocol=TRIPLES_PROTOCOL).error is None
+    assert not constraint_honored(json.dumps(reordered), request, TRIPLES_PROTOCOL)

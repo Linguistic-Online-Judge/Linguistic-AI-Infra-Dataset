@@ -128,6 +128,18 @@ present planned work or skipped checks as completed results.
   restarted or reconfigured, app PID stayed 3615687, successful submission count 69.
   Private evidence remains in runtime. Local regression: 687 passed / 33 skipped.
 
+- Follow-up guided dependency study completed 36 school requests on 2026-09-20:
+  2 protocols x example/no-example x constrained/free on calibration positions1/2/4,
+  then predeclared example+guided on positions3/5/6 twice. The handwritten Ich/lese/.
+  example was checked against the full selection. Grammar constraints use only safe
+  input IDs/counts/head ranges, not gold labels/heads; compiled with xgrammar0.2.3.
+  All 24 constrained outputs satisfied structure/ID checks. Held-out original vs
+  triple LAS was23.08% vs5.77%, despite7.921s vs3.490s mean latency. Candidate remains
+  REJECTED, not a quality/50-second pass. See docs/GUIDED_DEPENDENCY_STUDY.md.
+  No app/model restart or live protocol change; app PID3615687 and69 results stayed
+  stable. Local regression:691 passed/33 skipped. Private evidence is under ignored
+  runtime/guided-dependency-results-20260920; do not tune against retained answers.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

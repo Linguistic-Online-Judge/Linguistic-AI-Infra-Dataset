@@ -22,6 +22,8 @@ Linux依赖锁定、定时备份、生产执行器监督及故障演练仍待完
 不能改写为30人容量验收通过，也不能用缩小样本数或提前返回受理来满足目标。
 后续紧凑依存协议已完成转换等价性检查和24次小规模模型对照。两种朴素编码均出现
 模型输出质量问题，因此不接入线上；原协议和69份结果保留。见`COMPACT_DEPENDENCY_STUDY.md`。
+手写示例／结构化约束的后续36次对照验证了结构约束有效，但紧凑候选在留出样本上
+仍低于原格式质量，继续不采用。见`GUIDED_DEPENDENCY_STUDY.md`。
 详见`PUBLIC_DEPLOYMENT.md`、`PRODUCTION_PREPARATION.md`和
 `QWEN_DEVELOPMENT_OPERATIONS.md`。以下问题列表保留原审查事实及完整验收目标。
 
