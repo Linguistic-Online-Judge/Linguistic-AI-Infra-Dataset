@@ -31,6 +31,7 @@ from .mvp_contract import canonical_sha256
 from .providers import GenerationSettings, ModelIdentity
 from .qwen_runtime import validate_qwen_evaluation_contract
 from .redis_job_queue import RedisJobQueue
+from .sample_cache import VerifiedSelectionCache
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
 from .submission_store_factory import build_submission_store
 
@@ -145,6 +146,7 @@ def build_workers(plan: ExecutorPlan, state: ExecutorState, resources: ExitStack
     store = build_submission_store(database_path=None, postgres_database_url=plan.postgres_url)
     store.health_check()
     workers = {}
+    selection_cache = VerifiedSelectionCache()
     for key, contract in plan.contracts.items():
         if stop.is_set():
             break
@@ -168,6 +170,7 @@ def build_workers(plan: ExecutorPlan, state: ExecutorState, resources: ExitStack
             store=store, queue=queue, contract=contract, artifacts=plan.artifacts[key],
             provider=provider, tokenizer_snapshot_path=plan.tokenizer_snapshot,
             launch_evidence_path=plan.launch_evidence,
+            selection_cache=selection_cache,
         )
     return workers
 

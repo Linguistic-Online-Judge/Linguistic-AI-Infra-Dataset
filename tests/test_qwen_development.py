@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import time
@@ -12,6 +13,7 @@ import linguistic_oj.qwen_development as module
 from linguistic_oj.auth import AuthService, install_auth_routes
 from linguistic_oj.challenge import LANGUAGE_CODES, build_challenge, write_challenge
 from linguistic_oj.mvp_contract import canonical_sha256
+from linguistic_oj.sample_cache import VerifiedSelectionCache
 from linguistic_oj.submission_jobs import InMemoryJobQueue
 from linguistic_oj.submission_store import SubmissionStore
 
@@ -184,6 +186,7 @@ def test_composition_requires_real_provider_and_cleans_queues(
         def __init__(self, **kwargs):
             assert kwargs["provider"].identity.model == "Qwen/Qwen3.5-9B"
             self.provider = kwargs["provider"]
+            self.selection_cache = kwargs["selection_cache"]
             self.calls = 0
             workers.append(self)
 
@@ -229,7 +232,74 @@ def test_composition_requires_real_provider_and_cleans_queues(
         assert metadata["executable_challenges"] == 18
         assert len(client.get("/v1/challenges").json()) == 18
     assert len(workers) == 18
+    assert isinstance(workers[0].selection_cache, VerifiedSelectionCache)
+    assert all(worker.selection_cache is workers[0].selection_cache for worker in workers)
     assert all(queue.closed for queue in queues)
+
+
+def test_serial_loop_waits_only_after_an_idle_round_and_keeps_order(tmp_path):
+    calls = []
+
+    class Stop:
+        stopped = False
+        waits = 0
+
+        def is_set(self):
+            return self.stopped
+
+        async def wait(self):
+            self.waits += 1
+            self.stopped = True
+
+    stop = Stop()
+
+    def worker(key):
+        def run_once():
+            calls.append(key)
+            return len(calls) <= 2
+        return SimpleNamespace(run_once=run_once)
+
+    workers = {key: worker(key) for key in ('a', 'b')}
+    providers = {key: SimpleNamespace(has_active_request=False) for key in workers}
+    asyncio.run(module._consume_serial_workers(workers, providers, tmp_path, stop))
+    assert calls == ['a', 'b', 'a', 'b']
+    assert stop.waits == 1
+
+
+def test_serial_loop_stop_drains_current_job_before_returning(tmp_path):
+    from threading import Event
+
+    async def check():
+        entered, release = Event(), Event()
+        stop = asyncio.Event()
+        calls = []
+
+        def first():
+            calls.append('first')
+            entered.set()
+            assert release.wait(5)
+            calls.append('finished')
+            return True
+
+        def forbidden():
+            pytest.fail('another worker ran after shutdown was requested')
+
+        workers = {'first': SimpleNamespace(run_once=first),
+                   'second': SimpleNamespace(run_once=forbidden)}
+        providers = {key: SimpleNamespace(has_active_request=False) for key in workers}
+        task = asyncio.create_task(module._consume_serial_workers(
+            workers, providers, tmp_path, stop))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            stop.set()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            release.set()
+        await asyncio.wait_for(task, 5)
+        assert calls == ['first', 'finished']
+
+    asyncio.run(check())
 
 
 @pytest.mark.parametrize("altered", ["kind", "database", "contracts", "owner"])

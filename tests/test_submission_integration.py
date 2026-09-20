@@ -268,6 +268,97 @@ class _TestQwenProvider(OpenAICompatibleProvider):
         return frozenset({self.identity.model})
 
 
+@pytest.mark.parametrize('cached', [False, True])
+def test_qwen_worker_full_50_prompt_fidelity_and_owner_isolation(tmp_path, monkeypatch, cached):
+    import linguistic_oj.runner as runner
+    import linguistic_oj.sample_cache as cache_module
+    from linguistic_oj.providers import ModelRequest
+    from linguistic_oj.responses import TaskType
+
+    path = tmp_path / 'fifty.jsonl'
+    path.write_text(''.join(json.dumps(_sample(f'sample-{i}', f'{i:02d}')) + '\n'
+                            for i in range(50)), encoding='utf-8')
+    artifacts = build_challenge(path, language='Test', treebank='Tiny', task='upos',
+                                count=50, seed=2026, version='worker-cache-v1')
+    prepared = runner._prepare_samples(artifacts)
+    snapshot, evidence, identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, identity)
+    store = SubmissionStore(tmp_path / 'cache-worker.db')
+    for name in ('alice', 'bob'):
+        store.register_user(auth_subject='subject-' + name, public_handle=name)
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256,
+                             visibility_timeout_seconds=contract.job_deadline_seconds + 15)
+    prompts = ['  返回 X。\r\né e\u0301  ', '\nReturn NOUN. العربية\n']
+
+    class PromptProvider(_TestQwenProvider):
+        def __init__(self):
+            super().__init__(contract)
+            self.bodies = []
+
+        def generate(self, request, *, timeout_seconds=None):
+            self.bodies.append(self._request_body(request))
+            label = 'X' if request.student_prompt == prompts[0] else 'NOUN'
+            return ModelGeneration(json.dumps({'tags': [label] * len(request.model_input.tokens)}))
+
+    provider = PromptProvider()
+    monkeypatch.setattr(qwen_runtime_module, 'load_huggingface_tokenizer',
+                        lambda path: _TestQwenTokenizer())
+    parses = []
+    original = runner.load_dataset_samples_by_id
+
+    def load(*args, **kwargs):
+        parses.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runner, 'load_dataset_samples_by_id', load)
+    monkeypatch.setattr(cache_module, 'load_dataset_samples_by_id', load)
+    worker = QwenSubmissionWorker(store=store, queue=queue, contract=contract,
+        artifacts=artifacts, provider=provider, tokenizer_snapshot_path=snapshot,
+        launch_evidence_path=evidence,
+        selection_cache=cache_module.VerifiedSelectionCache() if cached else None)
+    app = create_app(store=store, dispatcher=OutboxDispatcher(store, queue, contract),
+        contract=contract, authenticate=_authenticate, allow_draft_submissions=True,
+        environment='test')
+    with TestClient(app) as client:
+        for index, (name, prompt) in enumerate(zip(('alice', 'bob'), prompts, strict=True)):
+            headers = _headers('subject-' + name, 'fidelity-' + name)
+            created = client.post('/v1/submissions', headers=headers,
+                json={'challenge_id': contract.challenge_id, 'student_prompt': prompt})
+            assert created.status_code == 202
+            sid = created.json()['submission_id']
+            assert client.get(f'/v1/submissions/{sid}/result', headers=headers).status_code == 409
+            assert worker.run_once()
+            result = client.get(f'/v1/submissions/{sid}/result', headers=headers).json()
+            assert result['outcome'] == 'succeeded'
+            assert result['samples_total'] == result['samples_valid'] == 50
+            assert result['score'] == (1.0 if index == 0 else 0.0)
+            assert result['student_prompt_sha256'] == hashlib.sha256(prompt.encode()).hexdigest()
+            saved = client.get(f'/v1/submissions/{sid}/prompt', headers=headers).json()
+            assert saved['student_prompt'] == prompt
+            other = _headers('subject-bob' if name == 'alice' else 'subject-alice')
+            assert client.get(f'/v1/submissions/{sid}/result', headers=other).status_code == 404
+            expected = [provider._request_body(ModelRequest(task=TaskType.UPOS,
+                language='Test', treebank='Tiny', student_prompt=prompt,
+                model_input=item.model_input))
+                for item in prepared]
+            assert provider.bodies[index * 50:(index + 1) * 50] == expected
+        assert len(provider.bodies) == 100
+        assert len(parses) == (1 if cached else 2)
+        assert store.count_results() == 2
+        assert not worker.run_once()
+        assert len(provider.bodies) == 100
+        # A warm selection never hides changed corpus bytes on the next claimed job.
+        created = client.post('/v1/submissions', headers=_headers('subject-alice', 'changed-data'),
+            json={'challenge_id': contract.challenge_id, 'student_prompt': prompts[0]})
+        assert created.status_code == 202
+        path.write_bytes(path.read_bytes().replace(b'"text": "00"', b'"text": "01"'))
+        assert worker.run_once()
+        result = client.get(f"/v1/submissions/{created.json()['submission_id']}/result",
+                            headers=_headers('subject-alice')).json()
+        assert result['outcome'] == 'failed' and result['code'] == 'DATASET_INTEGRITY'
+        assert len(provider.bodies) == 100 and store.count_results() == 2
+
+
 def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: EvaluationContract):
     store = SubmissionStore(tmp_path / "submissions.db")
     store.register_user(auth_subject="subject-alice", public_handle="alice")

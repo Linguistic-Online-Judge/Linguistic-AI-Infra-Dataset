@@ -22,6 +22,21 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Latest owner clarification: this is a platform for efficiently dispatching model
+  requests and returning faithful prompt evaluations, not a model-internals optimization
+  project. Kernel profiling is diagnostic evidence only. Supersede earlier proposals
+  to change matrix kernels/backends: focus on platform scheduling, bounded concurrency,
+  reusable connections, verified input preparation, result aggregation and delivery.
+  Do not modify model architecture/weights, numerical precision or internal kernels
+  under this scope. Preserve the exact submitted prompt within the established fixed
+  envelope; no hidden rewriting, extra examples or answer repair to improve scores.
+  Keep full50 samples, original output/scoring contracts and genuine model results;
+  cached corpus preparation is distinct from substituting cached answers or grades.
+  Evaluate latency together with prompt-score comparability/repeatability, using
+  different student prompts in end-to-end checks. Prior c32 results are not sufficient
+  for deployment. Scheduling/resource and service changes still need the appropriate
+  authorization; no new maintenance window is implied by this scope clarification.
+
 - The teacher has now confirmed that the intended formal service must be reachable
   from both on- and off-campus networks. Public reachability is an explicit goal,
   not an optional campus-only deployment. See `docs/PUBLIC_DEPLOYMENT.md`.
@@ -200,8 +215,22 @@ present planned work or skipped checks as completed results.
   test8001 closed. Restored observed API1951479/app1953170; rediscover before operations.
   Private42-file evidence runtime/batch-kernel-results-20260920 excludes restore secrets.
   Local regression735 passed/33 skipped. Current online source and c1 configuration
-  unchanged; next investigate same-precision matrix/backend and batch settings with
-  separate quality/repeatability checks. Do not stack this speedup onto prior c32 data.
+  unchanged. The subsequent owner scope clarification above supersedes the proposed
+  internal-kernel/backend optimization direction. Do not stack this speedup onto prior c32 data.
+
+- Platform execution audit now wires VerifiedSelectionCache into Qwen worker factories:
+  one shared16-entry/8MiB-encoded-payload cache per development/executor composition,
+  one per standalone worker. Core/Mock/Qwen workers also support explicit injection.
+  Every use still verifies artifacts and the full file hash; no prompt/response/grade
+  caching. Development serial loop now waits0.25s only after idle rounds, matching
+  production's existing behavior; ordering, draining and uncertain-request blocking
+  are preserved. See docs/PLATFORM_EXECUTION_AUDIT.md. These source changes are NOT
+  deployed to the school service. Local regression739 passed/33 skipped. New isolated
+  API/SQLite/queue/Qwen-worker tests use explicit tokenizer/model/auth fixtures: two
+  users with different exact prompts,50 samples each,100 provider calls, scores1/0,
+  owner isolation, cache1 parse vs baseline2, and warm-cache data mutation rejection.
+  Do not call fixtures real Qwen quality/capacity evidence, or multiply the removed
+  per-round0.25s wait by50 samples. Prior CPU cache timings are not new end-to-end data.
 
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has

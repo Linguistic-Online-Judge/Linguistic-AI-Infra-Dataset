@@ -36,6 +36,7 @@ from .postgres_migrations import migrate_postgres
 from .postgres_submission_store import PostgresSubmissionStore
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
 from .redis_job_queue import RedisJobQueue
+from .sample_cache import VerifiedSelectionCache
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
     OutboxDispatcher,
@@ -44,6 +45,27 @@ from .submission_jobs import (
 
 REQUIRED_LANGUAGES = frozenset(LANGUAGE_CODES)
 INSTANCE_KIND = "linguistic-oj-private-qwen18-v1"
+
+
+async def _consume_serial_workers(workers, providers, state_dir, stop):
+    """Drain each claimed job; preserve round-robin order and wait only after idle rounds."""
+    while not stop.is_set():
+        did_work = False
+        for key, worker in workers.items():
+            if stop.is_set():
+                break
+            worked = await asyncio.to_thread(worker.run_once)
+            did_work = worked or did_work
+            if providers[key].has_active_request:
+                with (state_dir / "uncertain-inference.json").open("x") as warning:
+                    json.dump({"challenge_id": key, "reason": "termination_unconfirmed",
+                               "created_at": datetime.now(UTC).isoformat()}, warning)
+                raise RuntimeError("previous model request termination is unconfirmed")
+        if not did_work and not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=0.25)
+            except TimeoutError:
+                pass
 
 
 def load_development_catalog(
@@ -219,6 +241,7 @@ def build_qwen_development(args):
         if store.auth_account(email) is None:
             auth.provision_development_account(email, LOCAL_PASSWORD, handle, role)
     workers, dispatchers, queues, providers = {}, {}, {}, {}
+    selection_cache = VerifiedSelectionCache()
     try:
         for key, contract in registry.contracts.items():
             identity = contract.evaluation_identity
@@ -248,6 +271,7 @@ def build_qwen_development(args):
                 provider=provider,
                 tokenizer_snapshot_path=args.tokenizer_snapshot.resolve(),
                 launch_evidence_path=args.launch_evidence.resolve(),
+                selection_cache=selection_cache,
             )
             dispatchers[key] = OutboxDispatcher(store, queue, contract)
     except Exception:
@@ -284,28 +308,9 @@ def build_qwen_development(args):
         stop = asyncio.Event()
 
         async def consume():
-            # One loop across all queues: never launch 22 concurrent GPU workers.
+            # One loop across all queues: no overlapping model evaluations.
             try:
-                while not stop.is_set():
-                    for key, worker in workers.items():
-                        if stop.is_set():
-                            break
-                        await asyncio.to_thread(worker.run_once)
-                        if providers[key].has_active_request:
-                            with (args.state_dir / "uncertain-inference.json").open("x") as warning:
-                                json.dump(
-                                    {
-                                        "challenge_id": key,
-                                        "reason": "termination_unconfirmed",
-                                        "created_at": datetime.now(UTC).isoformat(),
-                                    },
-                                    warning,
-                                )
-                            raise RuntimeError("previous model request termination is unconfirmed")
-                    try:
-                        await asyncio.wait_for(stop.wait(), timeout=0.25)
-                    except TimeoutError:
-                        pass
+                await _consume_serial_workers(workers, providers, args.state_dir, stop)
             except Exception:
                 status["failed"] = True
                 application.state.admin_context["runtime_availability"].update(

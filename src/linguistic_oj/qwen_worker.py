@@ -13,6 +13,7 @@ from .mvp_contract import EvaluationContract, load_qwen_worker_contract
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
 from .qwen_runtime import validate_qwen_evaluation_contract
 from .redis_job_queue import RedisJobQueue
+from .sample_cache import VerifiedSelectionCache
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
 from .submission_store_factory import build_submission_store
 
@@ -121,6 +122,7 @@ def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
         provider=provider,
         tokenizer_snapshot_path=args.tokenizer_snapshot,
         launch_evidence_path=args.launch_evidence,
+        selection_cache=VerifiedSelectionCache(),
     )
 
 

@@ -39,6 +39,7 @@ from .runner import (
     JobDeadlineExceeded,
     run_challenge,
 )
+from .sample_cache import VerifiedSelectionCache
 from .submission_store import (
     SQLITE_LOCK_TIMEOUT_SECONDS,
     ClaimedSubmission,
@@ -287,6 +288,7 @@ class _SubmissionWorkerCore:
         lease_seconds: int,
         request_preflight: Callable[[tuple[ModelRequest, ...]], None],
         require_termination_confirmation: bool,
+        selection_cache: VerifiedSelectionCache | None = None,
     ) -> None:
         if queue.routing_key != contract.contract_snapshot_sha256:
             raise ValueError("queue does not match the evaluation contract")
@@ -312,6 +314,9 @@ class _SubmissionWorkerCore:
         self._request_preflight = request_preflight
         self._require_termination_confirmation = require_termination_confirmation
         self._next_lease_sweep_at = 0.0
+        if selection_cache is not None and not isinstance(selection_cache, VerifiedSelectionCache):
+            raise TypeError("selection_cache must be a VerifiedSelectionCache")
+        self._selection_cache = selection_cache
 
     def run_once(self) -> bool:
         if (
@@ -373,6 +378,7 @@ class _SubmissionWorkerCore:
                 student_prompt=claim.student_prompt,
                 request_preflight=self._request_preflight,
                 deadline=JobDeadline.from_timestamp(claim.deadline_at),
+                selection_cache=self._selection_cache,
             )
         except (TokenLimitExceeded, QwenTokenLimitExceeded):
             if not self._store.complete_rejected(claim):
@@ -487,6 +493,7 @@ class SubmissionWorker(_SubmissionWorkerCore):
         contract: EvaluationContract,
         artifacts: ChallengeArtifacts,
         provider: ModelProvider,
+        selection_cache: VerifiedSelectionCache | None = None,
     ) -> None:
         if not isinstance(provider, DeterministicMockProvider):
             raise ValueError("the Mock submission slice requires DeterministicMockProvider")
@@ -510,6 +517,7 @@ class SubmissionWorker(_SubmissionWorkerCore):
             lease_seconds=min(30, contract.job_deadline_seconds),
             request_preflight=MockRequestPreflight(contract),
             require_termination_confirmation=False,
+            selection_cache=selection_cache,
         )
 
 
@@ -526,6 +534,7 @@ class QwenSubmissionWorker(_SubmissionWorkerCore):
         provider: OpenAICompatibleProvider,
         tokenizer_snapshot_path: Path,
         launch_evidence_path: Path,
+        selection_cache: VerifiedSelectionCache | None = None,
     ) -> None:
         validate_qwen_evaluation_contract(contract)
         runtime = attest_qwen_runtime_from_snapshot(
@@ -548,4 +557,5 @@ class QwenSubmissionWorker(_SubmissionWorkerCore):
             lease_seconds=contract.job_deadline_seconds,
             request_preflight=request_preflight,
             require_termination_confirmation=True,
+            selection_cache=selection_cache,
         )
