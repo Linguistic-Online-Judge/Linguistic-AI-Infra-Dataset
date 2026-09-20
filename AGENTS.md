@@ -171,6 +171,21 @@ present planned work or skipped checks as completed results.
   environment included. Next investigation is generation-phase timing, not a claim
   that cache hits equal wall-time savings or classroom target achieved.
 
+- Generation-stage follow-up completed26 original nonstreaming requests without restart
+  on2026-09-20:6 samples x2 plus1 warmup for English/German. New generation_stages.py
+  reads server histogram sum/count deltas, requires exactly one completed request and
+  matching usage/phase intervals, yields on online activity, pins model process identity,
+  and uses GuardedQwenProvider persistent barriers. Metrics failure never triggers resend.
+  Server TTFT means0.094151/0.176112s, prefill0.088568/0.166857s, decode0.290098/9.664343s;
+  weighted decode48.26/48.62 tokens/s,76.61%/98.30% of engine inference. These are server
+  event intervals (can include preemption), not browser TTFT or pure kernel timings.
+  All26 attribution checks passed; English4/12 and German2/12 measured format failures
+  retained in timing. API1581888/app1583475 unchanged, ready/69 results, clean experiment
+  state. No production source deployment or classroom pass. Private evidence under
+  runtime/generation-stages-results-20260920; see docs/GENERATION_STAGE_RESULTS.md.
+  Local regression727 passed/33 skipped. Next useful work is batched decode/kernel
+  profiling; do not call c1 throughput a hardware limit or infer required GPU counts.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
