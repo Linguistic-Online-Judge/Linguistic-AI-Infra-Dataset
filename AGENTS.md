@@ -186,6 +186,23 @@ present planned work or skipped checks as completed results.
   Local regression727 passed/33 skipped. Next useful work is batched decode/kernel
   profiling; do not call c1 throughput a hardware limit or infer required GPU counts.
 
+- New authorized c1/c32 batched-kernel window finished107 model requests on2026-09-20:
+  German first6 x6 plus1 warmup at each capacity (74), separate trace batches1/32 (33).
+  Unprofiled36-request wall355.123->26.262s,13.52x throughput; output digests changed25/36,
+  score statistics12/36, invalid6->0; sample3 had two c32 score variants. Do not call
+  this quality degradation, repeatability pass or30-user capacity. Each trace contains
+  20 pure-generation annotations (context0, generation1/32). Matrix kernels take95.71%/
+  79.81% of summed kernel durations, gated delta0.92%/13.61%. New kernel_trace.py unions
+  overlapping intervals, bounds decoded trace size and rejects missing/multidevice data.
+  Captured-kernel coverage94.63%/98.01% is NOT compute/bandwidth saturation evidence.
+  See docs/BATCH_KERNEL_RESULTS.md. Window artifacts/batch-kernel-20260920-v1 is finished;
+  original argv/cwd/all11 tables matched,8 accounts/69 results, ready, no pending work,
+  test8001 closed. Restored observed API1951479/app1953170; rediscover before operations.
+  Private42-file evidence runtime/batch-kernel-results-20260920 excludes restore secrets.
+  Local regression735 passed/33 skipped. Current online source and c1 configuration
+  unchanged; next investigate same-precision matrix/backend and batch settings with
+  separate quality/repeatability checks. Do not stack this speedup onto prior c32 data.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
