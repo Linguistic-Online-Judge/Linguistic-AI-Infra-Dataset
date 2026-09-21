@@ -1,0 +1,1 @@
+Tag each supplied token with its Universal Dependencies part of speech. Keep every token in its original order. Return the required JSON object and nothing else.

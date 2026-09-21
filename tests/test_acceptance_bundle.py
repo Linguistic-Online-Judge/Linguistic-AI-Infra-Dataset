@@ -15,6 +15,8 @@ def source(tmp_path: Path) -> Path:
         "config/mvp_evaluation.json",
         "config/mvp_evaluation_v2.json",
         "scripts/check_qwen_pipeline.py",
+        "scripts/check_bounded_pipeline.py",
+        "scripts/qualify_bounded_qwen.py",
         "src/linguistic_oj/__init__.py",
         "src/linguistic_oj/web/index.html",
         "src/linguistic_oj/web/assets/brand-option-a.svg",
@@ -76,8 +78,10 @@ def test_catalog_bundle_rejects_private_references(source):
 
 def test_performance_bundle_includes_only_explicit_prompts_and_guide(source):
     included = {"prompts/performance/upos-v1.txt", "prompts/performance/dependency-v1.txt",
+                "prompts/qualification/upos-b.txt", "prompts/qualification/dependency-b.txt",
                 "docs/QWEN_PERFORMANCE.md", "config/classroom_capacity_target_v1.json"}
-    for name in included | {"prompts/performance/private-prompt.txt"}:
+    for name in included | {"prompts/performance/private-prompt.txt",
+                            "prompts/qualification/private-prompt.txt"}:
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(name, encoding="utf-8")
@@ -87,3 +91,4 @@ def test_performance_bundle_includes_only_explicit_prompts_and_guide(source):
         names = set(archive.getnames())
         assert included <= names
         assert "prompts/performance/private-prompt.txt" not in names
+        assert "prompts/qualification/private-prompt.txt" not in names

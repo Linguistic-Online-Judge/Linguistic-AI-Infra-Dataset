@@ -969,6 +969,42 @@ def test_current_user_and_submission_history_are_owner_scoped_and_paginated(
     assert store.count_submissions() == 3
 
 
+def test_live_runtime_probe_gates_admission_but_keeps_existing_results_readable(tmp_path):
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, queue, dispatcher, provider, worker, _ = _components(tmp_path, artifacts, contract)
+    healthy = [True]
+    app = create_app(store=store, dispatcher=dispatcher, contract=contract,
+        authenticate=_authenticate, allow_draft_submissions=True, environment='test',
+        public_challenges={contract.challenge_id: artifacts.public},
+        runtime_probe=lambda key: healthy[0])
+    with TestClient(app) as client:
+        payload = {'challenge_id': contract.challenge_id, 'student_prompt': 'Return JSON.'}
+        first = client.post('/v1/submissions', json=payload,
+                            headers=_headers('subject-alice', 'before-outage'))
+        assert first.status_code == 202 and worker.run_once()
+        sid = first.json()['submission_id']
+        healthy[0] = False
+        catalog = client.get('/v1/challenges').json()
+        assert catalog[0]['runtime_available'] is False
+        assert catalog[0]['accepting_submissions'] is False
+        blocked = client.post('/v1/submissions', json=payload,
+                              headers=_headers('subject-alice', 'during-outage'))
+        assert blocked.status_code == 503
+        assert blocked.json()['error']['code'] == 'CHALLENGE_RUNTIME_UNAVAILABLE'
+        assert store.count_submissions() == 1 and len(queue) == 0 and provider.calls == 2
+        assert client.get(f'/v1/submissions/{sid}/result',
+                          headers=_headers('subject-alice')).status_code == 200
+        healthy[0] = True
+        second = client.post('/v1/submissions', json=payload,
+                             headers=_headers('subject-alice', 'after-outage'))
+        assert second.status_code == 202
+        app.state.admin_context['runtime_availability'][contract.challenge_id] = False
+        assert client.post('/v1/submissions', json=payload,
+            headers=_headers('subject-alice', 'explicitly-disabled')).status_code == 503
+        assert store.count_submissions() == 2
+
+
 def test_owner_prompt_preserves_exact_text_without_exposing_it_to_other_users(tmp_path):
     artifacts = _artifacts(tmp_path)
     contract = _mock_contract(artifacts)

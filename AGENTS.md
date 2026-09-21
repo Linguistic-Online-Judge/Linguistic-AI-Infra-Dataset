@@ -250,6 +250,25 @@ present planned work or skipped checks as completed results.
   kill test proves client exit does not imply server termination; exact recovery sends
   nothing. School GPU/service and frozen contracts unchanged; no real capacity/quality pass.
 
+- Current qualification work (2026-09-21): school real PostgreSQL/Redis/cookie-auth
+  bounded fixtures c2/c4 passed, each4 users/5 jobs/full50/250 fake HTTP model calls,
+  owned schema11 tables and Redis keys cleaned. New mandatory CI test_bounded_services.
+  See docs/BOUNDED_SERVICES_QUALIFICATION.md. Maintenance preflight discovered API1951479
+  already absent (old log SIGTERM2026-09-20 19:14:46, sender unknown), while app1953170
+  misleadingly reported ready. V1 real qualification stopped after100 responses because
+  upfront queued English work hit original300s deadline; German900s unchanged. V1 restored
+  API1818178/app1820025 with matching11 tables/69 results; no pending inference.
+  V2 is ACTIVE under owner authorization at artifacts/bounded-qualification-20260921-v2:
+  8 distinct users,4 fixed prompts x2, full50 each, c1/c2/c4; controlled arrival at most
+  capacity outstanding. This is quality calibration, NOT simultaneous pressure acceptance.
+  Preserve v1 failure and do not fabricate its unread German API result. Upper planned
+  total including v1 is~1300, communicated to owner. Inspect watch.py/window.py status
+  before acting; no process IDs from this paragraph are current-operation authority.
+  New source adds optional ProbedAvailability/LocalModelProbe, dynamic admission/catalog/
+  admin flags and model-aware development readiness/queue pause. Read-only loopback health
+  and alias probes,1s shared cache; existing results remain readable and explicit disables
+  dominate. This source fix is NOT deployed to the school running application.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

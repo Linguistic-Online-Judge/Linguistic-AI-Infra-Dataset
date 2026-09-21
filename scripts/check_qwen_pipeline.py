@@ -315,7 +315,7 @@ return redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4])
 
 
 class OwnedRedis:
-    def __init__(self, socket_path, database, contract, cleanup):
+    def __init__(self, socket_path, database, contract, cleanup, *, redis_url=None):
         from redis import Redis
 
         self.namespace = "qwen-acceptance:" + uuid.uuid4().hex
@@ -323,7 +323,11 @@ class OwnedRedis:
         stream = f"{self.namespace}:jobs:{{{self.routing_key}}}"
         self.keys = (stream, stream + ":active", stream + ":receipts", stream + ":owner")
         self.marker = secrets.token_hex(32)
-        self.url = f"unix://{quote(str(socket_path), safe='/')}?db={database}"
+        if redis_url is not None:
+            parsed = urlsplit(redis_url)
+            require(parsed.scheme in {'redis', 'rediss'}
+                    and parsed.hostname in {'127.0.0.1', '::1'}, 'redis_must_be_colocated')
+        self.url = redis_url or f"unix://{quote(str(socket_path), safe='/')}?db={database}"
         self.client = Redis.from_url(
             self.url, socket_connect_timeout=5, socket_timeout=5, decode_responses=False
         )

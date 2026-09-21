@@ -23,10 +23,13 @@ def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
         root / "config/mvp_evaluation.json",
         root / "config/mvp_evaluation_v2.json",
         root / "scripts/check_qwen_pipeline.py",
+        root / "scripts/check_bounded_pipeline.py",
+        root / "scripts/qualify_bounded_qwen.py",
     ]
     if include_performance:
         files.extend(root / name for name in (
             "prompts/performance/upos-v1.txt", "prompts/performance/dependency-v1.txt",
+            "prompts/qualification/upos-b.txt", "prompts/qualification/dependency-b.txt",
             "docs/QWEN_PERFORMANCE.md",
             "config/classroom_capacity_target_v1.json",
         ))

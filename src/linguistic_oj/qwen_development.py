@@ -36,6 +36,7 @@ from .postgres_migrations import migrate_postgres
 from .postgres_submission_store import PostgresSubmissionStore
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
 from .redis_job_queue import RedisJobQueue
+from .runtime_availability import LocalModelProbe
 from .sample_cache import VerifiedSelectionCache
 from .submission_jobs import (
     QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
@@ -47,12 +48,14 @@ REQUIRED_LANGUAGES = frozenset(LANGUAGE_CODES)
 INSTANCE_KIND = "linguistic-oj-private-qwen18-v1"
 
 
-async def _consume_serial_workers(workers, providers, state_dir, stop):
+async def _consume_serial_workers(workers, providers, state_dir, stop, *, can_dispatch=None):
     """Drain each claimed job; preserve round-robin order and wait only after idle rounds."""
     while not stop.is_set():
         did_work = False
         for key, worker in workers.items():
             if stop.is_set():
+                break
+            if can_dispatch is not None and not await asyncio.to_thread(can_dispatch):
                 break
             worked = await asyncio.to_thread(worker.run_once)
             did_work = worked or did_work
@@ -280,11 +283,17 @@ def build_qwen_development(args):
         raise
 
     status = {"running": False, "failed": False}
+    model_probe = LocalModelProbe('http://127.0.0.1:8000', 'Qwen/Qwen3.5-9B')
+
+    def runtime_ready(_challenge_id):
+        return status['running'] and not status['failed'] and model_probe.healthy()
 
     def ready():
         store.health_check()
         if not status["running"] or status["failed"]:
             raise RuntimeError("serial Qwen worker is unavailable")
+        if not model_probe.healthy():
+            raise RuntimeError('Qwen model service is unavailable')
         for queue in queues.values():
             queue.health_check()
 
@@ -298,6 +307,7 @@ def build_qwen_development(args):
         allow_draft_submissions=True,
         environment="development",
         runtime_availability=dict.fromkeys(workers, True),
+        runtime_probe=runtime_ready,
     )
     install_auth_routes(app, auth)
     install_admin_routes(app)
@@ -310,7 +320,8 @@ def build_qwen_development(args):
         async def consume():
             # One loop across all queues: no overlapping model evaluations.
             try:
-                await _consume_serial_workers(workers, providers, args.state_dir, stop)
+                await _consume_serial_workers(workers, providers, args.state_dir, stop,
+                                               can_dispatch=model_probe.healthy)
             except Exception:
                 status["failed"] = True
                 application.state.admin_context["runtime_availability"].update(

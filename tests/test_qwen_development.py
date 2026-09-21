@@ -165,6 +165,8 @@ def test_composition_requires_real_provider_and_cleans_queues(
     root, data, _ = catalog
     store = SubmissionStore(tmp_path / "service.db")
     monkeypatch.setattr(module, "prepare_store", lambda *a, **kw: (store, {"instance": "fixture"}))
+    monkeypatch.setattr(module, 'LocalModelProbe',
+                        lambda *args: SimpleNamespace(healthy=lambda: True))
     queues, workers = [], []
 
     class Queue(InMemoryJobQueue):
@@ -300,6 +302,35 @@ def test_serial_loop_stop_drains_current_job_before_returning(tmp_path):
         assert calls == ['first', 'finished']
 
     asyncio.run(check())
+
+
+def test_serial_loop_preserves_queued_work_while_model_is_unhealthy(tmp_path):
+    healthy, calls = [False], []
+
+    class Stop:
+        stopped = False
+        waits = 0
+
+        def is_set(self):
+            return self.stopped
+
+        async def wait(self):
+            self.waits += 1
+            healthy[0] = True
+
+    stop = Stop()
+
+    def work():
+        assert healthy[0]
+        calls.append(1)
+        stop.stopped = True
+        return True
+
+    asyncio.run(module._consume_serial_workers(
+        {'task': SimpleNamespace(run_once=work)},
+        {'task': SimpleNamespace(has_active_request=False)}, tmp_path, stop,
+        can_dispatch=lambda: healthy[0]))
+    assert stop.waits == 1 and calls == [1]
 
 
 @pytest.mark.parametrize("altered", ["kind", "database", "contracts", "owner"])

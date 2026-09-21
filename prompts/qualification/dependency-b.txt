@@ -1,0 +1,1 @@
+For each supplied token, choose its syntactic head and Universal Dependencies relation. Keep the given token IDs and return one arc per token in the required JSON format, without any additional text.

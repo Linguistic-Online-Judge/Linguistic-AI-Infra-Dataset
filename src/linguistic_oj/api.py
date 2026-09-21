@@ -30,6 +30,7 @@ from .admin_store import ChallengePausedError, TeachingContent, source_fingerpri
 from .challenge import PublicChallenge, validate_public_challenge
 from .challenge_registry import validate_contract_matches_public
 from .mvp_contract import EvaluationContract
+from .runtime_availability import ProbedAvailability
 from .submission_jobs import OutboxDispatcher
 from .submission_store import (
     GlobalQueueFullError,
@@ -805,6 +806,7 @@ def create_app(
     readiness_check: ReadinessCheck | None = None,
     public_challenges: Mapping[str, PublicChallenge] | None = None,
     runtime_availability: Mapping[str, bool] | None = None,
+    runtime_probe: Callable[[str], bool] | None = None,
     allow_draft_submissions: bool = False,
     environment: Literal["development", "test", "production"] = "production",
 ) -> FastAPI:
@@ -815,6 +817,8 @@ def create_app(
     contracts, dispatchers = _normalize_routes(store, contract, dispatcher)
     catalog = _normalize_public_challenges(public_challenges, contracts)
     available_runtimes = _normalize_runtime_availability(contracts, runtime_availability)
+    if runtime_probe is not None:
+        available_runtimes = ProbedAvailability(available_runtimes, runtime_probe)
     known_leaderboards = {
         selected_contract.evaluation_identity_sha256
         for selected_contract in contracts.values()
