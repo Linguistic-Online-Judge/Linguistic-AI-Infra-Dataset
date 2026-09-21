@@ -489,6 +489,9 @@ def verify_qwen_runtime(
     if getattr(provider, 'experimental_protocol', None) is not None:
         raise QwenRuntimeAttestationError(
             'experimental protocol providers cannot execute frozen evaluation contracts')
+    if getattr(provider, 'experimental_execution', False):
+        raise QwenRuntimeAttestationError(
+            'experimental executors require separate runtime qualification')
     if provider.structured_json:
         raise QwenRuntimeAttestationError(
             "structured JSON is not declared by the evaluation contract"

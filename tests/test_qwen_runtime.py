@@ -66,6 +66,22 @@ def _request(student_prompt: str = "Return JSON.") -> ModelRequest:
     )
 
 
+def test_experimental_execution_is_rejected_even_when_runtime_fields_match():
+    class Experimental(OpenAICompatibleProvider):
+        experimental_execution = True
+
+    identity = _tokenizer_identity()
+    contract = _contract(tokenizer_identity=identity)
+    model = ModelIdentity(**contract.evaluation_identity['model_identity'])
+    provider = Experimental(base_url='http://127.0.0.1:8000/v1', identity=model,
+        settings=GenerationSettings(**contract.evaluation_identity['generation_settings']))
+    attestation = qwen_runtime_module.QwenRuntimeAttestation(model_identity=model,
+        tokenizer_identity=identity, max_model_len=contract.model_context_tokens,
+        max_num_seqs=contract.worker_model_concurrency, language_model_only=True)
+    with pytest.raises(QwenRuntimeAttestationError, match='separate runtime qualification'):
+        verify_qwen_runtime(contract, provider, attestation)
+
+
 class _FakeTokenizer:
     chat_template = TEMPLATE
 

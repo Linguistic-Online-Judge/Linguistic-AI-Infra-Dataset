@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, RLock
@@ -289,6 +290,7 @@ class _SubmissionWorkerCore:
         request_preflight: Callable[[tuple[ModelRequest, ...]], None],
         require_termination_confirmation: bool,
         selection_cache: VerifiedSelectionCache | None = None,
+        claim_guard: Callable[[], AbstractContextManager] | None = None,
     ) -> None:
         if queue.routing_key != contract.contract_snapshot_sha256:
             raise ValueError("queue does not match the evaluation contract")
@@ -317,6 +319,7 @@ class _SubmissionWorkerCore:
         if selection_cache is not None and not isinstance(selection_cache, VerifiedSelectionCache):
             raise TypeError("selection_cache must be a VerifiedSelectionCache")
         self._selection_cache = selection_cache
+        self._claim_guard = claim_guard
 
     def run_once(self) -> bool:
         if (
@@ -326,6 +329,15 @@ class _SubmissionWorkerCore:
         ):
             # Do not claim unrelated work while an ambiguous remote request remains live.
             return False
+        with self._claim_guard() if self._claim_guard is not None else nullcontext():
+            claimed = self._receive_and_claim()
+        if claimed is None:
+            return False
+        delivery, claim = claimed
+
+        return self._evaluate_claim(delivery, claim)
+
+    def _receive_and_claim(self):
         now = monotonic()
         if now >= self._next_lease_sweep_at:
             self._store.expire_leases(
@@ -334,7 +346,7 @@ class _SubmissionWorkerCore:
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
         if delivery is None:
-            return False
+            return None
         message = delivery.message
         if (
             message.evaluation_identity_sha256
@@ -343,7 +355,7 @@ class _SubmissionWorkerCore:
             != self._contract.contract_snapshot_sha256
         ):
             self._queue.ack(delivery)
-            return False
+            return None
         claim_attempt = self._store.claim_submission(
             message.submission_id,
             evaluation_identity_sha256=self._contract.evaluation_identity_sha256,
@@ -357,9 +369,10 @@ class _SubmissionWorkerCore:
                 self._queue.nack(delivery)
             else:
                 self._queue.ack(delivery)
-            return False
-        claim = claim_attempt.claim
+            return None
+        return delivery, claim_attempt.claim
 
+    def _evaluate_claim(self, delivery, claim):
         if (
             claim.contract_snapshot_json != self._contract.snapshot_json
             or claim.evaluation_identity_sha256

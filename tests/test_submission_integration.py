@@ -201,6 +201,40 @@ def _authenticate(request: Request) -> Principal:
     return Principal(request.headers.get("X-Test-Subject", ""))
 
 
+def test_blocked_claim_gate_leaves_queued_submission_untouched(tmp_path, monkeypatch):
+    import os
+
+    from linguistic_oj import auth_config
+    from linguistic_oj.bounded_executor_state import BoundedExecutorState
+    from linguistic_oj.executor_state import RecoveryRequired, executor_lock
+
+    if os.name == 'nt':
+        monkeypatch.setattr(auth_config, '_check_windows_acl', lambda path: None)
+    artifacts = _artifacts(tmp_path)
+    snapshot, evidence, identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, identity)
+    store, queue, provider, worker, app = _qwen_components(
+        tmp_path, artifacts, contract, snapshot, evidence, monkeypatch)
+    directory = tmp_path / 'gate-state'
+    directory.mkdir(mode=0o700)
+    with executor_lock(directory, create=True):
+        state = BoundedExecutorState.initialize(directory, 'c' * 64)
+        worker._claim_guard = state.claim_guard
+        operation = state.begin('earlier-request')
+        state.block(operation)
+        with TestClient(app) as client:
+            headers = _headers('subject-alice', 'blocked-gate')
+            created = client.post('/v1/submissions', headers=headers,
+                json={'challenge_id': contract.challenge_id, 'student_prompt': 'unchanged'})
+            assert created.status_code == 202 and len(queue) == 1
+            with pytest.raises(RecoveryRequired):
+                worker.run_once()
+            assert len(queue) == 1 and provider.calls == 0 and store.count_results() == 0
+            sid = created.json()['submission_id']
+            assert client.get(f'/v1/submissions/{sid}',
+                              headers=headers).json()['status'] == 'queued'
+
+
 class _RecordingMockProvider(DeterministicMockProvider):
     def __init__(self) -> None:
         self.calls = 0
@@ -357,6 +391,185 @@ def test_qwen_worker_full_50_prompt_fidelity_and_owner_isolation(tmp_path, monke
                             headers=_headers('subject-alice')).json()
         assert result['outcome'] == 'failed' and result['code'] == 'DATASET_INTEGRITY'
         assert len(provider.bodies) == 100 and store.count_results() == 2
+
+
+@pytest.mark.parametrize('early_stop', [False, True])
+def test_bounded_prototype_real_http_keeps_full_jobs_prompts_and_user_limits(
+    tmp_path, monkeypatch, early_stop,
+):
+    import os
+    from collections import Counter
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from linguistic_oj import auth_config
+    from linguistic_oj.bounded_dispatch import run_bounded
+    from linguistic_oj.bounded_executor_state import BoundedExecutorState, BoundedGuardedProvider
+    from linguistic_oj.executor_state import executor_lock
+    from linguistic_oj.qwen_runtime import QwenTokenizerPreflight
+    from linguistic_oj.sample_cache import VerifiedSelectionCache
+    from linguistic_oj.submission_jobs import _SubmissionWorkerCore
+
+    if os.name == 'nt':
+        monkeypatch.setattr(auth_config, '_check_windows_acl', lambda path: None)
+    path = tmp_path / 'bounded-fifty.jsonl'
+    path.write_text(''.join(json.dumps(_sample(f'row-{i}', f'{i:02d}')) + '\n'
+                            for i in range(50)), encoding='utf-8')
+    artifacts = build_challenge(path, language='Test', treebank='Tiny', task='upos',
+                                count=50, seed=2026, version='bounded-fixture-v1')
+    _, _, identity = _qwen_snapshot(tmp_path)
+    config = json.loads(_qwen_contract(artifacts, identity).snapshot_json)
+    config['limits']['worker_model_concurrency'] = 2  # New synthetic contract, never a school edit.
+    contract = EvaluationContract.from_mapping(config)
+    store = SubmissionStore(tmp_path / 'bounded.db')
+    for name in ('alice', 'bob', 'carol'):
+        store.register_user(auth_subject='subject-' + name, public_handle=name)
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256,
+                             visibility_timeout_seconds=contract.job_deadline_seconds + 15)
+    prompts = ['  Alice A\r\ne\u0301  ', 'Alice B\n中文', '\nBob العربية', 'Carol\tC']
+    owners = dict(zip(prompts, ('alice', 'alice', 'bob', 'carol'), strict=True))
+    labels = dict(zip(prompts, (['X', 'X'], ['X', 'NOUN'], ['NOUN', 'NOUN'], ['X', 'NOUN']),
+                      strict=True))
+    recorded, active_owners = [], Counter()
+    mutex, first_pair = threading.Lock(), threading.Barrier(2)
+    active, peak = 0, 0
+    errors = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            nonlocal active, peak
+            raw = self.rfile.read(int(self.headers['Content-Length']))
+            payload = json.loads(raw)
+            envelope = json.loads(payload['messages'][1]['content'])
+            prompt = envelope['student_prompt']
+            with mutex:
+                active += 1
+                active_owners[owners[prompt]] += 1
+                peak = max(peak, active)
+                recorded.append((prompt, envelope['input'], raw))
+                ordinal = len(recorded)
+                if active_owners[owners[prompt]] != 1:
+                    errors.append('same user has overlapping jobs')
+            counted = True
+            try:
+                if ordinal <= 2:
+                    first_pair.wait(timeout=10)
+                    if early_stop and ordinal == 2:
+                        stop.set()
+                body = json.dumps({'choices': [{'message': {
+                    'content': json.dumps({'tags': labels[prompt]})}, 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 100, 'completion_tokens': 6}}).encode()
+                with mutex:
+                    active -= 1
+                    active_owners[owners[prompt]] -= 1
+                    counted = False
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            finally:
+                if counted:
+                    with mutex:
+                        active -= 1
+                        active_owners[owners[prompt]] -= 1
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server.daemon_threads = True
+    http_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    http_thread.start()
+    directory = tmp_path / 'bounded-state'
+    directory.mkdir(mode=0o700)
+    stop = threading.Event()
+    try:
+        with executor_lock(directory, create=True):
+            state = BoundedExecutorState.initialize(directory, 'b' * 64, max_inflight=2)
+            cache = VerifiedSelectionCache()
+            lanes = []
+            for _ in range(2):
+                provider = BoundedGuardedProvider(executor_state=state,
+                    challenge_id=contract.challenge_id,
+                    base_url=f'http://127.0.0.1:{server.server_port}/v1',
+                    identity=ModelIdentity(**contract.evaluation_identity['model_identity']),
+                    settings=GenerationSettings(**contract.evaluation_identity['generation_settings']),
+                    timeout_seconds=contract.provider_request_timeout_seconds,
+                    max_response_body_bytes=contract.provider_response_body_bytes)
+                worker = _SubmissionWorkerCore(store=store, queue=queue, contract=contract,
+                    artifacts=artifacts, provider=provider,
+                    lease_seconds=contract.job_deadline_seconds,
+                    request_preflight=QwenTokenizerPreflight(
+                        contract, _TestQwenTokenizer(), identity),
+                    require_termination_confirmation=True, selection_cache=cache,
+                    claim_guard=state.claim_guard)
+                lanes.append({contract.challenge_id: worker})
+            app = create_app(store=store, dispatcher=OutboxDispatcher(store, queue, contract),
+                contract=contract, authenticate=_authenticate, allow_draft_submissions=True,
+                environment='test')
+
+            def execute():
+                try:
+                    run_bounded(lanes, state, stop, model_capacity=2, idle_seconds=.01)
+                except BaseException as error:
+                    errors.append(type(error).__name__)
+
+            with TestClient(app) as client:
+                submissions = []
+                for index, prompt in enumerate(prompts):
+                    headers = _headers('subject-' + owners[prompt], f'bounded-{index}')
+                    response = client.post('/v1/submissions', headers=headers,
+                        json={'challenge_id': contract.challenge_id, 'student_prompt': prompt})
+                    assert response.status_code == 202
+                    sid = response.json()['submission_id']
+                    assert client.get(f'/v1/submissions/{sid}/result',
+                                      headers=headers).status_code == 409
+                    submissions.append(sid)
+                thread = threading.Thread(target=execute)
+                thread.start()
+                try:
+                    expected_results = 2 if early_stop else 4
+                    deadline = time.monotonic() + 60
+                    while (store.count_results() < expected_results and not errors
+                           and time.monotonic() < deadline):
+                        time.sleep(.02)
+                    assert not errors and store.count_results() == expected_results
+                    completed_prompts = {prompt for prompt, _, _ in recorded}
+                    for sid, prompt in zip(submissions, prompts, strict=True):
+                        headers = _headers('subject-' + owners[prompt])
+                        if prompt not in completed_prompts:
+                            assert client.get(f'/v1/submissions/{sid}/result',
+                                              headers=headers).status_code == 409
+                            assert client.get(f'/v1/submissions/{sid}',
+                                              headers=headers).json()['status'] == 'queued'
+                            continue
+                        result = client.get(f'/v1/submissions/{sid}/result', headers=headers).json()
+                        assert result['samples_valid'] == result['samples_total'] == 50
+                        assert result['score'] == labels[prompt].count('X') / 2
+                        assert result['student_prompt_sha256'] == hashlib.sha256(
+                            prompt.encode()).hexdigest()
+                        other = _headers('subject-carol' if owners[prompt] != 'carol'
+                                         else 'subject-bob')
+                        assert client.get(f'/v1/submissions/{sid}/result',
+                                          headers=other).status_code == 404
+                finally:
+                    stop.set()
+                    thread.join(15)
+                assert not thread.is_alive() and not errors
+            state.require_clean()
+            assert peak == 2 and len(recorded) == expected_results * 50
+            assert Counter(prompt for prompt, _, _ in recorded) == dict.fromkeys(
+                completed_prompts, 50)
+            baseline_inputs = [model_input for prompt, model_input, _ in recorded
+                               if prompt == recorded[0][0]]
+            for prompt in completed_prompts:
+                assert [value for owner, value, _ in recorded if owner == prompt] == baseline_inputs
+            serialized = (directory / 'state.json').read_text()
+            assert all(prompt not in serialized for prompt in prompts)
+    finally:
+        stop.set()
+        server.shutdown()
+        server.server_close()
+        http_thread.join(5)
 
 
 def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: EvaluationContract):

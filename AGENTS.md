@@ -232,6 +232,24 @@ present planned work or skipped checks as completed results.
   Do not call fixtures real Qwen quality/capacity evidence, or multiply the removed
   per-round0.25s wait by50 samples. Prior CPU cache timings are not new end-to-end data.
 
+- Bounded whole-job executor prototype now exists in bounded_executor_state.py and
+  bounded_dispatch.py, NOT wired to production/school. Each lane owns independent
+  workers/providers, at most one sample request per job, shared durable request map
+  written before sends. Optional core claim_guard serializes queue/DB admission against
+  blocking without holding across generation. Normal stop drains claimed jobs; unknown
+  requests/I/O failures block dispatch and retain conservative pending evidence. Restart
+  needs whole-set offline reconciliation, audit before clear, no recovery replay. State
+  version differs from serial v1; never auto-migrate or delete old state. Observation/
+  recovery only: python -m linguistic_oj.bounded_executor_state status|recover.
+  Production runtime rejects experimental_execution providers. Declared prototype capacity
+  is NOT attestation. See docs/BOUNDED_EXECUTION_PLAN.md for recommended1->2->4 qualification,
+  required PostgreSQL/Redis/readiness/admission integration and30-user final-score gate.
+  Local regression757 passed/33 skipped. Explicit local HTTP/API/SQLite/queue fixtures:
+  3 users/4 prompts/full50 each/200 calls, per-user1 running, exact ownership/scores; early
+  stop completes2 claimed jobs/100 calls and leaves2 queued. Two-request real HTTP process
+  kill test proves client exit does not imply server termination; exact recovery sends
+  nothing. School GPU/service and frozen contracts unchanged; no real capacity/quality pass.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/
