@@ -258,16 +258,25 @@ present planned work or skipped checks as completed results.
   misleadingly reported ready. V1 real qualification stopped after100 responses because
   upfront queued English work hit original300s deadline; German900s unchanged. V1 restored
   API1818178/app1820025 with matching11 tables/69 results; no pending inference.
-  V2 is ACTIVE under owner authorization at artifacts/bounded-qualification-20260921-v2:
+  V2 FINISHED under owner authorization at artifacts/bounded-qualification-20260921-v2:
   8 distinct users,4 fixed prompts x2, full50 each, c1/c2/c4; controlled arrival at most
   capacity outstanding. This is quality calibration, NOT simultaneous pressure acceptance.
   Preserve v1 failure and do not fabricate its unread German API result. Upper planned
-  total including v1 is~1300, communicated to owner. Inspect watch.py/window.py status
-  before acting; no process IDs from this paragraph are current-operation authority.
+  total including v1 was1300, communicated to owner. V2 completed1200 responses/24 full
+  results, all transient resources cleaned. Controlled-arrival batch times2343.29/1228.31/
+  689.67s (1/1.91/3.40x). Repeat score ranges max0/1.00/1.67 percentage points; cross-c1
+  maximum shifts4.00pp(c2),1.35pp(c4). Selected within-task B>A ordering remained, not a
+  general quality pass. Per-job German model-call sums518–609s; target remains unmet.
+  Original services restored API2088789/app2091021; argv/cwd/11-table fingerprints match,
+  8 accounts/69 results, no pending work, model /health200 and alias verified. Rediscover
+  current identities before operations; this window is finished, not reusable authorization.
   New source adds optional ProbedAvailability/LocalModelProbe, dynamic admission/catalog/
   admin flags and model-aware development readiness/queue pause. Read-only loopback health
   and alias probes,1s shared cache; existing results remain readable and explicit disables
   dominate. This source fix is NOT deployed to the school running application.
+  Source485770d CI35584817201 passed806 Python/no skips, required real bounded PG/Redis,
+  browser and wheel checks. Verified v1/v2 archives/analysis under ignored
+  runtime/bounded-qualification-results-20260921; details in the qualification doc.
 
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
