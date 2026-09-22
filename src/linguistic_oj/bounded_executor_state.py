@@ -41,6 +41,14 @@ def _text(value):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= 256
 
 
+def _valid_request_context(value):
+    return (isinstance(value, dict) and set(value) == {
+        'submission_sha256', 'sample_id_sha256', 'sample_position', 'request_sha256'}
+        and all(_sha(value[name]) for name in (
+            'submission_sha256', 'sample_id_sha256', 'request_sha256'))
+        and type(value['sample_position']) is int and 1 <= value['sample_position'] <= 1000000)
+
+
 def read_bounded_state(directory):
     _check_directory(directory)
     state = json.loads(_read_protected(directory / 'state.json', max_bytes=65536))
@@ -53,8 +61,11 @@ def read_bounded_state(directory):
         raise ValueError('invalid bounded executor state')
     for key, record in state['pending'].items():
         if (not _request_id(key) or not isinstance(record, dict)
-                or set(record) != {'challenge_id', 'started_at'}
-                or not all(_text(value) for value in record.values())):
+                or set(record) not in ({'challenge_id', 'started_at'},
+                                      {'challenge_id', 'started_at', 'request_context'})
+                or not _text(record['challenge_id']) or not _text(record['started_at'])
+                or ('request_context' in record
+                    and not _valid_request_context(record['request_context']))):
             raise ValueError('invalid pending request record')
     last = state['last_recovery']
     if last is not None:
@@ -134,9 +145,11 @@ class BoundedExecutorState:
             self.require_dispatchable()
             yield
 
-    def begin(self, challenge_id):
+    def begin(self, challenge_id, *, request_context=None):
         if not _text(challenge_id):
             raise ValueError('invalid request challenge identity')
+        if request_context is not None and not _valid_request_context(request_context):
+            raise ValueError('invalid request correlation context')
         with self._lock:
             self.require_dispatchable()
             state = self.snapshot()
@@ -144,6 +157,8 @@ class BoundedExecutorState:
                 raise ExecutorBusy('bounded executor request slots are full')
             operation = uuid.uuid4().hex
             state['pending'][operation] = {'challenge_id': challenge_id, 'started_at': _now()}
+            if request_context is not None:
+                state['pending'][operation]['request_context'] = dict(request_context)
             self._write(state)
             self._live.add(operation)
             return operation
@@ -225,7 +240,10 @@ class BoundedGuardedProvider(OpenAICompatibleProvider):
         self.challenge_id = challenge_id
 
     def generate(self, request, /, *, timeout_seconds=None):
-        operation = self.executor_state.begin(self.challenge_id)
+        return self._generate_guarded(request, timeout_seconds=timeout_seconds)
+
+    def _generate_guarded(self, request, *, timeout_seconds=None, request_context=None):
+        operation = self.executor_state.begin(self.challenge_id, request_context=request_context)
         try:
             result = super().generate(request, timeout_seconds=timeout_seconds)
         except (ProviderRequestError, ProviderContractError) as error:

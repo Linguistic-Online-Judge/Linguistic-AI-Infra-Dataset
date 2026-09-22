@@ -278,6 +278,20 @@ present planned work or skipped checks as completed results.
   browser and wheel checks. Verified v1/v2 archives/analysis under ignored
   runtime/bounded-qualification-results-20260921; details in the qualification doc.
 
+- Request-level prototype added in sample_scheduler.py: bounded independent providers,
+  fewest-inflight/round-robin ties, spare-slot borrowing, late arrivals and exact future
+  submission/sample binding. prepare_job retains full manifest/preflight/original deadline;
+  only full aggregates, no fabricated zeroes or answer caching. Bounded state accepts
+  optional hashed request_context; old records remain valid but older readers reject new
+  fields. No production wiring, no per-sample durable resume. Local787 passed/35 skipped.
+  Owner explicitly authorized a NEW GPU0 window for400 real calls, fixed c4 service,
+  original English/German full50 prompts, per-job-limit1 vs shared4, ABBA two repeats.
+  ACTIVE artifacts/request-scheduling-20260922-v1; controller PID618176, captured original
+  API2088789/app2091021. Rediscover identities and inspect watch.py/window.py before acting.
+  Source SHAa9df8b1231c806bd5b8528f746dd81afcb33f7378389d90e4c04dbec15a7314a.
+  Model-request-layer only, not API/database/browser/classroom acceptance. Do not claim
+  real gains/quality until complete results and restoration. See docs/REQUEST_LEVEL_SCHEDULING.md.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

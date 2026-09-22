@@ -1,0 +1,299 @@
+"""Isolated request-level scheduler; no API/queue claims or production activation.
+
+Jobs must already have verified ownership, a full manifest and their original absolute deadline.
+One caller holds executor_lock for the entire scheduler lifetime.
+"""
+
+import hashlib
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
+from threading import Event, RLock
+
+from .aggregation import aggregate_challenge
+from .bounded_executor_state import BoundedExecutorState, BoundedGuardedProvider
+from .challenge_registry import validate_contract_matches_public
+from .providers import ModelGeneration, ModelRequest, ProviderContractError, ProviderRequestError
+from .responses import TaskType
+from .runner import JobDeadline, JobDeadlineExceeded, _prepare_samples, evaluate_raw_response
+
+_PREPARED_JOB_TOKEN = object()
+
+
+@dataclass(frozen=True, repr=False)
+class PreparedJob:
+    submission_id: str
+    owner_id: str
+    contract: object
+    artifacts: object
+    samples: tuple
+    requests: tuple
+    deadline: JobDeadline
+    _token: object = field(default=None, compare=False)
+
+    def __post_init__(self):
+        if self._token is not _PREPARED_JOB_TOKEN:
+            raise TypeError('jobs must be constructed through complete prepare_job preflight')
+
+
+def prepare_job(*, submission_id, owner_id, contract, artifacts, student_prompt,
+                deadline, request_preflight, selection_cache=None):
+    if any(not isinstance(value, str) or not value.strip()
+           for value in (submission_id, owner_id, student_prompt)):
+        raise ValueError('job ownership and exact nonempty prompt are required')
+    if not isinstance(deadline, JobDeadline) or not callable(request_preflight):
+        raise TypeError('original absolute deadline and request preflight are required')
+    if len(student_prompt.encode('utf-8')) > contract.student_prompt_utf8_bytes:
+        raise ValueError('student prompt exceeds the existing byte budget')
+    validate_contract_matches_public(contract, artifacts.public)
+    deadline.require_remaining()
+    samples = _prepare_samples(artifacts, selection_cache=selection_cache)
+    requests = tuple(ModelRequest(task=TaskType(artifacts.public.task),
+        language=artifacts.public.language, treebank=artifacts.public.treebank,
+        student_prompt=student_prompt, model_input=sample.model_input) for sample in samples)
+    request_preflight(requests)
+    deadline.require_remaining()
+    return PreparedJob(submission_id, owner_id, contract, artifacts, samples, requests, deadline,
+                       _token=_PREPARED_JOB_TOKEN)
+
+
+class ScheduledProvider(BoundedGuardedProvider):
+    """The correlation record stays in the private ledger, never in model messages."""
+
+    def generate(self, request, /, *, timeout_seconds=None):
+        raise ProviderContractError('request-level execution requires explicit sample binding')
+
+    def generate_sample(self, request, *, context, timeout_seconds):
+        if context.get('request_sha256') != hashlib.sha256(self._request_body(request)).hexdigest():
+            raise ProviderContractError('request correlation does not match exact request bytes')
+        return self._generate_guarded(request, timeout_seconds=timeout_seconds,
+                                      request_context=context)
+
+
+@dataclass(repr=False)
+class _Progress:
+    job: PreparedJob
+    cursor: int = 0
+    inflight: set = field(default_factory=set)
+    outcomes: dict = field(default_factory=dict)
+    aggregate: object = None
+    error: str | None = None
+    error_type: str | None = None
+
+
+class SampleScheduler:
+    """Fewest in-flight samples first, round-robin ties; idle capacity can serve one job.
+
+    This is a prototype policy, not a change to deployed FIFO/user admission rules.
+    Graceful stop rejects new jobs but drains admitted jobs. Incidents stop sample dispatch.
+    """
+
+    def __init__(self, slots, state, *, model_capacity, stop=None, max_jobs=32, per_job_limit=None):
+        if (not isinstance(state, BoundedExecutorState) or type(model_capacity) is not int
+                or not 1 <= model_capacity <= 32 or not slots
+                or len(slots) > min(model_capacity, state.max_inflight)
+                or type(max_jobs) is not int or not 1 <= max_jobs <= 32):
+            raise ValueError('invalid request scheduler capacity')
+        per_job_limit = len(slots) if per_job_limit is None else per_job_limit
+        if type(per_job_limit) is not int or not 1 <= per_job_limit <= len(slots):
+            raise ValueError('per-job request limit must fit the global slots')
+        keys = tuple(slots[0])
+        if not keys or any(tuple(slot) != keys for slot in slots):
+            raise ValueError('all slots must offer the same task routes')
+        providers = [provider for slot in slots for provider in slot.values()]
+        if (any(not isinstance(provider, ScheduledProvider) or provider.executor_state is not state
+                for provider in providers) or len({id(p) for p in providers}) != len(providers)):
+            raise ValueError('slots require independent sample-bound providers sharing one ledger')
+        if (len({p.base_url for p in providers}) != 1
+                or any(p.identity != providers[0].identity for p in providers)
+                or any(provider.challenge_id != key
+                       for slot in slots for key, provider in slot.items())):
+            raise ValueError('provider route or model identity mismatch')
+        state.require_clean()
+        self._slots = tuple(dict(slot) for slot in slots)
+        self._state = state
+        self._capacity = model_capacity
+        self._stop = stop if stop is not None else Event()
+        self._max_jobs = max_jobs
+        self._per_job_limit = per_job_limit
+        self._lock = RLock()
+        self._jobs = {}
+        self._last_job = None
+        self._started = False
+        self._closed = False
+        self._halted = False
+        self._dispatches = []
+
+    def add_job(self, job):
+        if not isinstance(job, PreparedJob):
+            raise TypeError('a prepared, preflighted job is required')
+        with self._lock:
+            if self._closed or self._halted or self._stop.is_set():
+                raise RuntimeError('scheduler no longer accepts jobs')
+            self._state.require_dispatchable()
+            if job.submission_id in self._jobs or len(self._jobs) >= self._max_jobs:
+                raise ValueError('duplicate job or finite-session job limit reached')
+            if any(progress.job.owner_id == job.owner_id and progress.aggregate is None
+                   and (progress.error is None or progress.inflight)
+                   for progress in self._jobs.values()):
+                raise ValueError('owner already has an active admitted job')
+            if job.contract.worker_model_concurrency != self._capacity:
+                raise ValueError('job contract differs from declared model capacity')
+            for slot in self._slots:
+                provider = slot.get(job.contract.challenge_id)
+                identity = job.contract.evaluation_identity
+                if (provider is None or provider.structured_json
+                        or provider.identity.to_dict() != identity['model_identity']
+                        or provider.settings.to_dict() != identity['generation_settings']
+                        or provider.timeout_seconds != job.contract.provider_request_timeout_seconds
+                        or provider.max_response_body_bytes
+                        != job.contract.provider_response_body_bytes):
+                    raise ValueError('provider does not preserve the job configuration')
+            self._jobs[job.submission_id] = _Progress(job)
+
+    def _next(self):
+        candidates = []
+        keys = list(self._jobs)
+        if self._last_job in keys:
+            start = keys.index(self._last_job) + 1
+            keys = keys[start:] + keys[:start]
+        for key in keys:
+            progress = self._jobs[key]
+            if (progress.error is not None or progress.cursor == len(progress.job.samples)
+                    or len(progress.inflight) >= self._per_job_limit):
+                continue
+            try:
+                progress.job.deadline.require_remaining()
+            except JobDeadlineExceeded:
+                progress.error = 'JOB_DEADLINE'
+                progress.error_type = 'JobDeadlineExceeded'
+                continue
+            candidates.append(key)
+        if not candidates:
+            return None
+        key = min(candidates, key=lambda value: len(self._jobs[value].inflight))
+        progress = self._jobs[key]
+        position = progress.cursor
+        progress.cursor += 1
+        progress.inflight.add(position)
+        self._last_job = key
+        self._dispatches.append((key, position + 1))
+        return key, position
+
+    def _evaluate(self, slot, key, position):
+        job = self._jobs[key].job
+        sample, request = job.samples[position], job.requests[position]
+        provider = self._slots[slot][job.contract.challenge_id]
+        context = {'submission_sha256': hashlib.sha256(key.encode()).hexdigest(),
+            'sample_id_sha256': hashlib.sha256(
+                sample.manifest_sample.sample_id.encode()).hexdigest(),
+            'sample_position': position + 1,
+            'request_sha256': hashlib.sha256(provider._request_body(request)).hexdigest()}
+        generation = provider.generate_sample(request, context=context,
+            timeout_seconds=job.deadline.require_remaining())
+        if not isinstance(generation, ModelGeneration):
+            raise ProviderContractError('provider must return a complete generation')
+        job.deadline.require_remaining()
+        outcome = evaluate_raw_response(sample=sample.dataset_sample,
+            manifest_sample=sample.manifest_sample, task=request.task,
+            model_input=sample.model_input, raw_response=generation.raw_text)
+        return key, position, outcome
+
+    def snapshot(self):
+        """Private observation: incomplete jobs have no aggregate or zero-filled result."""
+        with self._lock:
+            return {key: {'status': ('succeeded' if p.aggregate is not None else
+                'failed' if p.error is not None else 'running'), 'error': p.error,
+                'error_type': p.error_type,
+                'samples_dispatched': p.cursor, 'samples_completed': len(p.outcomes),
+                'samples_inflight': len(p.inflight), 'result': p.aggregate}
+                for key, p in self._jobs.items()}
+
+    @property
+    def dispatch_order(self):
+        with self._lock:
+            return tuple(self._dispatches)
+
+    def abort(self):
+        """Stop new sample dispatch; do not cancel already-sent calls or invent partial grades."""
+        with self._lock:
+            self._halted = True
+
+    def run(self):
+        with self._lock:
+            if self._started:
+                raise RuntimeError('scheduler sessions cannot be replayed')
+            self._state.require_clean()
+            self._started = True
+        active, free = {}, list(range(len(self._slots)))
+        try:
+            with ThreadPoolExecutor(max_workers=len(self._slots)) as pool:
+                while True:
+                    with self._lock:
+                        if not self._halted:
+                            try:
+                                self._state.require_dispatchable()
+                            except Exception:
+                                self._halted = True
+                        while free and not self._halted:
+                            selected = self._next()
+                            if selected is None:
+                                break
+                            key, position = selected
+                            slot = free.pop(0)
+                            active[pool.submit(self._evaluate, slot, key, position)] = (
+                                slot, key, position)
+                        if not active:
+                            self._closed = True
+                            break
+                    done, _ = wait(active, timeout=.05, return_when=FIRST_COMPLETED)
+                    with self._lock:
+                        for future in done:
+                            slot, key, position = active.pop(future)
+                            free.append(slot)
+                            progress = self._jobs[key]
+                            progress.inflight.remove(position)
+                            try:
+                                result_key, result_position, outcome = future.result()
+                                if ((result_key, result_position) != (key, position)
+                                        or outcome.sample_id != progress.job.samples[
+                                            position].manifest_sample.sample_id
+                                        or position in progress.outcomes):
+                                    raise RuntimeError('sample response binding mismatch')
+                                progress.outcomes[position] = outcome
+                            except JobDeadlineExceeded:
+                                progress.error = 'JOB_DEADLINE'
+                                progress.error_type = 'JobDeadlineExceeded'
+                            except ProviderRequestError as error:
+                                progress.error = 'PROVIDER_REQUEST_FAILED'
+                                progress.error_type = type(error).__name__
+                            except BaseException as error:
+                                progress.error = 'EXECUTION_FAILED'
+                                progress.error_type = type(error).__name__
+                                self._halted = True
+                            if (progress.error is None and len(progress.outcomes)
+                                    == len(progress.job.samples)):
+                                try:
+                                    progress.job.deadline.require_remaining()
+                                    aggregate = aggregate_challenge(progress.job.artifacts,
+                                        [progress.outcomes[index]
+                                         for index in range(len(progress.job.samples))])
+                                    progress.job.deadline.require_remaining()
+                                    progress.aggregate = aggregate
+                                except JobDeadlineExceeded:
+                                    progress.error = 'JOB_DEADLINE'
+                                    progress.error_type = 'JobDeadlineExceeded'
+                                except Exception as error:
+                                    progress.error = 'AGGREGATION_FAILED'
+                                    progress.error_type = type(error).__name__
+                                    self._halted = True
+                        if self._halted:
+                            for progress in self._jobs.values():
+                                if progress.aggregate is None and progress.error is None:
+                                    progress.error = 'EXECUTOR_BLOCKED'
+        finally:
+            with self._lock:
+                self._closed = True
+                for progress in self._jobs.values():
+                    if progress.aggregate is None and progress.error is None:
+                        progress.error = 'EXECUTOR_BLOCKED'
+        return self.snapshot()

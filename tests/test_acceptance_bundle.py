@@ -17,6 +17,7 @@ def source(tmp_path: Path) -> Path:
         "scripts/check_qwen_pipeline.py",
         "scripts/check_bounded_pipeline.py",
         "scripts/qualify_bounded_qwen.py",
+        "scripts/qualify_sample_scheduling.py",
         "src/linguistic_oj/__init__.py",
         "src/linguistic_oj/web/index.html",
         "src/linguistic_oj/web/assets/brand-option-a.svg",

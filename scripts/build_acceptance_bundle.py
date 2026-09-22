@@ -25,6 +25,7 @@ def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
         root / "scripts/check_qwen_pipeline.py",
         root / "scripts/check_bounded_pipeline.py",
         root / "scripts/qualify_bounded_qwen.py",
+        root / "scripts/qualify_sample_scheduling.py",
     ]
     if include_performance:
         files.extend(root / name for name in (
