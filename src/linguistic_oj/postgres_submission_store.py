@@ -314,6 +314,20 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
             with connection.cursor() as cursor:
                 return claim.deadline_at <= _timestamp(self._database_now(cursor))
 
+    def claim_is_current(self, claim: ClaimedSubmission) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                now = _timestamp(self._database_now(cursor))
+                cursor.execute(
+                    "SELECT 1 FROM submissions WHERE id = %s AND user_id = %s "
+                    "AND status = 'running' AND attempt_number = %s AND lease_token = %s "
+                    "AND lease_expires_at > %s AND deadline_at > %s "
+                    "AND evaluation_identity_sha256 = %s AND contract_snapshot_sha256 = %s",
+                    (claim.submission_id, claim.user_id, claim.attempt_number, claim.lease_token,
+                     now, now, claim.evaluation_identity_sha256, claim.contract_snapshot_sha256),
+                )
+                return cursor.fetchone() is not None
+
     def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
         with self._connect() as connection:
             with connection.cursor() as cursor:

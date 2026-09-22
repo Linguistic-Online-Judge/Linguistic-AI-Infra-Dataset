@@ -12,11 +12,21 @@ from threading import Event, RLock
 from .aggregation import aggregate_challenge
 from .bounded_executor_state import BoundedExecutorState, BoundedGuardedProvider
 from .challenge_registry import validate_contract_matches_public
-from .providers import ModelGeneration, ModelRequest, ProviderContractError, ProviderRequestError
+from .providers import (
+    ModelGeneration,
+    ModelRequest,
+    ProviderContractError,
+    ProviderRequestError,
+    ProviderTimeoutError,
+)
 from .responses import TaskType
 from .runner import JobDeadline, JobDeadlineExceeded, _prepare_samples, evaluate_raw_response
 
 _PREPARED_JOB_TOKEN = object()
+
+
+class SampleClaimLost(RuntimeError):
+    """The caller no longer owns the database claim; do not send another sample."""
 
 
 @dataclass(frozen=True, repr=False)
@@ -28,6 +38,7 @@ class PreparedJob:
     samples: tuple
     requests: tuple
     deadline: JobDeadline
+    before_sample: object = field(default=None, compare=False)
     _token: object = field(default=None, compare=False)
 
     def __post_init__(self):
@@ -36,12 +47,14 @@ class PreparedJob:
 
 
 def prepare_job(*, submission_id, owner_id, contract, artifacts, student_prompt,
-                deadline, request_preflight, selection_cache=None):
+                deadline, request_preflight, selection_cache=None, before_sample=None):
     if any(not isinstance(value, str) or not value.strip()
            for value in (submission_id, owner_id, student_prompt)):
         raise ValueError('job ownership and exact nonempty prompt are required')
     if not isinstance(deadline, JobDeadline) or not callable(request_preflight):
         raise TypeError('original absolute deadline and request preflight are required')
+    if before_sample is not None and not callable(before_sample):
+        raise TypeError('claim observation must be callable')
     if len(student_prompt.encode('utf-8')) > contract.student_prompt_utf8_bytes:
         raise ValueError('student prompt exceeds the existing byte budget')
     validate_contract_matches_public(contract, artifacts.public)
@@ -53,7 +66,7 @@ def prepare_job(*, submission_id, owner_id, contract, artifacts, student_prompt,
     request_preflight(requests)
     deadline.require_remaining()
     return PreparedJob(submission_id, owner_id, contract, artifacts, samples, requests, deadline,
-                       _token=_PREPARED_JOB_TOKEN)
+                       before_sample=before_sample, _token=_PREPARED_JOB_TOKEN)
 
 
 class ScheduledProvider(BoundedGuardedProvider):
@@ -78,6 +91,8 @@ class _Progress:
     aggregate: object = None
     error: str | None = None
     error_type: str | None = None
+    failure_code: str | None = None
+    retry_allowed: bool = False
 
 
 class SampleScheduler:
@@ -136,19 +151,22 @@ class SampleScheduler:
                    and (progress.error is None or progress.inflight)
                    for progress in self._jobs.values()):
                 raise ValueError('owner already has an active admitted job')
-            if job.contract.worker_model_concurrency != self._capacity:
-                raise ValueError('job contract differs from declared model capacity')
-            for slot in self._slots:
-                provider = slot.get(job.contract.challenge_id)
-                identity = job.contract.evaluation_identity
-                if (provider is None or provider.structured_json
-                        or provider.identity.to_dict() != identity['model_identity']
-                        or provider.settings.to_dict() != identity['generation_settings']
-                        or provider.timeout_seconds != job.contract.provider_request_timeout_seconds
-                        or provider.max_response_body_bytes
-                        != job.contract.provider_response_body_bytes):
-                    raise ValueError('provider does not preserve the job configuration')
+            self.validate_contract(job.contract)
             self._jobs[job.submission_id] = _Progress(job)
+
+    def validate_contract(self, contract):
+        """Static provider checks, usable by an adapter before it claims a submission."""
+        if contract.worker_model_concurrency != self._capacity:
+            raise ValueError('job contract differs from declared model capacity')
+        for slot in self._slots:
+            provider = slot.get(contract.challenge_id)
+            identity = contract.evaluation_identity
+            if (provider is None or provider.structured_json
+                    or provider.identity.to_dict() != identity['model_identity']
+                    or provider.settings.to_dict() != identity['generation_settings']
+                    or provider.timeout_seconds != contract.provider_request_timeout_seconds
+                    or provider.max_response_body_bytes != contract.provider_response_body_bytes):
+                raise ValueError('provider does not preserve the job configuration')
 
     def _next(self):
         candidates = []
@@ -166,6 +184,7 @@ class SampleScheduler:
             except JobDeadlineExceeded:
                 progress.error = 'JOB_DEADLINE'
                 progress.error_type = 'JobDeadlineExceeded'
+                progress.failure_code = 'JOB_DEADLINE'
                 continue
             candidates.append(key)
         if not candidates:
@@ -182,6 +201,8 @@ class SampleScheduler:
     def _evaluate(self, slot, key, position):
         job = self._jobs[key].job
         sample, request = job.samples[position], job.requests[position]
+        if job.before_sample is not None and job.before_sample() is not True:
+            raise SampleClaimLost('submission claim is no longer current')
         provider = self._slots[slot][job.contract.challenge_id]
         context = {'submission_sha256': hashlib.sha256(key.encode()).hexdigest(),
             'sample_id_sha256': hashlib.sha256(
@@ -204,6 +225,7 @@ class SampleScheduler:
             return {key: {'status': ('succeeded' if p.aggregate is not None else
                 'failed' if p.error is not None else 'running'), 'error': p.error,
                 'error_type': p.error_type,
+                'failure_code': p.failure_code, 'retry_allowed': p.retry_allowed,
                 'samples_dispatched': p.cursor, 'samples_completed': len(p.outcomes),
                 'samples_inflight': len(p.inflight), 'result': p.aggregate}
                 for key, p in self._jobs.items()}
@@ -218,13 +240,32 @@ class SampleScheduler:
         with self._lock:
             self._halted = True
 
-    def run(self):
+    def run(self, *, on_terminal=None):
+        if on_terminal is not None and not callable(on_terminal):
+            raise TypeError('terminal publication callback must be callable')
         with self._lock:
             if self._started:
                 raise RuntimeError('scheduler sessions cannot be replayed')
             self._state.require_clean()
             self._started = True
         active, free = {}, list(range(len(self._slots)))
+        notified = set()
+
+        def notify_terminal():
+            if on_terminal is None:
+                return
+            with self._lock:
+                completed = [(key, value) for key, value in self.snapshot().items()
+                    if key not in notified and value['status'] != 'running'
+                    and value['samples_inflight'] == 0]
+                notified.update(key for key, _ in completed)
+            try:
+                for key, value in completed:
+                    on_terminal(key, value)
+            except BaseException:
+                self.abort()
+                raise
+
         try:
             with ThreadPoolExecutor(max_workers=len(self._slots)) as pool:
                 while True:
@@ -244,7 +285,9 @@ class SampleScheduler:
                                 slot, key, position)
                         if not active:
                             self._closed = True
-                            break
+                    if not active:
+                        notify_terminal()
+                        break
                     done, _ = wait(active, timeout=.05, return_when=FIRST_COMPLETED)
                     with self._lock:
                         for future in done:
@@ -263,12 +306,28 @@ class SampleScheduler:
                             except JobDeadlineExceeded:
                                 progress.error = 'JOB_DEADLINE'
                                 progress.error_type = 'JobDeadlineExceeded'
+                                progress.failure_code = 'JOB_DEADLINE'
+                                progress.retry_allowed = False
+                            except SampleClaimLost:
+                                progress.error = 'CLAIM_LOST'
+                                progress.error_type = 'SampleClaimLost'
+                                progress.failure_code = 'WORKER_CRASH'
+                                progress.retry_allowed = False
                             except ProviderRequestError as error:
-                                progress.error = 'PROVIDER_REQUEST_FAILED'
-                                progress.error_type = type(error).__name__
+                                if progress.error in (None, 'PROVIDER_REQUEST_FAILED'):
+                                    progress.retry_allowed = (error.termination_confirmed and (
+                                        progress.error is None or progress.retry_allowed))
+                                    if progress.error is None:
+                                        progress.failure_code = ('PROVIDER_TIMEOUT'
+                                            if isinstance(error, ProviderTimeoutError)
+                                            else 'PROVIDER_TRANSPORT')
+                                        progress.error_type = type(error).__name__
+                                    progress.error = 'PROVIDER_REQUEST_FAILED'
                             except BaseException as error:
                                 progress.error = 'EXECUTION_FAILED'
                                 progress.error_type = type(error).__name__
+                                progress.failure_code = 'RUNTIME_MISCONFIGURATION'
+                                progress.retry_allowed = False
                                 self._halted = True
                             if (progress.error is None and len(progress.outcomes)
                                     == len(progress.job.samples)):
@@ -282,18 +341,23 @@ class SampleScheduler:
                                 except JobDeadlineExceeded:
                                     progress.error = 'JOB_DEADLINE'
                                     progress.error_type = 'JobDeadlineExceeded'
+                                    progress.failure_code = 'JOB_DEADLINE'
                                 except Exception as error:
                                     progress.error = 'AGGREGATION_FAILED'
                                     progress.error_type = type(error).__name__
+                                    progress.failure_code = 'RUNTIME_MISCONFIGURATION'
                                     self._halted = True
                         if self._halted:
                             for progress in self._jobs.values():
                                 if progress.aggregate is None and progress.error is None:
                                     progress.error = 'EXECUTOR_BLOCKED'
+                                    progress.failure_code = 'RUNTIME_MISCONFIGURATION'
+                    notify_terminal()
         finally:
             with self._lock:
                 self._closed = True
                 for progress in self._jobs.values():
                     if progress.aggregate is None and progress.error is None:
                         progress.error = 'EXECUTOR_BLOCKED'
+                        progress.failure_code = 'RUNTIME_MISCONFIGURATION'
         return self.snapshot()

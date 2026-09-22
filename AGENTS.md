@@ -300,6 +300,22 @@ present planned work or skipped checks as completed results.
   runtime/request-scheduling-results-20260922. Code0da8248 CI35676958688 passed822/no skips.
   No production deployment. See docs/REQUEST_LEVEL_SCHEDULING.md for interpretation/next gates.
 
+- RequestSubmissionExecutor now connects finite admission rounds to the existing queue,
+  claim/preflight, request scheduler and transactional result publication. Read-only
+  claim_is_current exists in both stores; PostgreSQL uses DB time. Before-sample claim
+  observations do NOT replace complete_success's authoritative lease/deadline fence.
+  Scheduler terminal callbacks run outside its lock and only after job in-flight calls
+  drain; existing confirmed-error retry/max-attempt/deadline rules remain, uncertain
+  requests block all work. Fast completed jobs publish before slower cohort peers.
+  This is isolated finite-round integration, NOT continuous late admission/production.
+  School c2/c4 real PostgreSQL/Redis/cookie tests passed with fake HTTP model:4 users,
+  5 full50 jobs/250 calls each, per-user one running job, bound samples, owner results,
+  empty ledgers/queues and owned cleanup11 tables/2 Redis keys. Real Qwen calls0, no
+  restart/deployment. Evidence runtime/request-submission-services-results-20260922;
+  docs/REQUEST_SUBMISSION_INTEGRATION.md. Local797 passed/37 skipped, full run372.68s;
+  earlier timeout was not a passing run. New PG negative lease fence test awaits CI.
+  No schema migration. Earlier request-layer speedup cannot be assumed after DB checks.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

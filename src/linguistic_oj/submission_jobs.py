@@ -338,6 +338,10 @@ class _SubmissionWorkerCore:
         return self._evaluate_claim(delivery, claim)
 
     def _receive_and_claim(self):
+        return self._receive_and_claim_attempt()[1]
+
+    def _receive_and_claim_attempt(self):
+        """Return observed message identity as well as a claim, without losing empty/busy detail."""
         now = monotonic()
         if now >= self._next_lease_sweep_at:
             self._store.expire_leases(
@@ -346,7 +350,7 @@ class _SubmissionWorkerCore:
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
         if delivery is None:
-            return None
+            return None, None
         message = delivery.message
         if (
             message.evaluation_identity_sha256
@@ -355,7 +359,7 @@ class _SubmissionWorkerCore:
             != self._contract.contract_snapshot_sha256
         ):
             self._queue.ack(delivery)
-            return None
+            return message.submission_id, None
         claim_attempt = self._store.claim_submission(
             message.submission_id,
             evaluation_identity_sha256=self._contract.evaluation_identity_sha256,
@@ -369,8 +373,8 @@ class _SubmissionWorkerCore:
                 self._queue.nack(delivery)
             else:
                 self._queue.ack(delivery)
-            return None
-        return delivery, claim_attempt.claim
+            return message.submission_id, None
+        return message.submission_id, (delivery, claim_attempt.claim)
 
     def _evaluate_claim(self, delivery, claim):
         if (

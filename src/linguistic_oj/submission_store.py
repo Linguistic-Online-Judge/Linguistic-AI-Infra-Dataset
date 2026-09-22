@@ -205,6 +205,8 @@ class SubmissionStoreProtocol(Protocol):
 
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool: ...
 
+    def claim_is_current(self, claim: ClaimedSubmission) -> bool: ...
+
     def expire_leases(self, *, evaluation_identity_sha256: str) -> int: ...
 
     def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int: ...
@@ -797,6 +799,18 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
 
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool:
         return claim.deadline_at <= _timestamp(_utc_now())
+
+    def claim_is_current(self, claim: ClaimedSubmission) -> bool:
+        with self._connect() as connection:
+            now = _timestamp(_utc_now())
+            return connection.execute(
+                "SELECT 1 FROM submissions WHERE id = ? AND user_id = ? AND status = 'running' "
+                "AND attempt_number = ? AND lease_token = ? AND lease_expires_at > ? "
+                "AND deadline_at > ? AND evaluation_identity_sha256 = ? "
+                "AND contract_snapshot_sha256 = ?",
+                (claim.submission_id, claim.user_id, claim.attempt_number, claim.lease_token,
+                 now, now, claim.evaluation_identity_sha256, claim.contract_snapshot_sha256),
+            ).fetchone() is not None
 
     def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
         with self._connect() as connection:

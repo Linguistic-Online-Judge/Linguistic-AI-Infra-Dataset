@@ -56,7 +56,8 @@ def fixture_contract(root, directory, capacity):
     return artifacts, EvaluationContract.from_mapping(config)
 
 
-def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecycle=None):
+def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecycle=None,
+                     request_level=False):
     """Cookie-authenticated API + worker + real local HTTP; caller selects storage adapters."""
     from fastapi.testclient import TestClient
 
@@ -66,7 +67,9 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
     from linguistic_oj.bounded_executor_state import BoundedExecutorState, BoundedGuardedProvider
     from linguistic_oj.executor_state import executor_lock
     from linguistic_oj.providers import GenerationSettings, ModelIdentity
+    from linguistic_oj.runner import _prepare_samples
     from linguistic_oj.sample_cache import VerifiedSelectionCache
+    from linguistic_oj.sample_scheduler import ScheduledProvider
     from linguistic_oj.submission_jobs import (
         MockRequestPreflight,
         OutboxDispatcher,
@@ -79,6 +82,7 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
     lifecycle['worker_stopped'] = True
     lifecycle['requests_reconciled'] = True
     artifacts, contract = fixture_contract(root, directory, capacity)
+    prepared = _prepare_samples(artifacts)
     queue = queue_factory(contract)
     names = ('alice', 'bob', 'carol', 'dana')
     prompts = (' Alice A\r\ne\u0301 ', 'Alice B 中文\n', 'Bob العربية', 'Carol\tC', 'Dana\nD')
@@ -86,6 +90,7 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
     labels = dict(zip(prompts, (['X', 'X'], ['X', 'NOUN'], ['NOUN', 'NOUN'],
                                ['X', 'NOUN'], ['X', 'X']), strict=True))
     records, faults, active_owners = [], [], Counter()
+    bindings, submission_by_prompt = [], {}
     mutex, first_batch = Lock(), Barrier(capacity)
     active = peak = 0
 
@@ -110,7 +115,24 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                     peak = max(peak, active)
                     records.append((prompt, envelope['input']))
                     ordinal = len(records)
-                    assert active_owners[owners[prompt]] == 1
+                    if not request_level:
+                        assert active_owners[owners[prompt]] == 1
+                if request_level:
+                    digest = hashlib.sha256(raw).hexdigest()
+                    pending_records = state.snapshot()['pending']
+                    matching = [record['request_context'] for record in pending_records.values()
+                        if record.get('request_context', {}).get('request_sha256') == digest]
+                    assert len(matching) == 1
+                    context = matching[0]
+                    position = context['sample_position']
+                    assert context['submission_sha256'] == hashlib.sha256(
+                        submission_by_prompt[prompt].encode()).hexdigest()
+                    assert envelope['input'] == prepared[position - 1].model_input.model_dump(
+                        mode='json')
+                    with mutex:
+                        bindings.append((prompt, position))
+                    owner_jobs = store.submissions_for_owner(users[owners[prompt]], limit=20)
+                    assert sum(job.status.value == 'running' for job in owner_jobs) == 1
                 if ordinal <= capacity:
                     first_batch.wait(timeout=30)
                 body = json.dumps({'choices': [{'message': {'content': json.dumps(
@@ -150,20 +172,34 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
             cache = VerifiedSelectionCache()
             lanes = []
             for _ in range(capacity):
-                provider = BoundedGuardedProvider(executor_state=state,
+                provider_class = ScheduledProvider if request_level else BoundedGuardedProvider
+                provider = provider_class(executor_state=state,
                     challenge_id=contract.challenge_id,
                     base_url=f'http://127.0.0.1:{server.server_port}/v1',
                     identity=ModelIdentity(**contract.evaluation_identity['model_identity']),
                     settings=GenerationSettings(**contract.evaluation_identity['generation_settings']),
                     timeout_seconds=contract.provider_request_timeout_seconds,
                     max_response_body_bytes=contract.provider_response_body_bytes)
-                worker = _SubmissionWorkerCore(store=store, queue=queue, contract=contract,
-                    artifacts=artifacts, provider=provider,
-                    lease_seconds=contract.job_deadline_seconds,
-                    request_preflight=MockRequestPreflight(contract),
-                    require_termination_confirmation=True, selection_cache=cache,
-                    claim_guard=state.claim_guard)
-                lanes.append({contract.challenge_id: worker})
+                if request_level:
+                    lanes.append({contract.challenge_id: provider})
+                else:
+                    worker = _SubmissionWorkerCore(store=store, queue=queue, contract=contract,
+                        artifacts=artifacts, provider=provider,
+                        lease_seconds=contract.job_deadline_seconds,
+                        request_preflight=MockRequestPreflight(contract),
+                        require_termination_confirmation=True, selection_cache=cache,
+                        claim_guard=state.claim_guard)
+                    lanes.append({contract.challenge_id: worker})
+            if request_level:
+                from linguistic_oj.request_submission_executor import RequestSubmissionExecutor
+
+                executor = RequestSubmissionExecutor(store=store,
+                    queues={contract.challenge_id: queue},
+                    contracts={contract.challenge_id: contract},
+                    artifacts={contract.challenge_id: artifacts},
+                    preflights={contract.challenge_id: MockRequestPreflight(contract)}, slots=lanes,
+                    state=state, model_capacity=capacity, max_jobs=capacity, stop=stop,
+                    selection_cache=cache)
             with socket.socket() as reserved:
                 reserved.bind(('127.0.0.1', 0))
                 origin = f'http://127.0.0.1:{reserved.getsockname()[1]}'
@@ -200,6 +236,7 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                         response = client.post('/v1/submissions', headers=selected, json=payload)
                         assert response.status_code == 202
                         sid = response.json()['submission_id']
+                        submission_by_prompt[prompt] = sid
                         replay = client.post('/v1/submissions', headers=selected, json=payload)
                         assert replay.status_code == 202 and replay.json()['submission_id'] == sid
                         assert client.get(f'/v1/submissions/{sid}/result').status_code == 409
@@ -209,7 +246,13 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
 
                     def execute():
                         try:
-                            run_bounded(lanes, state, stop, model_capacity=capacity)
+                            if request_level:
+                                while not stop.is_set():
+                                    observation = executor.run_round()
+                                    if not observation['claims']:
+                                        stop.wait(.05)
+                            else:
+                                run_bounded(lanes, state, stop, model_capacity=capacity)
                         except BaseException as error:
                             faults.append(type(error).__name__)
 
@@ -253,15 +296,20 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                     else:
                         assert len(queue) == 0 and not queue._inflight
                     assert Counter(prompt for prompt, _ in records) == dict.fromkeys(prompts, 50)
-                    baseline = [value for prompt, value in records if prompt == prompts[0]]
-                    assert all([value for key, value in records if key == prompt] == baseline
-                               for prompt in prompts)
+                    if request_level:
+                        assert Counter(bindings) == {(prompt, position): 1
+                            for prompt in prompts for position in range(1, 51)}
+                    else:
+                        baseline = [value for prompt, value in records if prompt == prompts[0]]
+                        assert all([value for key, value in records if key == prompt] == baseline
+                                   for prompt in prompts)
                     with store._connect() as connection:
                         counts = {table: connection.execute(
                             f'SELECT count(*) FROM {table}').fetchone()[0]
                                   for table in ('submissions', 'results', 'submission_outbox')}
                     assert counts == dict.fromkeys(counts, 5)
         return {'schema_version': 'bounded-services-fixture-v1', 'passed': True,
+            'request_level': request_level,
             'capacity': capacity, 'users': 4, 'submissions': 5, 'model_fixture_calls': 250,
             'peak_model_fixture_requests': peak, 'results': results,
             'cookie_auth': True, 'idempotency_verified': True, 'owner_isolation_verified': True,
@@ -294,6 +342,7 @@ def main():
     parser.add_argument('--postgres-user', required=True)
     parser.add_argument('--postgres-database', required=True)
     parser.add_argument('--capacity', type=int, choices=(2, 4), required=True)
+    parser.add_argument('--request-level', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
     owned = resources_module(root)
@@ -336,7 +385,8 @@ def main():
                 return redis.create(contract)
 
             report = exercise_fixture(root, directory, store, queue_factory,
-                                      capacity=args.capacity, lifecycle=lifecycle)
+                                      capacity=args.capacity, lifecycle=lifecycle,
+                                      request_level=args.request_level)
             report['storage'] = 'PostgreSQL-and-Redis'
     finally:
         report['cleanup'] = cleanup
