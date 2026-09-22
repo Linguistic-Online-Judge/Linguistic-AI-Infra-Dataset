@@ -286,11 +286,19 @@ present planned work or skipped checks as completed results.
   fields. No production wiring, no per-sample durable resume. Local787 passed/35 skipped.
   Owner explicitly authorized a NEW GPU0 window for400 real calls, fixed c4 service,
   original English/German full50 prompts, per-job-limit1 vs shared4, ABBA two repeats.
-  ACTIVE artifacts/request-scheduling-20260922-v1; controller PID618176, captured original
-  API2088789/app2091021. Rediscover identities and inspect watch.py/window.py before acting.
+  FINISHED artifacts/request-scheduling-20260922-v1:400 responses/8 complete full50 aggregates.
+  Fixed c4 service, per-job limit1 vs4, same actual request hashes. English serial42.96/
+  42.15s -> shared25.27/23.32s; German516.84/516.60 ->155.00/153.90s. Matched score deltas
+  English-0.6667pp/German+0.1042pp; both policies German repeat range0.3125pp. Not quality
+  equivalence or50s classroom pass. Existing app/model restored API642931/app644512,
+  original argv/cwd and11-table fingerprints matched,8 accounts/69 grades, no pending
+  work, test8001 cleaned, model health200. Rediscover current process identities before
+  operations; this completed window does not authorize new service changes.
   Source SHAa9df8b1231c806bd5b8528f746dd81afcb33f7378389d90e4c04dbec15a7314a.
-  Model-request-layer only, not API/database/browser/classroom acceptance. Do not claim
-  real gains/quality until complete results and restoration. See docs/REQUEST_LEVEL_SCHEDULING.md.
+  Model-request-layer only, not API/database/browser/classroom acceptance. Verified21-file
+  private archive d5e42d3f537fb28739e93b414a99c08737d4fd7977afa9f6c250b9dbfca81717 under
+  runtime/request-scheduling-results-20260922. Code0da8248 CI35676958688 passed822/no skips.
+  No production deployment. See docs/REQUEST_LEVEL_SCHEDULING.md for interpretation/next gates.
 
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
