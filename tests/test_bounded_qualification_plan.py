@@ -12,7 +12,7 @@ def test_qualification_preserves_source_identity_settings_and_files():
     path = ROOT / 'config/evaluation_contracts/v1/de-hdt-dependency-v1.json'
     original = path.read_bytes()
     base = EvaluationContract.from_path(path)
-    for capacity in (1, 2, 4):
+    for capacity in (1, 2, 4, 8, 16, 32):
         derived = calibration_contract(base, capacity)
         assert derived.worker_model_concurrency == capacity
         assert derived.evaluation_identity == base.evaluation_identity
@@ -21,7 +21,7 @@ def test_qualification_preserves_source_identity_settings_and_files():
     assert path.read_bytes() == original
     assert base.worker_model_concurrency == 1
     with pytest.raises(ValueError):
-        calibration_contract(base, 32)
+        calibration_contract(base, 64)
 
 
 def test_four_fixed_prompts_cover_two_tasks_before_any_model_call():

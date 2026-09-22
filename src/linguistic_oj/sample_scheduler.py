@@ -308,11 +308,12 @@ class SampleScheduler:
         try:
             with ThreadPoolExecutor(max_workers=len(self._slots)) as pool:
                 while True:
+                    admission_pending = False
                     # A single coordinator admits jobs and publishes results outside the lock.
                     # Worker threads only execute samples; no admission/publication lock inversion.
                     if on_tick is not None and not self._halted:
                         try:
-                            on_tick()
+                            admission_pending = on_tick() is True
                         except BaseException:
                             self.abort()
                             raise
@@ -362,9 +363,10 @@ class SampleScheduler:
                             if drained and (self._halted or not keep_open or not self._accepting):
                                 self._closed = True
                                 break
-                        self._wake.wait(.1)
+                        self._wake.wait(0 if admission_pending else .1)
                         continue
-                    done, _ = wait(active, timeout=.05, return_when=FIRST_COMPLETED)
+                    done, _ = wait(active, timeout=0 if admission_pending else .05,
+                                   return_when=FIRST_COMPLETED)
                     with self._lock:
                         for future in done:
                             slot, key, position = active.pop(future)

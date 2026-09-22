@@ -22,6 +22,28 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Latest owner priority (2026-09-23): the30-student/full50/all-final-within50s target is
+  now a reference, NOT a required current adoption gate. Optimize for the most efficient
+  reasonable configuration using complete-job latency, throughput, stability and faithful
+  scoring. Do not equate a larger concurrency number with a better configuration.
+  Owner explicitly authorized a NEW GPU0 maintenance comparison of4/8/16/32 request slots,
+  at most1600 real calls, approximately40–60min development-site interruption, restoring
+  the original model/app afterward. No automatic rollout of the winning setting. Preserve
+  full50, prompts, original deadlines and scoring. See local communication for active evidence.
+  This window is now FINISHED:1600 real calls/32 complete grades, c4/8/16/32 identical
+  actual request hashes. Fixed4 active jobs, two waves x4 profiles, real owned PG/Redis/
+  Cookie plus Qwen; not30 simultaneous users. Batch634.96/354.40/224.46/162.96s, c32 gains
+  37.7% throughput vs16, German full-job77–81s vs108–113s; English16/32 nearly equal.
+  Recommend32 request slots for next integration,16 fallback; not automatic rollout or
+  quality equivalence. Repeat-score max ranges4.33/3.00/1.33/1.35pp; c32 paired-c4 max
+  shift5pp, preserve the c4 English-B outlier and c32 German-B drop. No errors/preemptions.
+  Original services restored observed API3818826/app3820644, argv/cwd/all11 tables match,
+  8 accounts/74 old grades, health200, no pending requests; rediscover identities before use.
+  Evidence artifacts/concurrency-selection-20260923-v1, docs/CONCURRENCY_SELECTION.md,
+  private verified33-file archive7a8e2719affed458c3ad20d06e8cb65bec2051404f864e2a45d4b57991706949.
+  Source adds bounded8-route/10ms admission slices with backoff AFTER full sweep, not per
+  route; original guards/deadlines remain. Local809 passed/40 environment skips/246.90s.
+
 - Latest owner clarification: this is a platform for efficiently dispatching model
   requests and returning faithful prompt evaluations, not a model-internals optimization
   project. Kernel profiling is diagnostic evidence only. Supersede earlier proposals

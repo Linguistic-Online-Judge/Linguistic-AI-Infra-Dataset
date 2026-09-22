@@ -4,6 +4,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Lock, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -348,6 +349,44 @@ def until(predicate, timeout=15):
     while not predicate():
         assert time.monotonic() < deadline, 'condition did not become true'
         time.sleep(.01)
+
+
+def test_many_empty_routes_do_not_add_one_backoff_per_route(setup, monkeypatch):
+    import linguistic_oj.request_submission_executor as module
+
+    store, _, contract, state, executor, submit, calls = setup
+    submitted = submit('alice')
+    route = executor._routes[contract.challenge_id]
+    visited = []
+
+    def empty(index):
+        visited.append(index)
+        return None, None
+
+    executor._routes = {f'empty-{index}': SimpleNamespace(
+        _receive_and_claim_attempt=lambda index=index: empty(index)) for index in range(70)}
+    executor._routes[contract.challenge_id] = route
+    # With an unchanged admission clock, a per-route cooldown would never reach the real queue.
+    monkeypatch.setattr(module, 'monotonic', lambda: 0.)
+    preflight = route._request_preflight
+
+    def stop_after_claim(requests):
+        executor._stop.set()
+        preflight(requests)
+
+    route._request_preflight = stop_after_claim
+    thread, reports, errors = background(executor, continuous=True)
+    thread.join(20)
+    if thread.is_alive():
+        executor._stop.set()
+        thread.join(10)
+        pytest.fail('empty routes delayed the runnable queue')
+    assert not errors and visited == list(range(70))
+    assert reports[0]['counts']['queue_observations'] == 71
+    assert len(calls) == 50
+    result = store.owner_result(submitted.submission_id, submitted.user_id)
+    assert result.status.value == 'succeeded'
+    state.require_clean()
 
 
 def test_continuous_late_jobs_publish_and_retire_while_slow_peer_is_inflight(setup, monkeypatch):

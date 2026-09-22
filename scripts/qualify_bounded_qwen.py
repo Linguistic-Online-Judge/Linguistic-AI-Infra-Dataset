@@ -29,8 +29,8 @@ def profiles(root):
 def calibration_contract(base, capacity):
     from linguistic_oj.mvp_contract import EvaluationContract
 
-    if capacity not in (1, 2, 4):
-        raise ValueError('qualification capacity must be 1, 2 or 4')
+    if type(capacity) is not int or capacity not in (1, 2, 4, 8, 16, 32):
+        raise ValueError('unsupported isolated qualification capacity')
     value = json.loads(base.snapshot_json)
     value['limits']['worker_model_concurrency'] = capacity
     derived = EvaluationContract.from_mapping(value)
@@ -49,13 +49,16 @@ def main():
     for name in ('root', 'data-root', 'tokenizer-snapshot', 'launch-evidence', 'output',
                  'postgres-socket', 'redis-socket'):
         parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--capacity', type=int, choices=(1, 2, 4), required=True)
+    parser.add_argument('--capacity', type=int, choices=(1, 2, 4, 8, 16, 32), required=True)
+    parser.add_argument('--request-level', action='store_true')
     parser.add_argument('--model-pid', type=int)
     parser.add_argument('--postgres-user', required=True)
     parser.add_argument('--postgres-database', default='postgres')
     parser.add_argument('--postgres-port', type=int, default=5433)
     parser.add_argument('--run-real-qwen', action='store_true')
     args = parser.parse_args()
+    if args.capacity > 4 and not args.request_level:
+        parser.error('capacities above4 require the continuous request-level qualification')
     if any(key in getproxies() for key in ('http', 'https', 'all')):
         raise ValueError('qualification rejects implicit model proxies')
     root = args.root.resolve()
@@ -115,7 +118,10 @@ def main():
             for key, item in selected.items()},
         'transport': 'inprocess-cookie-API/PostgreSQL/Redis/real-loopback-Qwen-HTTP',
         'production_scores_written': False, 'classroom_capacity_verified': False,
-        'arrival_policy': 'at-most-capacity-outstanding-submissions', 'users': 8,
+        'arrival_policy': ('two-waves-of-four-profiles' if args.request_level else
+                           'at-most-capacity-outstanding-submissions'), 'users': 8,
+        'request_level': args.request_level,
+        'max_active_jobs': 4 if args.request_level else args.capacity,
         'queue_pressure_test': False, 'same_prompt_repetitions_use_distinct_users': True,
         'quality_qualification_passed': False, 'rows': [], 'results': [], 'cleanup': {}}
     if not args.run_real_qwen:
@@ -141,7 +147,9 @@ def main():
     from linguistic_oj.providers import GenerationSettings, ProviderContractError
     from linguistic_oj.qwen_runtime import QwenTokenizerPreflight
     from linguistic_oj.runner import evaluate_raw_response
+    from linguistic_oj.runtime_availability import LocalModelProbe
     from linguistic_oj.sample_cache import VerifiedSelectionCache
+    from linguistic_oj.sample_scheduler import ScheduledProvider
     from linguistic_oj.submission_jobs import OutboxDispatcher, _SubmissionWorkerCore
 
     directory = args.output.parent / ('qualification-c' + str(args.capacity))
@@ -151,6 +159,7 @@ def main():
     stop, fatal, records_lock = Event(), Event(), Lock()
     tokenizer_lock = Lock()
     rows, completed, contexts = report['rows'], report['results'], {}
+    contexts_by_hash = {}
     model_attempts = 0
     worker_thread = None
     worker_stopped = True
@@ -202,6 +211,42 @@ def main():
             self._provider.sample_position = 0
             return super()._evaluate_claim(delivery, claim)
 
+    class QualifiedSampleProvider(ScheduledProvider):
+        def generate_sample(self, request, *, context, timeout_seconds):
+            nonlocal model_attempts
+            sid = contexts_by_hash[context['submission_sha256']]
+            submission = contexts[sid]
+            position = context['sample_position']
+            case = profiles_by_id[submission['profile']]['cases'][position - 1]
+            assert request == case.request
+            with records_lock:
+                if fatal.is_set() or model_attempts >= 400:
+                    raise ProviderContractError('qualification stopped or request budget exhausted')
+                model_attempts += 1
+                submission.setdefault('first_request_seconds', time.monotonic() - started_batch)
+            before = time.monotonic()
+            try:
+                generation = super().generate_sample(request, context=context,
+                                                      timeout_seconds=timeout_seconds)
+            except BaseException:
+                fatal.set()
+                stop.set()
+                raise
+            elapsed = time.monotonic() - before
+            outcome = evaluate_raw_response(sample=case.prepared.dataset_sample,
+                manifest_sample=case.prepared.manifest_sample, task=request.task,
+                model_input=request.model_input, raw_response=generation.raw_text)
+            with records_lock:
+                rows.append({'submission_id': sid, **submission, 'sample_position': position,
+                    'request_sha256': context['request_sha256'],
+                    'request_seconds': elapsed,
+                    'input_tokens': generation.prompt_token_count,
+                    'output_tokens': generation.generated_token_count,
+                    'output_sha256': hashlib.sha256(generation.raw_text.encode()).hexdigest(),
+                    'format_error': outcome.error_code.value if outcome.error_code else None,
+                    'score_statistics': asdict(outcome.score) if outcome.score else None})
+            return generation
+
     def checkpoint(status):
         with records_lock:
             snapshot = {**report, 'status': status, 'rows': list(rows), 'results': list(completed),
@@ -247,11 +292,14 @@ def main():
             _write_atomic(directory / 'resources.private.json', resources_proof)
             cache = VerifiedSelectionCache()
             lanes = []
+            preflights = {}
             for _ in range(args.capacity):
                 lane = {}
                 for key, item in selected.items():
                     contract = item['contract']
-                    provider = QualifiedProvider(executor_state=state, challenge_id=key,
+                    provider_type = (QualifiedSampleProvider if args.request_level
+                                     else QualifiedProvider)
+                    provider = provider_type(executor_state=state, challenge_id=key,
                         base_url='http://127.0.0.1:8001/v1', identity=model,
                         settings=GenerationSettings(**contract.evaluation_identity['generation_settings']),
                         timeout_seconds=contract.provider_request_timeout_seconds,
@@ -263,13 +311,28 @@ def main():
                         with tokenizer_lock:
                             selected(requests)
 
-                    lane[key] = QualifiedWorker(store=store, queue=queues[key], contract=contract,
-                        artifacts=item['artifacts'], provider=provider,
-                        lease_seconds=contract.job_deadline_seconds,
-                        request_preflight=locked_preflight,
-                        require_termination_confirmation=True, selection_cache=cache,
-                        claim_guard=state.claim_guard)
+                    preflights[key] = locked_preflight
+                    if args.request_level:
+                        lane[key] = provider
+                    else:
+                        lane[key] = QualifiedWorker(store=store, queue=queues[key],
+                            contract=contract,
+                            artifacts=item['artifacts'], provider=provider,
+                            lease_seconds=contract.job_deadline_seconds,
+                            request_preflight=locked_preflight,
+                            require_termination_confirmation=True, selection_cache=cache,
+                            claim_guard=state.claim_guard)
                 lanes.append(lane)
+            executor = None
+            if args.request_level:
+                from linguistic_oj.request_submission_executor import RequestSubmissionExecutor
+
+                probe = LocalModelProbe('http://127.0.0.1:8001', model.model)
+                executor = RequestSubmissionExecutor(store=store, queues=queues,
+                    contracts={key: item['contract'] for key, item in selected.items()},
+                    artifacts={key: item['artifacts'] for key, item in selected.items()},
+                    preflights=preflights, slots=lanes, state=state, model_capacity=args.capacity,
+                    max_jobs=4, stop=stop, selection_cache=cache, model_healthy=probe.healthy)
             with socket.socket() as reserved:
                 reserved.bind(('127.0.0.1', 0))
                 origin = f'http://127.0.0.1:{reserved.getsockname()[1]}'
@@ -285,7 +348,8 @@ def main():
                     public_challenges={key: value['artifacts'].public
                                        for key, value in selected.items()},
                     authenticate=auth.authenticate, environment='test',
-                    allow_draft_submissions=True)
+                    allow_draft_submissions=True,
+                    runtime_probe=executor.availability if executor is not None else None)
                 install_auth_routes(app, auth)
                 with ExitStack() as clients:
                     sessions = {owner: clients.enter_context(TestClient(app, base_url=origin,
@@ -304,7 +368,10 @@ def main():
 
                     def execute():
                         try:
-                            run_bounded(lanes, state, stop, model_capacity=args.capacity)
+                            if executor is not None:
+                                report['executor'] = executor.run()
+                            else:
+                                run_bounded(lanes, state, stop, model_capacity=args.capacity)
                         except BaseException as error:
                             errors.append(type(error).__name__)
                             fatal.set()
@@ -315,16 +382,25 @@ def main():
                     waiting, pending = list(jobs), set()
                     deadline = time.monotonic() + 4200
                     try:
+                        if executor is not None:
+                            ready_until = time.monotonic() + 10
+                            while not executor.availability() and time.monotonic() < ready_until:
+                                time.sleep(.05)
+                            assert executor.availability()
                         while ((waiting or pending) and not fatal.is_set()
                                and time.monotonic() < deadline):
                             current_ticks = (proc / 'stat').read_text().rsplit(
                                 ')', 1)[1].split()[19]
                             assert current_ticks == process_ticks
-                            while waiting and len(pending) < args.capacity and not fatal.is_set():
+                            release_wave = not pending
+                            while (waiting and len(pending) < report['max_active_jobs']
+                                   and not fatal.is_set()
+                                   and (not args.request_level or release_wave)):
                                 job = waiting.pop(0)
                                 details = profiles_by_id[job['profile']]
                                 # Publish and register the observer context before any worker claim.
                                 with state.claim_guard():
+                                    submitted_seconds = time.monotonic() - started_batch
                                     response = sessions[job['owner']].post(
                                         '/v1/submissions', headers={
                                         'X-LOJ-Expected-User': users[job['owner']],
@@ -333,7 +409,8 @@ def main():
                                             'student_prompt': details['prompt']})
                                     assert response.status_code == 202
                                     sid = response.json()['submission_id']
-                                    contexts[sid] = dict(job)
+                                    contexts[sid] = {**job, 'submitted_seconds': submitted_seconds}
+                                    contexts_by_hash[hashlib.sha256(sid.encode()).hexdigest()] = sid
                                     pending.add(sid)
                             for sid in tuple(pending):
                                 context = contexts[sid]
@@ -343,15 +420,17 @@ def main():
                                     continue
                                 assert response.status_code == 200
                                 result = response.json()
+                                readable = time.monotonic() - started_batch
                                 completed.append({'submission_id': sid, **context,
-                                    'result': result,
-                                    'final_readable_seconds': time.monotonic() - started_batch})
+                                    'result': result, 'final_readable_seconds': readable,
+                                    'submission_to_result_seconds': readable
+                                        - context['submitted_seconds']})
                                 pending.remove(sid)
                                 if result['outcome'] == 'succeeded':
                                     assert result['samples_total'] == 50
                             checkpoint('running')
                             if waiting or pending:
-                                time.sleep(1)
+                                time.sleep(.1 if args.request_level else 1)
                         assert not pending and not waiting and not fatal.is_set() and not errors
                     finally:
                         stop.set()
@@ -363,6 +442,8 @@ def main():
                     all_scores = all(item['result']['outcome'] == 'succeeded' for item in completed)
                     if all_scores:
                         assert len(rows) == model_attempts == 400
+                        assert len({(row['submission_id'], row['sample_position'])
+                                    for row in rows}) == 400
                     report['all_final_scores_returned'] = all_scores
                     report['all_terminal_readable_seconds'] = max(
                         result['final_readable_seconds'] for result in completed)

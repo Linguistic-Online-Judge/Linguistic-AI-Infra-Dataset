@@ -143,6 +143,7 @@ class RequestSubmissionExecutor:
             recent = deque(maxlen=self._history_limit)
             keys = tuple(self._routes)
             next_admission = 0.0
+            scan_remaining = len(keys)
             peak_jobs = 0
 
             def record(submission_id, outcome):
@@ -159,35 +160,44 @@ class RequestSubmissionExecutor:
                     raise
 
             def admit():
-                nonlocal next_admission, peak_jobs
+                nonlocal next_admission, peak_jobs, scan_remaining
                 if self._stop.is_set():
                     scheduler.seal()
                     return
                 if (monotonic() < next_admission or not scheduler.admission_capacity
                         or not self.availability()):
                     return
-                # One observation per tick bounds queue/DB work and avoids busy-user nack spins.
-                next_admission = monotonic() + .05
-                key = keys[self._cursor % len(keys)]
-                self._cursor = (self._cursor + 1) % len(keys)
-                route = self._routes[key]
-                with self._state.claim_guard():
-                    if self._stop.is_set():
-                        return
-                    _, claimed = route._receive_and_claim_attempt()
-                totals['queue_observations'] += 1
-                if claimed is None:
-                    return
-                delivery, claim = claimed
-                totals['claims'] += 1
-                outcome = self._admit(scheduler, contexts, route, delivery, claim)
-                peak_jobs = max(peak_jobs, len(contexts))
-                if outcome is not None:
-                    record(claim.submission_id, outcome)
+                # Back off after a sweep, not after each route. Bound coordinator work so
+                # completed samples get processed even with many empty or busy-user queues.
+                scan_started = monotonic()
+                for _ in range(min(8, scan_remaining)):
+                    key = keys[self._cursor % len(keys)]
+                    self._cursor = (self._cursor + 1) % len(keys)
+                    scan_remaining -= 1
+                    route = self._routes[key]
+                    with self._state.claim_guard():
+                        if self._stop.is_set():
+                            return
+                        _, claimed = route._receive_and_claim_attempt()
+                    totals['queue_observations'] += 1
+                    if scan_remaining == 0:
+                        scan_remaining = len(keys)
+                        next_admission = monotonic() + .05
+                    if claimed is not None:
+                        delivery, claim = claimed
+                        totals['claims'] += 1
+                        outcome = self._admit(scheduler, contexts, route, delivery, claim)
+                        peak_jobs = max(peak_jobs, len(contexts))
+                        if outcome is not None:
+                            record(claim.submission_id, outcome)
+                        break
+                    if monotonic() >= scan_started + .01 or monotonic() < next_admission:
+                        break
+                return monotonic() >= next_admission and bool(scheduler.admission_capacity)
 
             def tick():
                 try:
-                    admit()
+                    return admit()
                 except BaseException:
                     self.availability.fail()
                     raise
