@@ -1,10 +1,11 @@
 import hashlib
 import io
 import tarfile
+from types import SimpleNamespace
 
 import pytest
 
-from scripts.qwen_dev_ops import validate_marker, verify_archive
+from scripts.qwen_dev_ops import backup, validate_marker, verify_archive
 
 
 def test_operations_refuse_unrelated_database_or_owner():
@@ -42,3 +43,16 @@ def test_restore_rejects_parent_paths_without_extracting(tmp_path):
     with pytest.raises(ValueError, match='unsafe'):
         verify_archive(archive, {'../outside': hashlib.sha256(b'content').hexdigest()})
     assert not (tmp_path / 'outside').exists()
+
+
+@pytest.mark.parametrize('profile_flag', [False, True])
+def test_serial_backup_cannot_omit_request_profile_or_recovery_ledger(tmp_path, profile_flag):
+    argv = ['python', '-m', 'linguistic_oj.qwen_development']
+    if profile_flag:
+        argv.extend(['--execution-profile', '/private/profile.json'])
+    else:
+        (tmp_path / 'request-executor').mkdir()
+    instance = SimpleNamespace(state=tmp_path, application=lambda: (123, argv))
+    with pytest.raises(ValueError, match='profile-and-ledger-aware'):
+        backup(instance)
+    assert not (tmp_path / 'backups').exists()

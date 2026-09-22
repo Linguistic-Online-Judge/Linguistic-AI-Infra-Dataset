@@ -54,6 +54,43 @@ def test_bounded_full_jobs_on_owned_postgres_and_redis(
     assert cleanup['redis']['confirmed'] and cleanup['redis']['keys_deleted'] == 2
 
 
+@pytest.mark.parametrize('max_jobs', [4, 8, 16])
+def test_request_workbench_full_mixed_jobs_on_owned_services(tmp_path, max_jobs):
+    from psycopg.conninfo import conninfo_to_dict
+
+    from scripts.check_request_development import exercise
+
+    owned = resources_module(ROOT)
+    cleanup, redis_cleanups = {}, []
+    lifecycle = {'worker_stopped': True, 'requests_reconciled': True}
+
+    def close(resource):
+        if not lifecycle['worker_stopped'] or not lifecycle['requests_reconciled']:
+            pytest.fail('owned mixed-workbench resources retained for reconciliation')
+        resource.close()
+
+    with ExitStack() as resources:
+        postgres = owned.OwnedPostgres(conninfo_to_dict(POSTGRES), cleanup)
+        resources.callback(close, postgres)
+        store = postgres.create()
+
+        def queue_factory(contract):
+            per_queue = {}
+            redis_cleanups.append(per_queue)
+            redis = owned.OwnedRedis(None, 15, contract, per_queue, redis_url=REDIS)
+            resources.callback(close, redis)
+            return redis.create(contract)
+
+        report = exercise(ROOT, tmp_path, store, queue_factory, max_jobs=max_jobs,
+                          lifecycle=lifecycle)
+        assert report['passed'] and report['fixture_model_calls'] == 800
+        assert report['request_slots'] == 32 and report['real_qwen_calls'] == 0
+    assert cleanup['postgres']['confirmed'] and cleanup['postgres']['tables_dropped'] == 11
+    assert len(redis_cleanups) == 22
+    assert all(item['redis']['confirmed'] and item['redis']['keys_deleted'] == 2
+               for item in redis_cleanups)
+
+
 def test_postgres_claim_observation_and_publication_use_actual_lease_and_database_time(tmp_path):
     from psycopg.conninfo import conninfo_to_dict
 

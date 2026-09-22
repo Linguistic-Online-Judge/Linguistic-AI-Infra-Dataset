@@ -16,6 +16,7 @@ def source(tmp_path: Path) -> Path:
         "config/mvp_evaluation_v2.json",
         "scripts/check_qwen_pipeline.py",
         "scripts/check_bounded_pipeline.py",
+        "scripts/check_request_development.py",
         "scripts/qualify_bounded_qwen.py",
         "scripts/qualify_sample_scheduling.py",
         "src/linguistic_oj/__init__.py",
@@ -41,6 +42,7 @@ def test_bundle_contains_only_allowlisted_sources_with_fingerprints(source):
         assert all("__pycache__" not in name for name in names)
         assert "src/linguistic_oj/web/index.html" in names
         assert "src/linguistic_oj/web/assets/brand-option-a.svg" in names
+        assert "scripts/check_request_development.py" in names
         manifest = json.load(archive.extractfile("acceptance-source.json"))
         assert manifest["production_release"] is False
         assert set(manifest["files"]) == names - {"acceptance-source.json"}

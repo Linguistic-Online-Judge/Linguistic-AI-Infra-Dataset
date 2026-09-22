@@ -22,6 +22,31 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Private-workbench request integration now exists: qwen_development --execution-profile
+  plus request_development prepare/check/init. Profiles bind every source contract and only
+  derive worker_model_concurrency; original files/instance marker/history stay intact.
+  Defaults32 request slots/4 active jobs, explicit16 and4/8/16 isolated alternatives. New
+  state STATE_DIR/request-executor requires offline explicit init; no rebind/delete bypass.
+  Build checks same-model/tokenizer/launch capacity, one tokenizer load, independent slots,
+  same-process admission/readiness, graceful/cancellation drain and runtime exit70/75/78.
+  Legacy fallback checks bounded ledger too; old queued/running contract hashes block a
+  profile switch in both stores. No schema migration or global experimental-provider bypass.
+  Offline scripts/prepare_request_development.py emits protected profile and user-service
+  template: prevent restarts75/78, infinite drain, no forced kill. No model/app activation.
+  See docs/REQUEST_DEVELOPMENT_ROLLOUT.md. School real PG/Redis fixture max_jobs4/8/16 passed:
+  each16 users/16 full50 jobs/800 fake HTTP calls,32 peak,5 task types,18-language catalog/
+  22 routes, exact correlation, early short result, health/results checks, owned cleanup
+  11 tables/44 Redis keys each. Zero Qwen/restarts/deployment. Actual mixed workload uses
+  English4 tasks and ChineseUPOS, not all18 languages evaluated. Source/report evidence
+  artifacts/request-workbench-services-20260923-v1. Real active-job tuning and school
+  cutover remain pending a NEW maintenance window; previous model comparison is finished.
+  Current qwen_dev_ops v1 backup does NOT include execution profiles/ledgers; it now refuses
+  request-mode argv or an existing request-executor directory instead of producing an
+  incomplete backup. Profile-aware backup/isolated restore remains a specific pre-cutover
+  task. Offline70-contract material runtime/request-development-preparation-20260923-v2
+  generated, no activation. Local825 passed/43 environment skips/289.89s;9 backup/bundle
+  tests passed after two added guards. Do not silently use old backup commands for this mode.
+
 - Latest owner priority (2026-09-23): the30-student/full50/all-final-within50s target is
   now a reference, NOT a required current adoption gate. Optimize for the most efficient
   reasonable configuration using complete-job latency, throughput, stability and faithful

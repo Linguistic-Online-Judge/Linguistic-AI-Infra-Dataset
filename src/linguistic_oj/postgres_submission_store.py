@@ -314,6 +314,12 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
             with connection.cursor() as cursor:
                 return claim.deadline_at <= _timestamp(self._database_now(cursor))
 
+    def outstanding_contract_hashes(self) -> set[str]:
+        with self._connect() as connection:
+            return {row[0] for row in connection.execute(
+                "SELECT DISTINCT contract_snapshot_sha256 FROM submissions "
+                "WHERE status IN ('queued', 'running')").fetchall()}
+
     def claim_is_current(self, claim: ClaimedSubmission) -> bool:
         with self._connect() as connection:
             with connection.cursor() as cursor:

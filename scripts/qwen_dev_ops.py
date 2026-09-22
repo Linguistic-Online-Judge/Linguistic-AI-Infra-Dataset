@@ -169,6 +169,8 @@ def archive_files(path, files):
 
 def backup(instance):
     pid, argv = instance.application()
+    if '--execution-profile' in argv or (instance.state / 'request-executor').exists():
+        raise ValueError('request execution needs a profile-and-ledger-aware backup format')
     source = Path(argv[argv.index('--root') + 1]).resolve(strict=True)
     data = Path(argv[argv.index('--data-root') + 1]).resolve(strict=True)
     if not source.is_relative_to(instance.root) or not data.is_relative_to(instance.root):

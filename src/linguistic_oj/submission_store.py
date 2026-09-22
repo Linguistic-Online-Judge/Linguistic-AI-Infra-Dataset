@@ -207,6 +207,8 @@ class SubmissionStoreProtocol(Protocol):
 
     def claim_is_current(self, claim: ClaimedSubmission) -> bool: ...
 
+    def outstanding_contract_hashes(self) -> set[str]: ...
+
     def expire_leases(self, *, evaluation_identity_sha256: str) -> int: ...
 
     def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int: ...
@@ -799,6 +801,12 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
 
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool:
         return claim.deadline_at <= _timestamp(_utc_now())
+
+    def outstanding_contract_hashes(self) -> set[str]:
+        with self._connect() as connection:
+            return {row[0] for row in connection.execute(
+                "SELECT DISTINCT contract_snapshot_sha256 FROM submissions "
+                "WHERE status IN ('queued', 'running')").fetchall()}
 
     def claim_is_current(self, claim: ClaimedSubmission) -> bool:
         with self._connect() as connection:

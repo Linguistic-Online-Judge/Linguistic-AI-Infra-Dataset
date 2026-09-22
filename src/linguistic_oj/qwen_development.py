@@ -16,7 +16,7 @@ import socket
 import sys
 import uuid
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -31,11 +31,18 @@ from .api import APIError, create_app
 from .auth import AuthService, install_auth_routes
 from .challenge import LANGUAGE_CODES, load_challenge_artifacts
 from .challenge_registry import load_challenge_contract_registry
+from .executor_state import ExecutorBusy, RecoveryRequired
 from .local_dev import _ACCOUNTS, LOCAL_PASSWORD, _state_lock
 from .postgres_migrations import migrate_postgres
 from .postgres_submission_store import PostgresSubmissionStore
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
 from .redis_job_queue import RedisJobQueue
+from .request_development import (
+    build_runtime,
+    load_profile,
+    require_compatible_outstanding,
+    require_legacy_safe,
+)
 from .runtime_availability import LocalModelProbe
 from .sample_cache import VerifiedSelectionCache
 from .submission_jobs import (
@@ -46,6 +53,19 @@ from .submission_jobs import (
 
 REQUIRED_LANGUAGES = frozenset(LANGUAGE_CODES)
 INSTANCE_KIND = "linguistic-oj-private-qwen18-v1"
+
+
+async def _drain_task(task):
+    """Cancellation must not close queues/state while a request thread is still running."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def _consume_serial_workers(workers, providers, state_dir, stop, *, can_dispatch=None):
@@ -202,14 +222,28 @@ def prepare_store(
 
 
 def build_qwen_development(args):
+    resources = ExitStack()
+    try:
+        return _build_qwen_development(args, resources)
+    except BaseException:
+        resources.close()
+        raise
+
+
+def _build_qwen_development(args, resources):
     if (args.state_dir / "uncertain-inference.json").exists():
-        raise ValueError("confirm termination of the previous model request before restarting")
+        raise RecoveryRequired("confirm previous model request termination before restarting")
     root = args.root.resolve()
     registry, artifacts = load_development_catalog(
         root, args.data_root.resolve(),
         getattr(args, "registry", Path("config/challenge_contract_registry_v1.json")),
     )
     hashes = {key: value.contract_snapshot_sha256 for key, value in registry.contracts.items()}
+    profile_path = getattr(args, 'execution_profile', None)
+    profile = load_profile(profile_path, registry.contracts) if profile_path is not None else None
+    if profile is None:
+        require_legacy_safe(args.state_dir)
+    contracts = registry.contracts if profile is None else profile.contracts
     store, marker = prepare_store(
         args.state_dir,
         pg_socket=args.postgres_socket.resolve(),
@@ -217,6 +251,7 @@ def build_qwen_development(args):
         initialize=args.initialize,
         contract_hashes=hashes,
     )
+    require_compatible_outstanding(store, contracts)
     mailbox = deque(maxlen=100)
     mail_lock = Lock()
 
@@ -245,8 +280,10 @@ def build_qwen_development(args):
             auth.provision_development_account(email, LOCAL_PASSWORD, handle, role)
     workers, dispatchers, queues, providers = {}, {}, {}, {}
     selection_cache = VerifiedSelectionCache()
+    runtime = None
+    model_probe = LocalModelProbe('http://127.0.0.1:8000', 'Qwen/Qwen3.5-9B')
     try:
-        for key, contract in registry.contracts.items():
+        for key, contract in contracts.items():
             identity = contract.evaluation_identity
             provider = OpenAICompatibleProvider(
                 base_url="http://127.0.0.1:8000/v1",
@@ -261,37 +298,48 @@ def build_qwen_development(args):
                 redis_url=redis_url,
                 routing_key=contract.contract_snapshot_sha256,
                 namespace="loj-qwen-dev:" + marker["instance"],
-                consumer_name="serial-development",
+                consumer_name="serial-development" if profile is None else "request-development",
                 visibility_timeout_seconds=contract.job_deadline_seconds
                 + QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS,
             )
             queues[key] = queue
-            workers[key] = QwenSubmissionWorker(
-                store=store,
-                queue=queue,
-                contract=contract,
-                artifacts=artifacts[key],
-                provider=provider,
-                tokenizer_snapshot_path=args.tokenizer_snapshot.resolve(),
-                launch_evidence_path=args.launch_evidence.resolve(),
-                selection_cache=selection_cache,
-            )
+            resources.callback(queue.close)
+            if profile is None:
+                workers[key] = QwenSubmissionWorker(
+                    store=store,
+                    queue=queue,
+                    contract=contract,
+                    artifacts=artifacts[key],
+                    provider=provider,
+                    tokenizer_snapshot_path=args.tokenizer_snapshot.resolve(),
+                    launch_evidence_path=args.launch_evidence.resolve(),
+                    selection_cache=selection_cache,
+                )
             dispatchers[key] = OutboxDispatcher(store, queue, contract)
+        if profile is not None:
+            runtime = build_runtime(profile=profile, marker=marker, state_dir=args.state_dir,
+                store=store, queues=queues, artifacts=artifacts,
+                tokenizer_snapshot=args.tokenizer_snapshot.resolve(),
+                launch_evidence=args.launch_evidence.resolve(), model_healthy=model_probe.healthy,
+                selection_cache=selection_cache)
+            resources.callback(runtime.close)
     except Exception:
-        for queue in queues.values():
-            queue.close()
+        resources.close()
         raise
 
     status = {"running": False, "failed": False}
-    model_probe = LocalModelProbe('http://127.0.0.1:8000', 'Qwen/Qwen3.5-9B')
 
     def runtime_ready(_challenge_id):
+        if runtime is not None:
+            return runtime.availability(_challenge_id)
         return status['running'] and not status['failed'] and model_probe.healthy()
 
     def ready():
         store.health_check()
         if not status["running"] or status["failed"]:
-            raise RuntimeError("serial Qwen worker is unavailable")
+            raise RuntimeError("Qwen worker is unavailable")
+        if runtime is not None and not runtime.availability():
+            raise RuntimeError('request Qwen executor is unavailable')
         if not model_probe.healthy():
             raise RuntimeError('Qwen model service is unavailable')
         for queue in queues.values():
@@ -300,33 +348,48 @@ def build_qwen_development(args):
     app = create_app(
         store=store,
         dispatcher=dispatchers,
-        contract=registry.contracts,
+        contract=contracts,
         public_challenges=registry.public_challenges,
         authenticate=auth.authenticate,
         readiness_check=ready,
         allow_draft_submissions=True,
         environment="development",
-        runtime_availability=dict.fromkeys(workers, True),
+        runtime_availability=dict.fromkeys(contracts, True),
         runtime_probe=runtime_ready,
     )
     install_auth_routes(app, auth)
     install_admin_routes(app)
+    app.state.executor_exit_code = 0
+    app.state.request_execution = runtime
+    app.state.close_qwen_resources = resources.close
+    app.state.request_executor_shutdown = lambda: None
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
     async def lifespan(application):
-        stop = asyncio.Event()
+        stop = asyncio.Event() if runtime is None else runtime.stop
 
         async def consume():
-            # One loop across all queues: no overlapping model evaluations.
             try:
-                await _consume_serial_workers(workers, providers, args.state_dir, stop,
-                                               can_dispatch=model_probe.healthy)
+                if runtime is None:
+                    await _consume_serial_workers(workers, providers, args.state_dir, stop,
+                                                   can_dispatch=model_probe.healthy)
+                else:
+                    execution = asyncio.create_task(asyncio.to_thread(runtime.run))
+                    try:
+                        await asyncio.shield(execution)
+                    finally:
+                        stop.set()
+                        await _drain_task(execution)
             except Exception:
                 status["failed"] = True
                 application.state.admin_context["runtime_availability"].update(
-                    dict.fromkeys(workers, False)
+                    dict.fromkeys(contracts, False)
                 )
+                if runtime is not None:
+                    application.state.executor_exit_code = (
+                        75 if runtime.state.dispatch_faulted else 70)
+                    application.state.request_executor_shutdown()
                 logging.getLogger(__name__).error("qwen_development_worker_failed")
 
         try:
@@ -337,11 +400,10 @@ def build_qwen_development(args):
                     yield
                 finally:
                     stop.set()
-                    await task
+                    await _drain_task(task)
                     status["running"] = False
         finally:
-            for queue in queues.values():
-                queue.close()
+            resources.close()
 
     app.router.lifespan_context = lifespan
 
@@ -363,7 +425,7 @@ def build_qwen_development(args):
                 "model": "Qwen/Qwen3.5-9B",
                 "languages": sorted(REQUIRED_LANGUAGES),
                 "language_count": len(REQUIRED_LANGUAGES),
-                "executable_challenges": len(workers),
+                "executable_challenges": len(contracts),
                 "catalog_challenges": len(registry.public_challenges),
                 "accounts": [
                     {
@@ -404,7 +466,9 @@ def main():
     parser.add_argument("--port", type=int, default=8090)
     parser.add_argument("--initialize", action="store_true")
     parser.add_argument("--registry", type=Path,
-                        default=Path("config/challenge_contract_registry_v1.json"))
+                         default=Path("config/challenge_contract_registry_v1.json"))
+    parser.add_argument('--execution-profile', type=Path,
+                        help='explicit versioned private request execution profile')
     args = parser.parse_args()
     if os.name != "posix":
         parser.error(
@@ -428,7 +492,7 @@ def main():
             with _state_lock(args.state_dir):
                 app = build_qwen_development(args)
                 print(f"Private Qwen18 workbench: http://127.0.0.1:{args.port}/", flush=True)
-                uvicorn.Server(
+                server = uvicorn.Server(
                     uvicorn.Config(
                         app,
                         host="127.0.0.1",
@@ -436,11 +500,20 @@ def main():
                         access_log=False,
                         proxy_headers=False,
                     )
-                ).run(sockets=[listener])
-        return 0
+                )
+                app.state.request_executor_shutdown = lambda: setattr(server, 'should_exit', True)
+                try:
+                    server.run(sockets=[listener])
+                finally:
+                    app.state.close_qwen_resources()
+        return app.state.executor_exit_code
+    except (ExecutorBusy, RecoveryRequired):
+        print('Qwen development requires exclusive access or inference reconciliation',
+              file=sys.stderr)
+        return 75
     except Exception as error:
         print(f"Qwen development startup failed: {type(error).__name__}", file=sys.stderr)
-        return 1
+        return 78 if args.execution_profile is not None else 1
 
 
 if __name__ == "__main__":

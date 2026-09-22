@@ -24,6 +24,7 @@ def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
         root / "config/mvp_evaluation_v2.json",
         root / "scripts/check_qwen_pipeline.py",
         root / "scripts/check_bounded_pipeline.py",
+        root / "scripts/check_request_development.py",
         root / "scripts/qualify_bounded_qwen.py",
         root / "scripts/qualify_sample_scheduling.py",
     ]
