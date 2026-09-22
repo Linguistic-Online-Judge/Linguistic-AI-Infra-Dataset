@@ -11,7 +11,7 @@ import re
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 
 from .auth_config import _read_protected
 from .executor_state import (
@@ -92,11 +92,19 @@ class BoundedExecutorState:
         self.directory = directory
         self.binding_sha256 = binding_sha256
         self._lock = RLock()
+        self._fault_signal = Event()
         self._live = set()
         self._poisoned = False
         first = self.snapshot()
         self.max_inflight = first['max_inflight']
         self._startup_pending = bool(first['pending'])
+        if self._startup_pending or first['blocked']:
+            self._fault_signal.set()
+
+    @property
+    def dispatch_faulted(self):
+        """Nonblocking fault observation; never a replacement for the durable dispatch gate."""
+        return self._fault_signal.is_set()
 
     @classmethod
     def initialize(cls, directory, binding_sha256, *, max_inflight=1):
@@ -112,24 +120,33 @@ class BoundedExecutorState:
 
     def snapshot(self):
         with self._lock:
-            state = read_bounded_state(self.directory)
-            if (state['binding_sha256'] != self.binding_sha256
-                    or state['max_inflight'] != getattr(
-                        self, 'max_inflight', state['max_inflight'])):
-                raise ValueError('bounded executor binding or capacity changed')
-            return state
+            try:
+                state = read_bounded_state(self.directory)
+                if (state['binding_sha256'] != self.binding_sha256
+                        or state['max_inflight'] != getattr(
+                            self, 'max_inflight', state['max_inflight'])):
+                    raise ValueError('bounded executor binding or capacity changed')
+                return state
+            except BaseException:
+                self._fault_signal.set()
+                raise
 
     def _write(self, state):
         previous = self._poisoned
         self._poisoned = True
-        _write_atomic(self.directory / 'state.json', state)
+        try:
+            _write_atomic(self.directory / 'state.json', state)
+        except BaseException:
+            self._fault_signal.set()
+            raise
         self._poisoned = previous
 
     def require_dispatchable(self):
         with self._lock:
             state = self.snapshot()
-            if (self._poisoned or self._startup_pending or state['blocked']
-                    or set(state['pending']) != self._live):
+            if (self._fault_signal.is_set() or self._poisoned or self._startup_pending
+                    or state['blocked'] or set(state['pending']) != self._live):
+                self._fault_signal.set()
                 raise RecoveryRequired('bounded executor requires termination reconciliation')
 
     def require_clean(self):
@@ -168,8 +185,9 @@ class BoundedExecutorState:
             state = self.snapshot()
             if operation not in self._live or operation not in state['pending']:
                 self._poisoned = True
+                self._fault_signal.set()
                 raise RecoveryRequired('request completion does not match live ownership')
-            if self._poisoned or state['blocked']:
+            if self._fault_signal.is_set() or self._poisoned or state['blocked']:
                 # Drain callers, but retain conservative recovery evidence after any incident.
                 # In particular, an earlier replace/fsync failure may have partially committed.
                 self._live.remove(operation)
@@ -181,6 +199,7 @@ class BoundedExecutorState:
     def block(self, operation):
         with self._lock:
             self._poisoned = True
+            self._fault_signal.set()
             state = self.snapshot()
             if operation not in self._live or operation not in state['pending']:
                 raise RecoveryRequired('uncertain request identity changed')
@@ -226,6 +245,7 @@ class BoundedExecutorState:
             self._write({**state, 'pending': {}, 'blocked': False, 'last_recovery': recovery_id})
             self._startup_pending = False
             self._poisoned = False
+            self._fault_signal.clear()
 
 
 class BoundedGuardedProvider(OpenAICompatibleProvider):

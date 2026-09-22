@@ -78,6 +78,7 @@ def test_state_versions_capacity_binding_and_exclusive_lock(directory):
             BoundedExecutorState.initialize(directory, BINDING)
         state = BoundedExecutorState(directory, BINDING)
         first, second = state.begin('first'), state.begin('second')
+        assert not state.dispatch_faulted
         with pytest.raises(ExecutorBusy):
             state.begin('third')
         state.finish(second)
@@ -119,6 +120,7 @@ def test_disk_failure_blocks_send_and_new_dispatch(directory, monkeypatch):
         monkeypatch.setattr(module, '_write_atomic', fail)
         with pytest.raises(OSError):
             make_provider(state).generate(request())
+        assert state.dispatch_faulted
         with pytest.raises(RecoveryRequired):
             state.require_dispatchable()
     assert attempts == []
@@ -143,7 +145,9 @@ def test_transport_failure_is_durable_and_other_request_can_drain(
         state.finish(other)
         if confirmed:
             state.require_clean()
+            assert not state.dispatch_faulted
         else:
+            assert state.dispatch_faulted
             assert len(state.snapshot()['pending']) == 2
             assert state.snapshot()['blocked']
             with pytest.raises(RecoveryRequired):
@@ -175,6 +179,7 @@ with executor_lock(path):
         state = BoundedExecutorState(directory, BINDING)
         pending = state.snapshot()['pending']
         assert len(pending) == 2
+        assert state.dispatch_faulted
         with pytest.raises(RecoveryRequired):
             state.require_dispatchable()
         evidence = proof(directory, state, pending)
@@ -188,9 +193,33 @@ with executor_lock(path):
             state.recover_all('c' * 64, evidence)
         state.recover_all(canonical_sha256(pending), evidence)
         state.require_clean()
+        assert not state.dispatch_faulted
         assert len(list((directory / 'recoveries').glob('*.json'))) == 1
         with pytest.raises(ValueError):
             state.recover_all(canonical_sha256(pending), evidence)
+
+
+def test_read_failure_latches_health_and_retains_draining_request_evidence(directory, monkeypatch):
+    with executor_lock(directory):
+        state = BoundedExecutorState(directory, BINDING)
+        operation = state.begin('inflight')
+        original = module.read_bounded_state
+
+        def unreadable(*args):
+            raise OSError('temporary read failure')
+
+        monkeypatch.setattr(module, 'read_bounded_state', unreadable)
+        with pytest.raises(OSError):
+            state.snapshot()
+        assert state.dispatch_faulted
+        monkeypatch.setattr(module, 'read_bounded_state', original)
+        with pytest.raises(RecoveryRequired):
+            state.require_dispatchable()
+        state.finish(operation)
+        assert set(state.snapshot()['pending']) == {operation}
+        restarted = BoundedExecutorState(directory, BINDING)
+        with pytest.raises(RecoveryRequired):
+            restarted.require_clean()
 
 
 def test_recovery_interruption_after_audit_is_resumable_without_overwrite(directory, monkeypatch):

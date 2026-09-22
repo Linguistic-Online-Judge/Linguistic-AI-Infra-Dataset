@@ -1,10 +1,15 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
+from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 
-from linguistic_oj.runtime_availability import LocalModelProbe, ProbedAvailability
+from linguistic_oj.runtime_availability import (
+    ExecutorAvailability,
+    LocalModelProbe,
+    ProbedAvailability,
+)
 
 
 def test_probe_is_read_only_cached_and_recovers_from_model_failure():
@@ -79,3 +84,34 @@ def test_probe_error_and_non_boolean_response_fail_closed():
 def test_probe_rejects_implicit_or_non_loopback_endpoints(url):
     with pytest.raises(ValueError):
         LocalModelProbe(url, 'fixed-model')
+
+
+def test_executor_health_distinguishes_draining_from_faulted_and_rechecks_after_probe():
+    state = SimpleNamespace(dispatch_faulted=False, require_clean=lambda: None)
+    stop = Event()
+    healthy = Event()
+    view = ExecutorAvailability(state=state, model_healthy=healthy.is_set, stop=stop,
+                                challenge_ids=['task'])
+    healthy.set()
+    assert not view('task')  # Not started.
+    view.start()
+    assert view('task') and not view('unknown')
+    stop.set()
+    assert not view('task') and view.dispatch_ready()  # Admitted work can drain.
+    stop.clear()
+    healthy.clear()
+    assert not view('task') and not view.dispatch_ready()
+    healthy.set()
+    assert view('task')
+    view.fail()
+    assert not view('task') and not view.dispatch_ready()
+    view.close()
+
+    def incident_during_probe():
+        state.dispatch_faulted = True
+        return True
+
+    view = ExecutorAvailability(state=state, model_healthy=incident_during_probe, stop=stop,
+                                challenge_ids=['task'])
+    view.start()
+    assert not view('task')

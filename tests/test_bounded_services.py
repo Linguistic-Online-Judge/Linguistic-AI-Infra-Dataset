@@ -18,8 +18,10 @@ pytestmark = pytest.mark.skipif(not POSTGRES or not REDIS,
 
 
 @pytest.mark.parametrize('capacity', [2, 4])
-@pytest.mark.parametrize('request_level', [False, True])
-def test_bounded_full_jobs_on_owned_postgres_and_redis(tmp_path, capacity, request_level):
+@pytest.mark.parametrize('request_level,continuous', [(False, False), (True, False), (True, True)])
+def test_bounded_full_jobs_on_owned_postgres_and_redis(
+    tmp_path, capacity, request_level, continuous,
+):
     from psycopg.conninfo import conninfo_to_dict
 
     owned = resources_module(ROOT)
@@ -42,9 +44,10 @@ def test_bounded_full_jobs_on_owned_postgres_and_redis(tmp_path, capacity, reque
 
         report = exercise_fixture(ROOT, tmp_path, store, queue_factory,
                                   capacity=capacity, lifecycle=lifecycle,
-                                  request_level=request_level)
+                                  request_level=request_level, continuous=continuous)
         assert report['passed'] and report['peak_model_fixture_requests'] == capacity
         assert report['request_level'] is request_level
+        assert report['continuous'] is continuous
         assert report['counts'] == {'submissions': 5, 'results': 5, 'submission_outbox': 5}
     assert cleanup['postgres']['confirmed'] and cleanup['postgres']['tables_dropped'] == 11
     # Successful ACKs removed the now-empty active/receipt hashes; stream + owner remain.

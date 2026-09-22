@@ -190,6 +190,31 @@ def background(scheduler):
     return thread, result, errors
 
 
+def test_health_pause_still_expires_original_deadline_without_sending_a_sample(fixture):
+    now = [datetime.now(UTC)]
+    deadline = JobDeadline(now[0] + timedelta(seconds=1), clock=lambda: now[0])
+    paused = Event()
+
+    def unhealthy():
+        paused.set()
+        return False
+
+    with model_server(fixture) as server, executor_lock(fixture.state_dir, create=True):
+        scheduler, state, prepare = setup(fixture, server)
+        scheduler._dispatch_ready = unhealthy
+        scheduler.add_job(prepare('expired', 'A', deadline=deadline))
+        thread, result, errors = background(scheduler)
+        assert paused.wait(5)
+        now[0] += timedelta(seconds=2)
+        thread.join(5)
+        assert not thread.is_alive() and not errors
+        observation = result[0]['expired']
+        assert observation['failure_code'] == 'JOB_DEADLINE'
+        assert observation['result'] is None and observation['samples_dispatched'] == 0
+        assert not server.records
+        state.require_clean()
+
+
 def test_full_50_out_of_order_matches_serial_scoring_and_preserves_prompts(fixture):
     slow, release = Event(), Event()
 

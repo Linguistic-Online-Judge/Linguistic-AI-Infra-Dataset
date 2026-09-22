@@ -3,7 +3,7 @@
 import json
 import math
 from collections.abc import MutableMapping
-from threading import RLock
+from threading import Event, RLock
 from time import monotonic
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
@@ -50,6 +50,53 @@ class ProbedAvailability(MutableMapping):
 class _NoRedirects(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
+
+
+class ExecutorAvailability:
+    """Shared in-process admission/dispatch health for an isolated continuous executor.
+
+    API wiring uses this callable; dispatch ignores graceful stop so admitted jobs can drain.
+    Faults are sticky for this lifetime, unlike transient model-health failures.
+    """
+
+    def __init__(self, *, state, model_healthy, stop, challenge_ids, fault_signal=None):
+        if not callable(model_healthy):
+            raise TypeError('model health observation must be callable')
+        if fault_signal is not None and not isinstance(fault_signal, Event):
+            raise TypeError('executor fault signal must be an Event')
+        self._state, self._model_healthy, self._stop = state, model_healthy, stop
+        self._keys = frozenset(challenge_ids)
+        self._live = Event()
+        self._fault = fault_signal if fault_signal is not None else Event()
+
+    def start(self):
+        self._state.require_clean()
+        self._live.set()
+
+    def close(self):
+        self._live.clear()
+
+    def fail(self):
+        self._fault.set()
+
+    def dispatch_ready(self):
+        def local_ready():
+            return (self._live.is_set() and not self._fault.is_set()
+                    and not self._state.dispatch_faulted)
+
+        if not local_ready():
+            return False
+        try:
+            healthy = self._model_healthy() is True
+        except Exception:
+            healthy = False
+        return healthy and local_ready()
+
+    def __call__(self, challenge_id=None):
+        if challenge_id is not None and challenge_id not in self._keys:
+            return False
+        return (not self._stop.is_set() and self.dispatch_ready()
+                and not self._stop.is_set())
 
 
 class LocalModelProbe:

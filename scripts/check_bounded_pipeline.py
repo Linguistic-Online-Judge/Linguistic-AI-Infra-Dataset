@@ -57,7 +57,7 @@ def fixture_contract(root, directory, capacity):
 
 
 def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecycle=None,
-                     request_level=False):
+                     request_level=False, continuous=False):
     """Cookie-authenticated API + worker + real local HTTP; caller selects storage adapters."""
     from fastapi.testclient import TestClient
 
@@ -78,6 +78,8 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
 
     if capacity not in (2, 4):
         raise ValueError('fixture capacity must be 2 or 4')
+    if continuous and not request_level:
+        raise ValueError('continuous qualification requires request-level scheduling')
     lifecycle = {} if lifecycle is None else lifecycle
     lifecycle['worker_stopped'] = True
     lifecycle['requests_reconciled'] = True
@@ -92,6 +94,9 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
     records, faults, active_owners = [], [], Counter()
     bindings, submission_by_prompt = [], {}
     mutex, first_batch = Lock(), Barrier(capacity)
+    binding_lock = Lock()
+    first_request, late_request, healthy = Event(), Event(), Event()
+    healthy.set()
     active = peak = 0
 
     class Model(BaseHTTPRequestHandler):
@@ -125,8 +130,9 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                     assert len(matching) == 1
                     context = matching[0]
                     position = context['sample_position']
-                    assert context['submission_sha256'] == hashlib.sha256(
-                        submission_by_prompt[prompt].encode()).hexdigest()
+                    with binding_lock:
+                        assert context['submission_sha256'] == hashlib.sha256(
+                            submission_by_prompt[prompt].encode()).hexdigest()
                     assert envelope['input'] == prepared[position - 1].model_input.model_dump(
                         mode='json')
                     with mutex:
@@ -135,6 +141,12 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                     assert sum(job.status.value == 'running' for job in owner_jobs) == 1
                 if ordinal <= capacity:
                     first_batch.wait(timeout=30)
+                if continuous:
+                    if prompt == prompts[-1]:
+                        late_request.set()
+                    if ordinal == 1:
+                        first_request.set()
+                        assert late_request.wait(60)
                 body = json.dumps({'choices': [{'message': {'content': json.dumps(
                     {'tags': labels[prompt]})}, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 100, 'completion_tokens': 6}}).encode()
@@ -199,7 +211,7 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                     artifacts={contract.challenge_id: artifacts},
                     preflights={contract.challenge_id: MockRequestPreflight(contract)}, slots=lanes,
                     state=state, model_capacity=capacity, max_jobs=capacity, stop=stop,
-                    selection_cache=cache)
+                    selection_cache=cache, model_healthy=healthy.is_set, history_limit=3)
             with socket.socket() as reserved:
                 reserved.bind(('127.0.0.1', 0))
                 origin = f'http://127.0.0.1:{reserved.getsockname()[1]}'
@@ -212,7 +224,8 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                 app = create_app(store=store, dispatcher=OutboxDispatcher(store, queue, contract),
                     contract=contract, authenticate=auth.authenticate, environment='test',
                     allow_draft_submissions=True,
-                    public_challenges={contract.challenge_id: artifacts.public})
+                    public_challenges={contract.challenge_id: artifacts.public},
+                    runtime_probe=executor.availability if continuous else None)
                 install_auth_routes(app, auth)
                 headers = {'Origin': origin, 'X-LOJ-CSRF': '1'}
                 with ExitStack() as clients:
@@ -226,27 +239,12 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                         assert response.status_code == 200
                         users[name] = response.json()['user']['user_id']
                         assert client.cookies.get(auth.cookie_name)
-                    submissions = []
-                    for index, prompt in enumerate(prompts):
-                        name = owners[prompt]
-                        client = sessions[name]
-                        selected = {'X-LOJ-Expected-User': users[name],
-                                    'Idempotency-Key': f'bounded-{index}'}
-                        payload = {'challenge_id': contract.challenge_id, 'student_prompt': prompt}
-                        response = client.post('/v1/submissions', headers=selected, json=payload)
-                        assert response.status_code == 202
-                        sid = response.json()['submission_id']
-                        submission_by_prompt[prompt] = sid
-                        replay = client.post('/v1/submissions', headers=selected, json=payload)
-                        assert replay.status_code == 202 and replay.json()['submission_id'] == sid
-                        assert client.get(f'/v1/submissions/{sid}/result').status_code == 409
-                        other = sessions['bob' if name != 'bob' else 'carol']
-                        assert other.get(f'/v1/submissions/{sid}/result').status_code == 404
-                        submissions.append((sid, prompt))
 
                     def execute():
                         try:
-                            if request_level:
+                            if continuous:
+                                continuous_reports.append(executor.run())
+                            elif request_level:
                                 while not stop.is_set():
                                     observation = executor.run_round()
                                     if not observation['claims']:
@@ -256,9 +254,42 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                         except BaseException as error:
                             faults.append(type(error).__name__)
 
+                    continuous_reports = []
                     worker_thread = Thread(target=execute)
-                    lifecycle['worker_stopped'] = False
-                    worker_thread.start()
+                    if continuous:
+                        lifecycle['worker_stopped'] = False
+                        worker_thread.start()
+                        until = time.monotonic() + 10
+                        while not executor.availability() and time.monotonic() < until:
+                            time.sleep(.01)
+                        assert executor.availability()
+                    submissions = []
+                    for index, prompt in enumerate(prompts):
+                        if continuous and index == len(prompts) - 1:
+                            assert first_request.wait(30)
+                            assert not late_request.is_set()
+                        name = owners[prompt]
+                        client = sessions[name]
+                        selected = {'X-LOJ-Expected-User': users[name],
+                                    'Idempotency-Key': f'bounded-{index}'}
+                        payload = {'challenge_id': contract.challenge_id, 'student_prompt': prompt}
+                        with binding_lock:
+                            response = client.post('/v1/submissions', headers=selected,
+                                                   json=payload)
+                            assert response.status_code == 202
+                            sid = response.json()['submission_id']
+                            submission_by_prompt[prompt] = sid
+                            replay = client.post('/v1/submissions', headers=selected, json=payload)
+                            assert replay.status_code == 202
+                            assert replay.json()['submission_id'] == sid
+                            assert client.get(f'/v1/submissions/{sid}/result').status_code == 409
+                        other = sessions['bob' if name != 'bob' else 'carol']
+                        assert other.get(f'/v1/submissions/{sid}/result').status_code == 404
+                        submissions.append((sid, prompt))
+
+                    if not continuous:
+                        lifecycle['worker_stopped'] = False
+                        worker_thread.start()
                     pending = list(submissions)
                     deadline = time.monotonic() + 180
                     while pending and not faults and time.monotonic() < deadline:
@@ -282,9 +313,34 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                         if pending:
                             time.sleep(.05)
                     assert not pending and not faults
+                    if continuous:
+                        healthy.clear()
+                        catalog = sessions['alice'].get('/v1/challenges').json()
+                        assert not catalog[0]['runtime_available']
+                        assert not catalog[0]['accepting_submissions']
+                        response = sessions['alice'].post('/v1/submissions',
+                            headers={'X-LOJ-Expected-User': users['alice'],
+                                     'Idempotency-Key': 'health-pause'},
+                            json={'challenge_id': contract.challenge_id,
+                                  'student_prompt': prompts[0]})
+                        assert response.status_code == 503
+                        assert response.json()['error']['code'] == 'CHALLENGE_RUNTIME_UNAVAILABLE'
+                        assert sessions['alice'].get(
+                            f'/v1/submissions/{submissions[0][0]}/result').status_code == 200
+                        healthy.set()
+                        assert executor.availability()
                     stop.set()
                     worker_thread.join(30)
                     assert not worker_thread.is_alive()
+                    if continuous:
+                        assert not executor.availability() and late_request.is_set()
+                        execution = continuous_reports[0]
+                        assert execution['counts']['claims'] == 5
+                        assert execution['counts']['succeeded'] == 5
+                        assert execution['retained_jobs'] == 0
+                        assert execution['peak_jobs'] <= capacity
+                        assert len(execution['recent_publications']) == 3
+                        assert execution['retained_dispatches'] == 3
                     state.require_clean()
                     assert peak == capacity and len(records) == 250
                     if hasattr(queue, '_client'):
@@ -310,6 +366,8 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
                     assert counts == dict.fromkeys(counts, 5)
         return {'schema_version': 'bounded-services-fixture-v1', 'passed': True,
             'request_level': request_level,
+            'continuous': continuous, 'late_arrival_serviced_while_peer_inflight': continuous,
+            'shared_health_verified': continuous,
             'capacity': capacity, 'users': 4, 'submissions': 5, 'model_fixture_calls': 250,
             'peak_model_fixture_requests': peak, 'results': results,
             'cookie_auth': True, 'idempotency_verified': True, 'owner_isolation_verified': True,
@@ -319,7 +377,7 @@ def exercise_fixture(root, directory, store, queue_factory, *, capacity, lifecyc
             'classroom_capacity_verified': False}
     finally:
         stop.set()
-        if worker_thread is not None:
+        if worker_thread is not None and worker_thread.ident is not None:
             worker_thread.join(150)
             if worker_thread.is_alive():
                 raise RuntimeError('fixture worker is still active; preserve resources')
@@ -343,6 +401,7 @@ def main():
     parser.add_argument('--postgres-database', required=True)
     parser.add_argument('--capacity', type=int, choices=(2, 4), required=True)
     parser.add_argument('--request-level', action='store_true')
+    parser.add_argument('--continuous', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
     owned = resources_module(root)
@@ -386,7 +445,7 @@ def main():
 
             report = exercise_fixture(root, directory, store, queue_factory,
                                       capacity=args.capacity, lifecycle=lifecycle,
-                                      request_level=args.request_level)
+                                      request_level=args.request_level, continuous=args.continuous)
             report['storage'] = 'PostgreSQL-and-Redis'
     finally:
         report['cleanup'] = cleanup

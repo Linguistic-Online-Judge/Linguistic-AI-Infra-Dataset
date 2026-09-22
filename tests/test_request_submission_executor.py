@@ -14,6 +14,7 @@ from linguistic_oj.providers import (
     GenerationSettings,
     ModelGeneration,
     ModelIdentity,
+    ProviderContractError,
     ProviderTransportError,
 )
 from linguistic_oj.request_submission_executor import RequestSubmissionExecutor
@@ -82,16 +83,17 @@ def setup(tmp_path, monkeypatch):
             contracts={contract.challenge_id: contract},
             artifacts={contract.challenge_id: artifacts},
             preflights={contract.challenge_id: MockRequestPreflight(contract)}, slots=slots,
-            state=state, model_capacity=2, max_jobs=4)
+            state=state, model_capacity=2, max_jobs=4, model_healthy=lambda: True,
+            history_limit=3)
         yield store, queue, contract, state, executor, submit, calls
 
 
-def background(executor):
+def background(executor, *, continuous=False):
     results, errors = [], []
 
     def run():
         try:
-            results.append(executor.run_round())
+            results.append(executor.run() if continuous else executor.run_round())
         except BaseException as error:
             errors.append(error)
 
@@ -338,4 +340,185 @@ def test_invalid_result_contract_fails_without_publishing_a_grade(setup, monkeyp
     assert result.status.value == 'failed'
     assert result.failure['code'] == 'RUNTIME_MISCONFIGURATION'
     assert result.result is None and store.count_results() == 0 and len(calls) == 50
+    state.require_clean()
+
+
+def until(predicate, timeout=15):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, 'condition did not become true'
+        time.sleep(.01)
+
+
+def test_continuous_late_jobs_publish_and_retire_while_slow_peer_is_inflight(setup, monkeypatch):
+    store, _, _, state, executor, submit, calls = setup
+    slow = submit('alice', 'slow')
+    entered, release = Event(), Event()
+    mutex = Lock()
+
+    def generate(self, request, **kwargs):
+        with mutex:
+            calls.append(request)
+            block = request.student_prompt == 'slow' and not entered.is_set()
+            if block:
+                entered.set()
+        if block:
+            assert release.wait(60)
+        return ModelGeneration('{"tags":["X","X"]}')
+
+    monkeypatch.setattr(providers.OpenAICompatibleProvider, 'generate', generate)
+    assert not executor.availability()
+    thread, reports, errors = background(executor, continuous=True)
+    try:
+        assert entered.wait(10)
+        assert executor.availability()
+        with pytest.raises(RuntimeError, match='already running'):
+            executor.run_round()
+        # More lifetime jobs than max_jobs; every late result appears before the slow job ends.
+        for index in range(6):
+            job = submit(f'late{index}', f'  late {index}\r\n中文 e\u0301 ')
+            until(lambda job=job: store.owner_result(job.submission_id, job.user_id).status.value
+                  == 'succeeded')
+            assert store.owner_result(slow.submission_id, slow.user_id).status.value == 'running'
+        assert store.count_results() == 6
+    finally:
+        executor._stop.set()
+        release.set()
+        thread.join(30)
+    assert not thread.is_alive() and not errors
+    report = reports[0]
+    assert report['counts']['claims'] == report['counts']['succeeded'] == 7
+    assert report['peak_jobs'] <= executor._max_jobs and report['retained_jobs'] == 0
+    assert len(report['recent_publications']) == report['retained_dispatches'] == 3
+    assert len(calls) == 350 and store.count_results() == 7
+    assert not executor.availability()
+    with pytest.raises(RuntimeError, match='cannot be replayed'):
+        executor.run()
+    state.require_clean()
+
+
+def test_continuous_health_pauses_claims_and_samples_then_recovers_without_replay(
+    setup, monkeypatch,
+):
+    store, _, _, state, executor, submit, calls = setup
+    healthy, entered, release = Event(), Event(), Event()
+    monkeypatch.setattr(executor.availability, '_model_healthy', healthy.is_set)
+    first = submit('alice', 'first')
+    mutex = Lock()
+
+    def generate(self, request, **kwargs):
+        with mutex:
+            calls.append(request)
+            if len(calls) == 2:
+                entered.set()
+        assert release.wait(30)
+        return ModelGeneration('{"tags":["X","X"]}')
+
+    monkeypatch.setattr(providers.OpenAICompatibleProvider, 'generate', generate)
+    thread, reports, errors = background(executor, continuous=True)
+    try:
+        time.sleep(.2)
+        assert not calls and not executor.availability()
+        assert store.owner_result(first.submission_id, first.user_id).status.value == 'queued'
+        healthy.set()
+        assert entered.wait(10)
+        healthy.clear()
+        second = submit('bob', 'second')
+        assert not executor.availability()
+        release.set()
+        until(lambda: not state.snapshot()['pending'])
+        time.sleep(.2)
+        assert len(calls) == 2 and store.count_results() == 0
+        assert store.owner_result(second.submission_id, second.user_id).status.value == 'queued'
+        healthy.set()
+        until(lambda: store.count_results() == 2)
+    finally:
+        healthy.set()
+        release.set()
+        executor._stop.set()
+        thread.join(30)
+    assert not thread.is_alive() and not errors
+    assert len(calls) == 100 and reports[0]['counts']['succeeded'] == 2
+    state.require_clean()
+
+
+def test_continuous_stop_during_preflight_drains_claim_and_leaves_later_job_queued(
+    setup, monkeypatch,
+):
+    store, _, contract, state, executor, submit, calls = setup
+    first = submit('alice')
+    queued = submit('bob')
+    route = executor._routes[contract.challenge_id]
+    original = route._request_preflight
+
+    def preflight(requests):
+        executor._stop.set()
+        original(requests)
+
+    monkeypatch.setattr(route, '_request_preflight', preflight)
+    report = executor.run()
+    assert report['counts']['claims'] == 1 and len(calls) == 50
+    assert store.owner_result(first.submission_id, first.user_id).status.value == 'succeeded'
+    assert store.owner_result(queued.submission_id, queued.user_id).status.value == 'queued'
+    assert not executor.availability() and not executor.availability.dispatch_ready()
+    state.require_clean()
+
+
+@pytest.mark.parametrize('unknown', [True, False])
+def test_continuous_fault_blocks_admission_until_after_peer_drain(setup, monkeypatch, unknown):
+    store, _, _, state, executor, submit, calls = setup
+    submit('alice')
+    peer, fail, release = Event(), Event(), Event()
+    mutex = Lock()
+
+    def generate(self, request, **kwargs):
+        with mutex:
+            calls.append(request)
+            ordinal = len(calls)
+        if ordinal == 1:
+            assert peer.wait(10)
+            fail.set()
+            if not unknown:
+                raise ProviderContractError('invalid provider result')
+            raise ProviderTransportError('unknown termination', termination_confirmed=False)
+        peer.set()
+        assert release.wait(20)
+        return ModelGeneration('{"tags":["X","X"]}')
+
+    monkeypatch.setattr(providers.OpenAICompatibleProvider, 'generate', generate)
+    thread, _, errors = background(executor, continuous=True)
+    try:
+        assert fail.wait(10)
+        until(lambda: state.dispatch_faulted or executor._fault_signal.is_set())
+        assert not executor.availability()
+        late = submit('bob')
+        time.sleep(.2)
+        assert thread.is_alive() and len(calls) == 2
+        assert store.owner_result(late.submission_id, late.user_id).status.value == 'queued'
+    finally:
+        release.set()
+        executor._stop.set()
+        thread.join(30)
+    assert not thread.is_alive()
+    if unknown:
+        assert isinstance(errors[0], RecoveryRequired)
+    else:
+        assert not errors
+        state.require_clean()
+    assert not executor.availability() and store.count_results() == 0
+
+
+def test_continuous_ack_failure_closes_health_and_preserves_committed_score(setup, monkeypatch):
+    store, queue, _, state, executor, submit, calls = setup
+    job = submit('alice')
+
+    def ack(delivery):
+        raise OSError('fixture ack failure')
+
+    monkeypatch.setattr(queue, 'ack', ack)
+    with pytest.raises(OSError, match='ack failure'):
+        executor.run()
+    assert not executor.availability()
+    assert store.owner_result(job.submission_id, job.user_id).status.value == 'succeeded'
+    assert len(calls) == 50 and store.count_results() == 1
     state.require_clean()

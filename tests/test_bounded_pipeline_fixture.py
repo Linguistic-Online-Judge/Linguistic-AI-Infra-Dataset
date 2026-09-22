@@ -11,9 +11,9 @@ from scripts.check_bounded_pipeline import exercise_fixture
 ROOT = Path(__file__).parents[1]
 
 
-@pytest.mark.parametrize('request_level', [False, True])
+@pytest.mark.parametrize('request_level,continuous', [(False, False), (True, False), (True, True)])
 def test_cookie_authenticated_bounded_harness_with_controlled_http_model(
-    tmp_path, monkeypatch, request_level,
+    tmp_path, monkeypatch, request_level, continuous,
 ):
     if os.name == 'nt':
         monkeypatch.setattr(auth_config, '_check_windows_acl', lambda path: None)
@@ -25,7 +25,7 @@ def test_cookie_authenticated_bounded_harness_with_controlled_http_model(
             + QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS)
 
     report = exercise_fixture(ROOT, tmp_path, store, queue_factory, capacity=2,
-                              request_level=request_level)
+                              request_level=request_level, continuous=continuous)
     assert report['passed'] and report['cookie_auth']
     assert report['real_qwen_requests'] == 0
     assert report['model_fixture_calls'] == 250 and report['submissions'] == 5

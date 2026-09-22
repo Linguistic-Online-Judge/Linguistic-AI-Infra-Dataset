@@ -316,6 +316,24 @@ present planned work or skipped checks as completed results.
   earlier timeout was not a passing run. New PG negative lease fence test awaits CI.
   No schema migration. Earlier request-layer speedup cannot be assumed after DB checks.
 
+- Continuous isolated RequestSubmissionExecutor.run now admits late jobs while peers run,
+  publishes via the same DB/receipt fences and retires completed input/outcome/claim contexts.
+  Active-job bound defaults4/max32; two diagnostic rings default256, not a hard RSS bound.
+  One coordinator interleaves bounded queue observations, preparation and publication;
+  independent sample threads share the durable ledger. Same-process ExecutorAvailability
+  connects API runtime_probe, claims and dispatch. Model outage pauses work, deadlines keep
+  running; graceful stop seals admission/drains claimed jobs; incident health is sticky.
+  Ledger read faults latch dispatch and retain in-flight evidence; model-health recovery
+  cannot clear ledger/scheduler/publication faults. Continuous lifetimes are single-use.
+  See docs/CONTINUOUS_REQUEST_EXECUTION.md. Local808 passed/40 environment skips/404.62s.
+  School artifacts/continuous-submission-services-20260922-v1 c2/c4 real PG/Redis/Cookie
+  checks passed: each4 users/5 full50 jobs/250 fake HTTP calls, late arrival while peer
+  in flight, health admission/catalog gating, retained result reads, correct owner/sample
+  binding, owned cleanup11 tables/2 keys. Zero Qwen calls, no model/app/source deployment.
+  Shared health is in-process only; cross-process production readiness, multitask load,
+  real-Qwen integrated latency/quality and30-user50s acceptance remain pending. The last
+  model maintenance window is finished; this source work does not authorize another.
+
 - Current XPOS release: `artifacts/xpos-20260913-v1/source`, sibling `data`,
   registry `config/challenge_contract_registry_xpos_v1.json`. School 8090 has
   74 catalog entries / 70 executable contracts: 18-language segmentation/UPOS/

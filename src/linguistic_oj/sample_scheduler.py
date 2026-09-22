@@ -5,6 +5,7 @@ One caller holds executor_lock for the entire scheduler lifetime.
 """
 
 import hashlib
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from threading import Event, RLock
@@ -93,6 +94,7 @@ class _Progress:
     error_type: str | None = None
     failure_code: str | None = None
     retry_allowed: bool = False
+    terminal_notified: bool = False
 
 
 class SampleScheduler:
@@ -102,12 +104,19 @@ class SampleScheduler:
     Graceful stop rejects new jobs but drains admitted jobs. Incidents stop sample dispatch.
     """
 
-    def __init__(self, slots, state, *, model_capacity, stop=None, max_jobs=32, per_job_limit=None):
+    def __init__(self, slots, state, *, model_capacity, stop=None, max_jobs=32, per_job_limit=None,
+                 dispatch_ready=None, history_limit=4096, fault_signal=None):
         if (not isinstance(state, BoundedExecutorState) or type(model_capacity) is not int
                 or not 1 <= model_capacity <= 32 or not slots
                 or len(slots) > min(model_capacity, state.max_inflight)
                 or type(max_jobs) is not int or not 1 <= max_jobs <= 32):
             raise ValueError('invalid request scheduler capacity')
+        if dispatch_ready is not None and not callable(dispatch_ready):
+            raise TypeError('dispatch readiness must be callable')
+        if fault_signal is not None and not isinstance(fault_signal, Event):
+            raise TypeError('scheduler fault signal must be an Event')
+        if type(history_limit) is not int or not 1 <= history_limit <= 65536:
+            raise ValueError('invalid dispatch history bound')
         per_job_limit = len(slots) if per_job_limit is None else per_job_limit
         if type(per_job_limit) is not int or not 1 <= per_job_limit <= len(slots):
             raise ValueError('per-job request limit must fit the global slots')
@@ -136,13 +145,17 @@ class SampleScheduler:
         self._started = False
         self._closed = False
         self._halted = False
-        self._dispatches = []
+        self._accepting = True
+        self._wake = Event()
+        self._dispatch_ready = dispatch_ready
+        self._fault_signal = fault_signal if fault_signal is not None else Event()
+        self._dispatches = deque(maxlen=history_limit)
 
     def add_job(self, job):
         if not isinstance(job, PreparedJob):
             raise TypeError('a prepared, preflighted job is required')
         with self._lock:
-            if self._closed or self._halted or self._stop.is_set():
+            if self._closed or self._halted or not self._accepting or self._stop.is_set():
                 raise RuntimeError('scheduler no longer accepts jobs')
             self._state.require_dispatchable()
             if job.submission_id in self._jobs or len(self._jobs) >= self._max_jobs:
@@ -153,6 +166,20 @@ class SampleScheduler:
                 raise ValueError('owner already has an active admitted job')
             self.validate_contract(job.contract)
             self._jobs[job.submission_id] = _Progress(job)
+            self._wake.set()
+
+    @property
+    def admission_capacity(self):
+        with self._lock:
+            if self._closed or self._halted or not self._accepting or self._stop.is_set():
+                return 0
+            return self._max_jobs - len(self._jobs)
+
+    def seal(self):
+        """Close job admission while allowing all already-admitted work to drain."""
+        with self._lock:
+            self._accepting = False
+            self._wake.set()
 
     def validate_contract(self, contract):
         """Static provider checks, usable by an adapter before it claims a submission."""
@@ -239,29 +266,41 @@ class SampleScheduler:
         """Stop new sample dispatch; do not cancel already-sent calls or invent partial grades."""
         with self._lock:
             self._halted = True
+            self._fault_signal.set()
+            self._wake.set()
 
-    def run(self, *, on_terminal=None):
+    def run(self, *, on_terminal=None, on_tick=None, keep_open=False, retain_completed=True):
         if on_terminal is not None and not callable(on_terminal):
             raise TypeError('terminal publication callback must be callable')
+        if on_tick is not None and not callable(on_tick):
+            raise TypeError('admission callback must be callable')
+        if type(keep_open) is not bool or type(retain_completed) is not bool:
+            raise TypeError('scheduler lifecycle flags must be booleans')
+        if not retain_completed and on_terminal is None:
+            raise ValueError('retiring jobs requires an authoritative publication callback')
         with self._lock:
             if self._started:
                 raise RuntimeError('scheduler sessions cannot be replayed')
             self._state.require_clean()
             self._started = True
         active, free = {}, list(range(len(self._slots)))
-        notified = set()
 
         def notify_terminal():
             if on_terminal is None:
                 return
             with self._lock:
                 completed = [(key, value) for key, value in self.snapshot().items()
-                    if key not in notified and value['status'] != 'running'
+                    if not self._jobs[key].terminal_notified and value['status'] != 'running'
                     and value['samples_inflight'] == 0]
-                notified.update(key for key, _ in completed)
+                for key, _ in completed:
+                    self._jobs[key].terminal_notified = True
             try:
                 for key, value in completed:
                     on_terminal(key, value)
+                    if not retain_completed:
+                        with self._lock:
+                            del self._jobs[key]
+                            self._wake.set()
             except BaseException:
                 self.abort()
                 raise
@@ -269,13 +308,40 @@ class SampleScheduler:
         try:
             with ThreadPoolExecutor(max_workers=len(self._slots)) as pool:
                 while True:
+                    # A single coordinator admits jobs and publishes results outside the lock.
+                    # Worker threads only execute samples; no admission/publication lock inversion.
+                    if on_tick is not None and not self._halted:
+                        try:
+                            on_tick()
+                        except BaseException:
+                            self.abort()
+                            raise
+                    ready = True
+                    if self._dispatch_ready is not None:
+                        try:
+                            ready = self._dispatch_ready() is True
+                        except Exception:
+                            self.abort()
+                            ready = False
                     with self._lock:
+                        self._wake.clear()
+                        if self._stop.is_set():
+                            self._accepting = False
                         if not self._halted:
                             try:
                                 self._state.require_dispatchable()
                             except Exception:
-                                self._halted = True
-                        while free and not self._halted:
+                                self.abort()
+                        for progress in self._jobs.values():
+                            if progress.aggregate is None and progress.error is None:
+                                try:
+                                    progress.job.deadline.require_remaining()
+                                except JobDeadlineExceeded:
+                                    progress.error = 'JOB_DEADLINE'
+                                    progress.error_type = 'JobDeadlineExceeded'
+                                    progress.failure_code = 'JOB_DEADLINE'
+                                    progress.retry_allowed = False
+                        while free and not self._halted and ready:
                             selected = self._next()
                             if selected is None:
                                 break
@@ -283,11 +349,21 @@ class SampleScheduler:
                             slot = free.pop(0)
                             active[pool.submit(self._evaluate, slot, key, position)] = (
                                 slot, key, position)
-                        if not active:
-                            self._closed = True
+                        if self._halted:
+                            for progress in self._jobs.values():
+                                if progress.aggregate is None and progress.error is None:
+                                    progress.error = 'EXECUTOR_BLOCKED'
+                                    progress.failure_code = 'RUNTIME_MISCONFIGURATION'
                     if not active:
                         notify_terminal()
-                        break
+                        with self._lock:
+                            drained = all(p.aggregate is not None or p.error is not None
+                                          for p in self._jobs.values())
+                            if drained and (self._halted or not keep_open or not self._accepting):
+                                self._closed = True
+                                break
+                        self._wake.wait(.1)
+                        continue
                     done, _ = wait(active, timeout=.05, return_when=FIRST_COMPLETED)
                     with self._lock:
                         for future in done:
@@ -328,7 +404,7 @@ class SampleScheduler:
                                 progress.error_type = type(error).__name__
                                 progress.failure_code = 'RUNTIME_MISCONFIGURATION'
                                 progress.retry_allowed = False
-                                self._halted = True
+                                self.abort()
                             if (progress.error is None and len(progress.outcomes)
                                     == len(progress.job.samples)):
                                 try:
@@ -346,7 +422,7 @@ class SampleScheduler:
                                     progress.error = 'AGGREGATION_FAILED'
                                     progress.error_type = type(error).__name__
                                     progress.failure_code = 'RUNTIME_MISCONFIGURATION'
-                                    self._halted = True
+                                    self.abort()
                         if self._halted:
                             for progress in self._jobs.values():
                                 if progress.aggregate is None and progress.error is None:
