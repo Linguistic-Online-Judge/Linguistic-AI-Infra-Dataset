@@ -3,7 +3,8 @@ import sys
 import xml.etree.ElementTree as ET
 
 REQUIRED = ('test_auth_postgres', 'test_postgres_submission_store',
-             'test_redis_job_queue', 'test_admin_store', 'test_bounded_services')
+             'test_redis_job_queue', 'test_admin_store', 'test_bounded_services',
+             'test_request_backup_services')
 
 
 def check(path):

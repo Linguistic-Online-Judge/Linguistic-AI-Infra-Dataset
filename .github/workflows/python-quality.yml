@@ -69,6 +69,8 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Test
+        env:
+          POSTGRES_TEST_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: python -m pytest --junitxml=runtime/ci/pytest.xml
       - name: Require database coverage
         run: python scripts/check_ci_service_coverage.py runtime/ci/pytest.xml

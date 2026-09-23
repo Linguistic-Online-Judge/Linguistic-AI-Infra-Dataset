@@ -9,6 +9,7 @@ import re
 import subprocess
 import tarfile
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -29,6 +30,8 @@ def write_json(path, payload):
     with Path(path).open('x', encoding='utf-8') as stream:
         json.dump(payload, stream, ensure_ascii=False, indent=2)
         stream.write('\n')
+        stream.flush()
+        os.fsync(stream.fileno())
     Path(path).chmod(0o600)
 
 
@@ -156,9 +159,12 @@ def health(instance):
 
 
 def archive_files(path, files):
+    from linguistic_oj.request_backup import safe_archive_name
+
     fingerprints = {}
     with tarfile.open(path, 'x:gz') as archive:
         for name, source in sorted(files.items()):
+            safe_archive_name(name)
             if source.is_symlink() or not source.is_file():
                 raise ValueError('archive input must be a regular file')
             fingerprints[name] = digest(source)
@@ -171,12 +177,28 @@ def backup(instance):
     pid, argv = instance.application()
     if '--execution-profile' in argv or (instance.state / 'request-executor').exists():
         raise ValueError('request execution needs a profile-and-ledger-aware backup format')
+    return _backup_payload(instance, pid, argv)
+
+
+def backup_request(instance, settings_file):
+    from linguistic_oj.request_backup import capture
+
+    with capture(instance, settings_file) as checkpoint:
+        paths = checkpoint['paths']
+        argv = ['--root', str(paths['source_root']), '--data-root', str(paths['data_root']),
+            '--tokenizer-snapshot', str(paths['tokenizer_snapshot']),
+            '--launch-evidence', str(paths['launch_evidence']),
+            '--registry', checkpoint['settings']['registry']]
+        return _backup_payload(instance, None, argv, checkpoint=checkpoint)
+
+
+def _backup_payload(instance, pid, argv, *, checkpoint=None):
     source = Path(argv[argv.index('--root') + 1]).resolve(strict=True)
     data = Path(argv[argv.index('--data-root') + 1]).resolve(strict=True)
     if not source.is_relative_to(instance.root) or not data.is_relative_to(instance.root):
         raise ValueError('source/data must be project owned')
     parent = instance.root / 'backups/qwen-development'
-    parent.mkdir(mode=0o700, exist_ok=True)
+    parent.mkdir(mode=0o700, exist_ok=True, parents=True)
     dest = parent / (datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8])
     dest.mkdir(mode=0o700)
     source_manifest = json.loads((source / 'acceptance-source.json').read_text(encoding='utf-8'))
@@ -199,30 +221,62 @@ def backup(instance):
     tokenizer = Path(argv[argv.index('--tokenizer-snapshot') + 1]).resolve(strict=True)
     for name in ('tokenizer.json', 'tokenizer_config.json', 'config.json'):
         resources['tokenizer/' + name] = tokenizer / name
-    for path in resources.values():
-        if not path.resolve().is_relative_to(instance.root):
+    external_runtime = set()
+    if checkpoint is not None:
+        external_runtime = {checkpoint['paths']['launch_evidence'], *(
+            checkpoint['paths']['tokenizer_snapshot'] / name
+            for name in ('tokenizer.json', 'tokenizer_config.json', 'config.json'))}
+    for name, path in resources.items():
+        runtime_asset = name.startswith('tokenizer/') or name == 'runtime-evidence/qwen-launch.json'
+        if (not path.resolve().is_relative_to(instance.root)
+                and not (runtime_asset and path in external_runtime)):
             raise ValueError('resource outside project')
     source_hashes = archive_files(dest / 'source.tar.gz', source_files)
     resource_hashes = archive_files(dest / 'evaluation-assets.tar.gz', resources)
+    execution_hashes = (archive_files(dest / 'request-execution.tar.gz', checkpoint['files'])
+                        if checkpoint is not None else None)
     write_json(dest / 'instance.json', instance.marker)
     with instance.connect() as connection:
         connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         snapshot = connection.execute('SELECT pg_export_snapshot()').fetchone()[0]
         tables = table_fingerprints(connection)
+        if checkpoint is not None:
+            allowed = {c.contract_snapshot_sha256 for c in checkpoint['profile'].contracts.values()}
+            outstanding = {row[0] for row in connection.execute(
+                "SELECT DISTINCT contract_snapshot_sha256 FROM submissions "
+                "WHERE status IN ('queued','running')").fetchall()}
+            if outstanding - allowed:
+                raise ValueError('outstanding submissions belong to another request profile')
         instance.command(['pg_dump', '-Fc', '--snapshot=' + snapshot, '--dbname',
                           instance.marker['database'], '--file', str(dest / 'database.dump')],
                          log=dest / 'dump.log')
     report = {
-        'kind': 'qwen18-backup-v1', 'created_at': datetime.now(UTC).isoformat(),
+        'kind': 'qwen18-backup-v2' if checkpoint is not None else 'qwen18-backup-v1',
+        'created_at': datetime.now(UTC).isoformat(),
         'database': instance.marker['database'], 'instance': instance.marker['instance'],
         'source_root': str(source), 'data_root': str(data), 'source_pid': pid,
         'tables': tables, 'source_files': source_hashes, 'evaluation_files': resource_hashes,
+        'registry': (argv[argv.index('--registry') + 1] if '--registry' in argv
+                     else 'config/challenge_contract_registry_v1.json'),
         'queue_recovery': 'PostgreSQL outbox into a fresh instance namespace; '
                           'confirm termination of running jobs before any real replay',
         'model_weights': 'Referenced by pinned model revision; not copied into this backup',
         'files': {name: digest(dest / name) for name in (
             'database.dump', 'instance.json', 'source.tar.gz', 'evaluation-assets.tar.gz')},
     }
+    if checkpoint is not None:
+        from linguistic_oj.request_backup import restored_checkpoint
+
+        report.update(execution_files=execution_hashes, request_execution=checkpoint['summary'],
+            capture_mode='application-and-executor-locked-offline',
+            launch_snapshot_declared=checkpoint['launch_snapshot_declared'])
+        report['files']['request-execution.tar.gz'] = digest(dest / 'request-execution.tar.gz')
+        verify_archive(dest / 'source.tar.gz', source_hashes)
+        verify_archive(dest / 'evaluation-assets.tar.gz', resource_hashes)
+        verify_archive(dest / 'request-execution.tar.gz', execution_hashes)
+        # Validate all copied source, corpus and state before publishing the completion manifest.
+        with restored_checkpoint(dest, report):
+            pass
     write_json(dest / 'manifest.json', report)
     (dest / 'database.dump').chmod(0o600)
     return {'backup': str(dest), 'tables': tables,
@@ -230,12 +284,15 @@ def backup(instance):
 
 
 def verify_archive(path, expected):
+    from linguistic_oj.request_backup import safe_archive_name
+
     with tarfile.open(path) as archive:
         names = archive.getnames()
         if len(names) != len(set(names)) or set(names) != set(expected):
             raise ValueError('archive inventory mismatch')
         for item in archive.getmembers():
-            if not item.isfile() or item.name.startswith('/') or '..' in Path(item.name).parts:
+            safe_archive_name(item.name)
+            if not item.isfile():
                 raise ValueError('unsafe archive member')
             checksum = hashlib.sha256()
             with archive.extractfile(item) as stream:
@@ -251,21 +308,48 @@ def verify_copy(directory, expected_manifest=None):
     if expected_manifest is not None and manifest_sha256 != expected_manifest:
         raise ValueError('backup manifest fingerprint mismatch')
     report = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
-    if report['kind'] != 'qwen18-backup-v1':
+    if report['kind'] not in {'qwen18-backup-v1', 'qwen18-backup-v2'}:
         raise ValueError('unexpected backup kind')
-    if set(report['files']) != {
+    expected_files = {
         'database.dump', 'instance.json', 'source.tar.gz', 'evaluation-assets.tar.gz'
-    }:
+    }
+    if report['kind'] == 'qwen18-backup-v2':
+        expected_files.add('request-execution.tar.gz')
+    if set(report['files']) != expected_files:
         raise ValueError('unexpected backup inventory')
     for name, expected in report['files'].items():
         if digest(directory / name) != expected:
             raise ValueError('backup fingerprint mismatch')
     verify_archive(directory / 'source.tar.gz', report['source_files'])
     verify_archive(directory / 'evaluation-assets.tar.gz', report['evaluation_files'])
+    if report['kind'] == 'qwen18-backup-v2':
+        from linguistic_oj.request_backup import restored_checkpoint
+
+        verify_archive(directory / 'request-execution.tar.gz', report['execution_files'])
+        with restored_checkpoint(directory, report):
+            pass
     return {'files_verified': True, 'manifest_sha256': manifest_sha256}
 
 
-def verify_restore(instance, directory):
+def verify_restore(instance, directory, expected_manifest=None):
+    directory = directory.resolve(strict=True)
+    if not directory.is_relative_to(instance.root / 'backups/qwen-development'):
+        raise ValueError('restore verification requires an instance backup directory')
+    report = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
+    if (report['kind'] not in {'qwen18-backup-v1', 'qwen18-backup-v2'}
+            or report['instance'] != instance.marker['instance']):
+        raise ValueError('backup belongs to a different instance')
+    verify_copy(directory, expected_manifest)
+    checkpoint_context = nullcontext(None)
+    if report['kind'] == 'qwen18-backup-v2':
+        from linguistic_oj.request_backup import restored_checkpoint
+
+        checkpoint_context = restored_checkpoint(directory, report)
+    with checkpoint_context as checkpoint:
+        return _verify_restore_database(instance, directory, report, checkpoint)
+
+
+def _verify_restore_database(instance, directory, report, checkpoint):
     from psycopg import sql
 
     from linguistic_oj.challenge import PublicChallenge
@@ -273,19 +357,13 @@ def verify_restore(instance, directory):
     from linguistic_oj.postgres_submission_store import PostgresSubmissionStore
     from linguistic_oj.submission_jobs import InMemoryJobQueue, OutboxDispatcher
 
-    directory = directory.resolve(strict=True)
-    if not directory.is_relative_to(instance.root / 'backups/qwen-development'):
-        raise ValueError('restore verification requires an instance backup directory')
-    report = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
-    if report['kind'] != 'qwen18-backup-v1' or report['instance'] != instance.marker['instance']:
-        raise ValueError('backup belongs to a different instance')
-    verify_copy(directory)
     nonce = uuid.uuid4().hex
     database = 'loj_restore_' + nonce
     owner_comment = 'loj-isolated-restore:' + nonce
     result = {'kind': 'qwen18-restore-verification-v1', 'backup': str(directory),
               'restore_database': database, 'passed': False, 'cleanup_confirmed': False}
     created = False
+    created_oid = None
     with instance.connect() as live:
         live.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         before = table_fingerprints(live)
@@ -296,6 +374,8 @@ def verify_restore(instance, directory):
             created = True
             admin.execute(sql.SQL('COMMENT ON DATABASE {} IS {}').format(
                 sql.Identifier(database), sql.Literal(owner_comment)))
+            created_oid = admin.execute('SELECT oid FROM pg_database WHERE datname=%s',
+                                        (database,)).fetchone()[0]
         instance.command(['pg_restore', '--exit-on-error', '--no-owner', '--no-privileges',
                           '--dbname', database, str(directory / 'database.dump')],
                          log=directory / ('restore-' + nonce + '.log'))
@@ -323,13 +403,24 @@ def verify_restore(instance, directory):
             result['restored_credentials'] = actual['auth_credentials']['count']
             result['restored_teaching_revisions'] = actual['challenge_admin_revisions']['count']
         # A synthetic delivery only in the restored DB and in-memory queue. No model/Redis writes.
-        with tarfile.open(directory / 'source.tar.gz') as archive:
-            entry = json.load(archive.extractfile('config/challenge_contract_registry_v1.json'))
-            chosen = next(item for item in entry['entries'] if item['evaluation_contract_path'])
-            contract = EvaluationContract.from_mapping(json.load(archive.extractfile(
-                chosen['evaluation_contract_path'])))
-            public = PublicChallenge.model_validate_json(archive.extractfile(
-                chosen['public_descriptor_path']).read())
+        if checkpoint is not None:
+            profile, registry, state_report = checkpoint
+            key = next(iter(profile.contracts))
+            contract, public = profile.contracts[key], registry.public_challenges[key]
+            result['request_execution'] = state_report
+            if store.outstanding_contract_hashes() - {
+                c.contract_snapshot_sha256 for c in profile.contracts.values()
+            }:
+                raise ValueError('restored outstanding contracts do not match the request profile')
+        else:
+            with tarfile.open(directory / 'source.tar.gz') as archive:
+                entry = json.load(archive.extractfile(report.get(
+                    'registry', 'config/challenge_contract_registry_v1.json')))
+                chosen = next(item for item in entry['entries'] if item['evaluation_contract_path'])
+                contract = EvaluationContract.from_mapping(json.load(archive.extractfile(
+                    chosen['evaluation_contract_path'])))
+                public = PublicChallenge.model_validate_json(archive.extractfile(
+                    chosen['public_descriptor_path']).read())
         from linguistic_oj.admin_store import source_fingerprint
 
         user = store.register_user(auth_subject='restore-' + nonce, public_handle='RestoreProbe')
@@ -352,9 +443,9 @@ def verify_restore(instance, directory):
         if created:
             with instance.connect('postgres', autocommit=True) as admin:
                 row = admin.execute(
-                    "SELECT pg_get_userbyid(datdba), shobj_description(oid,'pg_database') "
+                    "SELECT pg_get_userbyid(datdba), shobj_description(oid,'pg_database'), oid "
                     'FROM pg_database WHERE datname=%s', (database,)).fetchone()
-                if row == (instance.owner, owner_comment):
+                if created_oid is not None and row == (instance.owner, owner_comment, created_oid):
                     admin.execute(sql.SQL('DROP DATABASE {}').format(sql.Identifier(database)))
                     result['cleanup_confirmed'] = True
         with instance.connect() as live:
@@ -366,11 +457,13 @@ def verify_restore(instance, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['status', 'backup', 'verify-restore', 'verify-copy'])
+    parser.add_argument('action', choices=[
+        'status', 'backup', 'backup-request', 'verify-restore', 'verify-copy'])
     parser.add_argument('--project-root', type=Path)
     parser.add_argument('--instance-dir', type=Path)
     parser.add_argument('--backup-dir', type=Path)
     parser.add_argument('--manifest-sha256')
+    parser.add_argument('--request-backup-settings', type=Path)
     args = parser.parse_args()
     if args.action == 'verify-copy':
         if args.backup_dir is None:
@@ -387,10 +480,14 @@ def main():
         result = health(instance)
     elif args.action == 'backup':
         result = backup(instance)
+    elif args.action == 'backup-request':
+        if args.request_backup_settings is None:
+            parser.error('--request-backup-settings is required')
+        result = backup_request(instance, args.request_backup_settings)
     else:
         if args.backup_dir is None:
             parser.error('--backup-dir is required')
-        result = verify_restore(instance, args.backup_dir)
+        result = verify_restore(instance, args.backup_dir, args.manifest_sha256)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if (result.get('ready') is False or result.get('passed') is False
             or result.get('cleanup_confirmed') is False):

@@ -22,6 +22,27 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Latest owner steering: defer score-repeatability/batch-invariance changes and continue
+  deployment preparation. Do not enable VLLM_BATCH_INVARIANT, change numerical kernels,
+  add structured decoding or repeat-score rules as part of this work. Current task is
+  profile/ledger-aware backups and isolated restore, followed by controlled cutover.
+
+- Request backup v2 now implemented: qwen_dev_ops backup-request --request-backup-settings
+  captures offline under BOTH application and ledger locks, with source/data/tokenizer,
+  execution profile/settings, ledger and ALL recovery audits. Keeps v1 support; backup
+  still rejects silently treating request execution as serial. verify-copy/verify-restore
+  handle both kinds; restore never starts inference, clears intents or overwrites live data.
+  Safety gates survive blocked/pending snapshots; PG restore checks rows/owners/credentials,
+  uses actual execution contract for in-memory queue rebuild and OID/owner/nonce cleanup.
+  New helper request_backup.py does inert private extraction; Windows temporary trees get
+  explicit owner/System/Admin ACLs with inheritance, not a protected-reader bypass.
+  School owned clean/blocked database cases passed (3/4 owner records,2 credentials,1 audit,
+  pending0/1), real pg_dump/pg_restore, both source/restore DBs cleaned,0 Qwen. Both Linux
+  backups also verified on Windows. See docs/REQUEST_BACKUP_RESTORE.md and private evidence
+  artifacts/request-backup-services-20260923-v1 / runtime/request-backup-services-results-20260923.
+  This supersedes the earlier backup-format blocker below. Live school cutover still needs
+  a NEW window; do not reuse completed model-window authorization or enable batch invariance.
+
 - Private-workbench request integration now exists: qwen_development --execution-profile
   plus request_development prepare/check/init. Profiles bind every source contract and only
   derive worker_model_concurrency; original files/instance marker/history stay intact.

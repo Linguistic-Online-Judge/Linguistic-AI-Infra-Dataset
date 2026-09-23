@@ -6,6 +6,7 @@ import re
 from pathlib import Path, PurePosixPath
 
 from linguistic_oj.challenge_registry import load_challenge_contract_registry
+from linguistic_oj.request_backup import backup_settings
 from linguistic_oj.request_development import write_profile
 
 FIELDS = {'release_root', 'data_root', 'python', 'dependency_overlay', 'state_dir', 'profile',
@@ -63,11 +64,14 @@ def prepare(root, settings, output):
         '--root', settings['release_root'], '--registry', registry,
         '--profile', settings['profile'], '--state-dir', settings['state_dir']]
     (output / 'initialize-command.txt').write_text(' '.join(init) + '\n', encoding='utf-8')
+    backup_path = output / 'request-backup-settings.json'
+    backup_path.write_text(json.dumps(backup_settings(settings), indent=2), encoding='utf-8')
+    backup_path.chmod(0o600)
     report = {'profile_sha256': digest, 'request_slots': settings['request_slots'],
         'max_active_jobs': settings['max_active_jobs'], 'contracts': len(loaded.contracts),
         'source_contracts_modified': False, 'model_attested': False, 'services_started': False,
         'pending': ['maintenance_window', 'new_release_paths', 'model_capacity_launch_evidence',
-                    'profile_aware_backup_and_restore', 'backup_and_drain',
+                    'backup_and_drain',
                     'explicit_state_initialization', 'service_installation',
                     'real_mixed_load_acceptance']}
     (output / 'preparation.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
