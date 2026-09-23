@@ -27,6 +27,7 @@ def build_bundle(root: Path, output: Path, *, include_catalog: bool = False,
         root / "scripts/check_request_development.py",
         root / "scripts/check_request_backup.py",
         root / "scripts/qwen_dev_ops.py",
+        root / "scripts/acceptance_model_relay.py",
         root / "scripts/qualify_bounded_qwen.py",
         root / "scripts/qualify_sample_scheduling.py",
     ]

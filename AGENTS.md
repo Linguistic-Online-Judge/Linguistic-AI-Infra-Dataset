@@ -22,6 +22,19 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Owner authorized NEW private-workbench cutover (2026-09-24):30–45min maintenance,
+  current-instance backup/isolated restore,32 request slots/4 active jobs, five real-browser
+  full50 evaluations (250 model POSTs maximum), retain new version on pass and configure
+  application supervision; drain/reconcile/rollback on failure. No public exposure or
+  batch-invariance/precision/kernel/scoring changes. Window planned at
+  artifacts/request-workbench-rollout-20260924-v1; inspect its status before intervening.
+  Own-user linger was enabled and read back Linger=yes under the supervision authorization.
+  Operational process identities still require fresh UID/start-tick/port checks.
+  Temporary acceptance_model_relay enforces the250 POST budget before upstream sends;
+  request/response bytes unchanged, no retry, unknown outcomes close transport and block.
+  Relay is removed before normal serving. Browser acceptance explicitly opt-in and resumable
+  only for result reads; it blocks duplicate/unexpected submission POSTs with CDP.
+
 - Latest owner steering: defer score-repeatability/batch-invariance changes and continue
   deployment preparation. Do not enable VLLM_BATCH_INVARIANT, change numerical kernels,
   add structured decoding or repeat-score rules as part of this work. Current task is
