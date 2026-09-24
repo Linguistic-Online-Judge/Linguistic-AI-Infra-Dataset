@@ -6,9 +6,12 @@ import hashlib
 import json
 import math
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
+from .admin_store import AdminStoreMixin, assert_admissions_open
+from .auth_store import AuthConflictError, AuthStoreMixin, AuthTransaction
 from .mvp_contract import EvaluationContract, canonical_json
 from .postgres_migrations import (
     POSTGRES_CONNECT_TIMEOUT_SECONDS,
@@ -23,6 +26,7 @@ from .submission_store import (
     GlobalQueueFullError,
     IdempotencyConflictError,
     LeaderboardEntry,
+    OwnerPromptRecord,
     OwnerResultRecord,
     OwnerSubmissionRecord,
     SubmissionQuotaError,
@@ -35,7 +39,7 @@ from .submission_store import (
 )
 
 
-class PostgresSubmissionStore:
+class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
     """PostgreSQL persistence shared by the submission API and Workers."""
 
     def __init__(self, database_url: str) -> None:
@@ -59,6 +63,19 @@ class PostgresSubmissionStore:
     def _database_now(cursor: Any) -> datetime:
         cursor.execute("SELECT clock_timestamp()")
         return cursor.fetchone()[0]
+
+    @contextmanager
+    def _auth_transaction(self):
+        import psycopg
+
+        try:
+            with self._connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended('loj-auth-v3', 0))"
+                )
+                yield AuthTransaction(cursor, postgres=True)
+        except psycopg.IntegrityError:
+            raise AuthConflictError("account constraint rejected") from None
 
     def health_check(self) -> None:
         with self._connect() as connection:
@@ -124,6 +141,7 @@ class PostgresSubmissionStore:
         idempotency_key: str,
         student_prompt: str,
         contract: EvaluationContract,
+        source_fingerprint: str | None = None,
     ) -> CreatedSubmission:
         prompt_utf8 = student_prompt.encode("utf-8")
         request_sha256 = _request_sha256(
@@ -164,6 +182,11 @@ class PostgresSubmissionStore:
                         ),
                         replayed=True,
                     )
+                assert_admissions_open(
+                    AuthTransaction(cursor, postgres=True),
+                    contract.challenge_id,
+                    source_fingerprint,
+                )
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock("
                     "hashtextextended('global-submission-queue', 0))"
@@ -306,7 +329,27 @@ class PostgresSubmissionStore:
             with connection.cursor() as cursor:
                 return claim.deadline_at <= _timestamp(self._database_now(cursor))
 
-    def expire_leases(self) -> int:
+    def outstanding_contract_hashes(self) -> set[str]:
+        with self._connect() as connection:
+            return {row[0] for row in connection.execute(
+                "SELECT DISTINCT contract_snapshot_sha256 FROM submissions "
+                "WHERE status IN ('queued', 'running')").fetchall()}
+
+    def claim_is_current(self, claim: ClaimedSubmission) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                now = _timestamp(self._database_now(cursor))
+                cursor.execute(
+                    "SELECT 1 FROM submissions WHERE id = %s AND user_id = %s "
+                    "AND status = 'running' AND attempt_number = %s AND lease_token = %s "
+                    "AND lease_expires_at > %s AND deadline_at > %s "
+                    "AND evaluation_identity_sha256 = %s AND contract_snapshot_sha256 = %s",
+                    (claim.submission_id, claim.user_id, claim.attempt_number, claim.lease_token,
+                     now, now, claim.evaluation_identity_sha256, claim.contract_snapshot_sha256),
+                )
+                return cursor.fetchone() is not None
+
+    def expire_leases(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 now_text = _timestamp(self._database_now(cursor))
@@ -315,20 +358,26 @@ class PostgresSubmissionStore:
                     "lease_token = NULL, lease_expires_at = NULL, "
                     "failure_code = CASE WHEN deadline_at <= %s THEN 'JOB_DEADLINE' "
                     "ELSE 'WORKER_CRASH' END, failure_retryable = FALSE "
-                    "WHERE status = 'running' AND lease_expires_at <= %s",
-                    (now_text, now_text, now_text),
+                    "WHERE status = 'running' AND lease_expires_at <= %s"
+                    + (" AND evaluation_identity_sha256 = %s"
+                       if evaluation_identity_sha256 is not None else ""),
+                    (now_text, now_text, now_text) + ((evaluation_identity_sha256,)
+                        if evaluation_identity_sha256 is not None else ()),
                 )
                 return cursor.rowcount
 
-    def expire_queued_deadlines(self) -> int:
+    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 now_text = _timestamp(self._database_now(cursor))
                 cursor.execute(
                     "UPDATE submissions SET status = 'failed', completed_at = %s, "
                     "failure_code = 'JOB_DEADLINE', failure_retryable = FALSE "
-                    "WHERE status = 'queued' AND deadline_at <= %s",
-                    (now_text, now_text),
+                    "WHERE status = 'queued' AND deadline_at <= %s"
+                    + (" AND evaluation_identity_sha256 = %s"
+                       if evaluation_identity_sha256 is not None else ""),
+                    (now_text, now_text) + ((evaluation_identity_sha256,)
+                        if evaluation_identity_sha256 is not None else ()),
                 )
                 return cursor.rowcount
 
@@ -656,6 +705,19 @@ class PostgresSubmissionStore:
             )
             for row in rows
         )
+
+    def owner_prompt(self, submission_id: str, user_id: str) -> OwnerPromptRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id, challenge_id, student_prompt_utf8, student_prompt_sha256 "
+                    "FROM submissions WHERE id = %s AND user_id = %s",
+                    (submission_id, user_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return OwnerPromptRecord(row[0], row[1], bytes(row[2]).decode("utf-8"), row[3])
 
     def owner_result(self, submission_id: str, user_id: str) -> OwnerResultRecord | None:
         with self._connect() as connection:

@@ -1,0 +1,20 @@
+{
+  "public_origin": null,
+  "release_root": "/srv/linguistic-oj/releases/RELEASE_ID",
+  "python": "/srv/linguistic-oj/venv/bin/python",
+  "shared_dir": "/srv/linguistic-oj/shared/production",
+  "service_user": null,
+  "api_port": 8100,
+  "registry": "config/challenge_contract_registry_xpos_v1.json",
+  "trusted_proxies": ["127.0.0.1"],
+  "tls_certificate": null,
+  "tls_certificate_key": null,
+  "smtp": {
+    "host": null,
+    "port": 587,
+    "sender": null,
+    "username": null,
+    "security": "starttls"
+  },
+  "runtime_available_challenges": []
+}

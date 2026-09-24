@@ -1,5 +1,8 @@
 {
   "aggregation_version": "1.0",
+  "annotation_license": "CC BY-SA 4.0",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public UD-derived teaching benchmark; source data and answers are not secret.",
   "challenge_id": "en-ewt-upos-v1",
   "dataset_sha256": "4d8e3bfd67a477f123cf3ee3969d3fe3705f5165d420e4d1abd0488d96b2f954",
   "language": "English",
@@ -10,9 +13,14 @@
   "secondary_metrics": [],
   "security_level": "public_reproducible",
   "selection_sha256": "01ab9ded16d8b5a817be93516ab2088353ab595f358a3f5ddd93bc95a036397b",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
   "status": "draft",
   "task": "upos",
   "title": "English EWT upos challenge",
   "treebank": "EWT",
+  "underlying_text_rights": "review_required",
   "version": "v1"
 }

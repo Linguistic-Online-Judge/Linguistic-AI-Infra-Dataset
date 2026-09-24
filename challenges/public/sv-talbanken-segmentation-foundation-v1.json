@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "sv-talbanken-segmentation-foundation-v1",
+  "dataset_sha256": "712817e9d76609f7c1b77f4beda466d37784793421b909906edf42768e832fe4",
+  "language": "Swedish",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "090dfd412939813d276b7f4c04346c0fea92d6e4411c418c246f66beb2f97525",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Swedish Talbanken segmentation challenge",
+  "treebank": "Talbanken",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

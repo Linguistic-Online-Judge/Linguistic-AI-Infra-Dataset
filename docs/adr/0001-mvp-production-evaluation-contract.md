@@ -86,7 +86,8 @@ The API and worker will enforce the values in `config/mvp_evaluation.json`:
 - Fully rendered model input: at most 3,840 tokens, leaving exactly 256 tokens in
   the 4,096-token model context.
 - Provider request timeout: 120 seconds.
-- Whole evaluation job timeout: 300 seconds.
+- Whole evaluation job timeout: 300 seconds by default; 900 seconds for the
+  dependency exemplar with its frozen 1,024-token completion budget.
 - Accepted submissions: at most five per user, challenge, and rolling 24 hours.
 - Outstanding queued plus running submissions: at most three per user and 100
   globally.
@@ -107,7 +108,7 @@ consumes one rate-limit slot; replaying the same idempotency key does not consum
 another.
 
 Per-user admission pressure returns HTTP `429`; a full global queue returns HTTP
-`503`. The 300-second deadline covers the complete submission across both
+`503`. The contract-specific deadline covers the complete submission across both
 attempts, not each attempt. Every provider timeout is clamped to the remaining
 deadline.
 

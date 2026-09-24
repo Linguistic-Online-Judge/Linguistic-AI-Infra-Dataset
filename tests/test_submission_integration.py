@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import sqlite3
@@ -11,6 +13,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+import linguistic_oj.api as api_module
 import linguistic_oj.qwen_runtime as qwen_runtime_module
 import linguistic_oj.submission_jobs as submission_jobs_module
 import linguistic_oj.submission_store as submission_store_module
@@ -66,6 +69,8 @@ def _sample(
 def _artifacts(
     tmp_path: Path,
     *,
+    task: str = "upos",
+    version: str = "v1",
     treebank: str = "Tiny",
     dataset_name: str = "dataset.jsonl",
 ) -> ChallengeArtifacts:
@@ -82,10 +87,10 @@ def _artifacts(
         dataset_path,
         language="Test",
         treebank=treebank,
-        task="upos",
+        task=task,
         count=2,
         seed=2026,
-        version="v1",
+        version=version,
     )
 
 
@@ -96,7 +101,21 @@ def _mock_contract(
 ) -> EvaluationContract:
     config = json.loads((ROOT / "config" / "mvp_evaluation.json").read_text(encoding="utf-8"))
     config["contract_version"] = contract_version
-    config["catalog"]["challenge_id"] = artifacts.public.challenge_id
+    config["catalog"].update(
+        artifacts.public.model_dump(
+            mode="json",
+            include={
+                "challenge_id",
+                "annotation_license",
+                "attribution_requirements",
+                "source_release",
+                "source_commit",
+                "source_file_sha256s",
+                "share_alike_requirements",
+                "underlying_text_rights",
+            },
+        )
+    )
     identity = config["evaluation_identity"]
     identity.update(
         {
@@ -159,7 +178,21 @@ def _qwen_contract(
     config = json.loads(
         (ROOT / "config" / "mvp_evaluation_v2.json").read_text(encoding="utf-8")
     )
-    config["catalog"]["challenge_id"] = artifacts.public.challenge_id
+    config["catalog"].update(
+        artifacts.public.model_dump(
+            mode="json",
+            include={
+                "challenge_id",
+                "annotation_license",
+                "attribution_requirements",
+                "source_release",
+                "source_commit",
+                "source_file_sha256s",
+                "share_alike_requirements",
+                "underlying_text_rights",
+            },
+        )
+    )
     identity = config["evaluation_identity"]
     identity.update(
         {
@@ -177,6 +210,40 @@ def _qwen_contract(
 
 def _authenticate(request: Request) -> Principal:
     return Principal(request.headers.get("X-Test-Subject", ""))
+
+
+def test_blocked_claim_gate_leaves_queued_submission_untouched(tmp_path, monkeypatch):
+    import os
+
+    from linguistic_oj import auth_config
+    from linguistic_oj.bounded_executor_state import BoundedExecutorState
+    from linguistic_oj.executor_state import RecoveryRequired, executor_lock
+
+    if os.name == 'nt':
+        monkeypatch.setattr(auth_config, '_check_windows_acl', lambda path: None)
+    artifacts = _artifacts(tmp_path)
+    snapshot, evidence, identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, identity)
+    store, queue, provider, worker, app = _qwen_components(
+        tmp_path, artifacts, contract, snapshot, evidence, monkeypatch)
+    directory = tmp_path / 'gate-state'
+    directory.mkdir(mode=0o700)
+    with executor_lock(directory, create=True):
+        state = BoundedExecutorState.initialize(directory, 'c' * 64)
+        worker._claim_guard = state.claim_guard
+        operation = state.begin('earlier-request')
+        state.block(operation)
+        with TestClient(app) as client:
+            headers = _headers('subject-alice', 'blocked-gate')
+            created = client.post('/v1/submissions', headers=headers,
+                json={'challenge_id': contract.challenge_id, 'student_prompt': 'unchanged'})
+            assert created.status_code == 202 and len(queue) == 1
+            with pytest.raises(RecoveryRequired):
+                worker.run_once()
+            assert len(queue) == 1 and provider.calls == 0 and store.count_results() == 0
+            sid = created.json()['submission_id']
+            assert client.get(f'/v1/submissions/{sid}',
+                              headers=headers).json()['status'] == 'queued'
 
 
 def _create_test_app(
@@ -271,6 +338,276 @@ class _TestQwenProvider(OpenAICompatibleProvider):
         return frozenset({self.identity.model})
 
 
+@pytest.mark.parametrize('cached', [False, True])
+def test_qwen_worker_full_50_prompt_fidelity_and_owner_isolation(tmp_path, monkeypatch, cached):
+    import linguistic_oj.runner as runner
+    import linguistic_oj.sample_cache as cache_module
+    from linguistic_oj.providers import ModelRequest
+    from linguistic_oj.responses import TaskType
+
+    path = tmp_path / 'fifty.jsonl'
+    path.write_text(''.join(json.dumps(_sample(f'sample-{i}', f'{i:02d}')) + '\n'
+                            for i in range(50)), encoding='utf-8')
+    artifacts = build_challenge(path, language='Test', treebank='Tiny', task='upos',
+                                count=50, seed=2026, version='worker-cache-v1')
+    prepared = runner._prepare_samples(artifacts)
+    snapshot, evidence, identity = _qwen_snapshot(tmp_path)
+    contract = _qwen_contract(artifacts, identity)
+    store = SubmissionStore(tmp_path / 'cache-worker.db')
+    for name in ('alice', 'bob'):
+        store.register_user(auth_subject='subject-' + name, public_handle=name)
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256,
+                             visibility_timeout_seconds=contract.job_deadline_seconds + 15)
+    prompts = ['  返回 X。\r\né e\u0301  ', '\nReturn NOUN. العربية\n']
+
+    class PromptProvider(_TestQwenProvider):
+        def __init__(self):
+            super().__init__(contract)
+            self.bodies = []
+
+        def generate(self, request, *, timeout_seconds=None):
+            self.bodies.append(self._request_body(request))
+            label = 'X' if request.student_prompt == prompts[0] else 'NOUN'
+            return ModelGeneration(json.dumps({'tags': [label] * len(request.model_input.tokens)}))
+
+    provider = PromptProvider()
+    monkeypatch.setattr(qwen_runtime_module, 'load_huggingface_tokenizer',
+                        lambda path: _TestQwenTokenizer())
+    parses = []
+    original = runner.load_dataset_samples_by_id
+
+    def load(*args, **kwargs):
+        parses.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runner, 'load_dataset_samples_by_id', load)
+    monkeypatch.setattr(cache_module, 'load_dataset_samples_by_id', load)
+    worker = QwenSubmissionWorker(store=store, queue=queue, contract=contract,
+        artifacts=artifacts, provider=provider, tokenizer_snapshot_path=snapshot,
+        launch_evidence_path=evidence,
+        selection_cache=cache_module.VerifiedSelectionCache() if cached else None)
+    app = create_app(store=store, dispatcher=OutboxDispatcher(store, queue, contract),
+        contract=contract, authenticate=_authenticate, allow_draft_submissions=True,
+        environment='test')
+    with TestClient(app) as client:
+        for index, (name, prompt) in enumerate(zip(('alice', 'bob'), prompts, strict=True)):
+            headers = _headers('subject-' + name, 'fidelity-' + name)
+            created = client.post('/v1/submissions', headers=headers,
+                json={'challenge_id': contract.challenge_id, 'student_prompt': prompt})
+            assert created.status_code == 202
+            sid = created.json()['submission_id']
+            assert client.get(f'/v1/submissions/{sid}/result', headers=headers).status_code == 409
+            assert worker.run_once()
+            result = client.get(f'/v1/submissions/{sid}/result', headers=headers).json()
+            assert result['outcome'] == 'succeeded'
+            assert result['samples_total'] == result['samples_valid'] == 50
+            assert result['score'] == (1.0 if index == 0 else 0.0)
+            assert result['student_prompt_sha256'] == hashlib.sha256(prompt.encode()).hexdigest()
+            saved = client.get(f'/v1/submissions/{sid}/prompt', headers=headers).json()
+            assert saved['student_prompt'] == prompt
+            other = _headers('subject-bob' if name == 'alice' else 'subject-alice')
+            assert client.get(f'/v1/submissions/{sid}/result', headers=other).status_code == 404
+            expected = [provider._request_body(ModelRequest(task=TaskType.UPOS,
+                language='Test', treebank='Tiny', student_prompt=prompt,
+                model_input=item.model_input))
+                for item in prepared]
+            assert provider.bodies[index * 50:(index + 1) * 50] == expected
+        assert len(provider.bodies) == 100
+        assert len(parses) == (1 if cached else 2)
+        assert store.count_results() == 2
+        assert not worker.run_once()
+        assert len(provider.bodies) == 100
+        # A warm selection never hides changed corpus bytes on the next claimed job.
+        created = client.post('/v1/submissions', headers=_headers('subject-alice', 'changed-data'),
+            json={'challenge_id': contract.challenge_id, 'student_prompt': prompts[0]})
+        assert created.status_code == 202
+        path.write_bytes(path.read_bytes().replace(b'"text": "00"', b'"text": "01"'))
+        assert worker.run_once()
+        result = client.get(f"/v1/submissions/{created.json()['submission_id']}/result",
+                            headers=_headers('subject-alice')).json()
+        assert result['outcome'] == 'failed' and result['code'] == 'DATASET_INTEGRITY'
+        assert len(provider.bodies) == 100 and store.count_results() == 2
+
+
+@pytest.mark.parametrize('early_stop', [False, True])
+def test_bounded_prototype_real_http_keeps_full_jobs_prompts_and_user_limits(
+    tmp_path, monkeypatch, early_stop,
+):
+    import os
+    from collections import Counter
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from linguistic_oj import auth_config
+    from linguistic_oj.bounded_dispatch import run_bounded
+    from linguistic_oj.bounded_executor_state import BoundedExecutorState, BoundedGuardedProvider
+    from linguistic_oj.executor_state import executor_lock
+    from linguistic_oj.qwen_runtime import QwenTokenizerPreflight
+    from linguistic_oj.sample_cache import VerifiedSelectionCache
+    from linguistic_oj.submission_jobs import _SubmissionWorkerCore
+
+    if os.name == 'nt':
+        monkeypatch.setattr(auth_config, '_check_windows_acl', lambda path: None)
+    path = tmp_path / 'bounded-fifty.jsonl'
+    path.write_text(''.join(json.dumps(_sample(f'row-{i}', f'{i:02d}')) + '\n'
+                            for i in range(50)), encoding='utf-8')
+    artifacts = build_challenge(path, language='Test', treebank='Tiny', task='upos',
+                                count=50, seed=2026, version='bounded-fixture-v1')
+    _, _, identity = _qwen_snapshot(tmp_path)
+    config = json.loads(_qwen_contract(artifacts, identity).snapshot_json)
+    config['limits']['worker_model_concurrency'] = 2  # New synthetic contract, never a school edit.
+    contract = EvaluationContract.from_mapping(config)
+    store = SubmissionStore(tmp_path / 'bounded.db')
+    for name in ('alice', 'bob', 'carol'):
+        store.register_user(auth_subject='subject-' + name, public_handle=name)
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256,
+                             visibility_timeout_seconds=contract.job_deadline_seconds + 15)
+    prompts = ['  Alice A\r\ne\u0301  ', 'Alice B\n中文', '\nBob العربية', 'Carol\tC']
+    owners = dict(zip(prompts, ('alice', 'alice', 'bob', 'carol'), strict=True))
+    labels = dict(zip(prompts, (['X', 'X'], ['X', 'NOUN'], ['NOUN', 'NOUN'], ['X', 'NOUN']),
+                      strict=True))
+    recorded, active_owners = [], Counter()
+    mutex, first_pair = threading.Lock(), threading.Barrier(2)
+    active, peak = 0, 0
+    errors = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            nonlocal active, peak
+            raw = self.rfile.read(int(self.headers['Content-Length']))
+            payload = json.loads(raw)
+            envelope = json.loads(payload['messages'][1]['content'])
+            prompt = envelope['student_prompt']
+            with mutex:
+                active += 1
+                active_owners[owners[prompt]] += 1
+                peak = max(peak, active)
+                recorded.append((prompt, envelope['input'], raw))
+                ordinal = len(recorded)
+                if active_owners[owners[prompt]] != 1:
+                    errors.append('same user has overlapping jobs')
+            counted = True
+            try:
+                if ordinal <= 2:
+                    first_pair.wait(timeout=10)
+                    if early_stop and ordinal == 2:
+                        stop.set()
+                body = json.dumps({'choices': [{'message': {
+                    'content': json.dumps({'tags': labels[prompt]})}, 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 100, 'completion_tokens': 6}}).encode()
+                with mutex:
+                    active -= 1
+                    active_owners[owners[prompt]] -= 1
+                    counted = False
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            finally:
+                if counted:
+                    with mutex:
+                        active -= 1
+                        active_owners[owners[prompt]] -= 1
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server.daemon_threads = True
+    http_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    http_thread.start()
+    directory = tmp_path / 'bounded-state'
+    directory.mkdir(mode=0o700)
+    stop = threading.Event()
+    try:
+        with executor_lock(directory, create=True):
+            state = BoundedExecutorState.initialize(directory, 'b' * 64, max_inflight=2)
+            cache = VerifiedSelectionCache()
+            lanes = []
+            for _ in range(2):
+                provider = BoundedGuardedProvider(executor_state=state,
+                    challenge_id=contract.challenge_id,
+                    base_url=f'http://127.0.0.1:{server.server_port}/v1',
+                    identity=ModelIdentity(**contract.evaluation_identity['model_identity']),
+                    settings=GenerationSettings(**contract.evaluation_identity['generation_settings']),
+                    timeout_seconds=contract.provider_request_timeout_seconds,
+                    max_response_body_bytes=contract.provider_response_body_bytes)
+                worker = _SubmissionWorkerCore(store=store, queue=queue, contract=contract,
+                    artifacts=artifacts, provider=provider,
+                    lease_seconds=contract.job_deadline_seconds,
+                    request_preflight=QwenTokenizerPreflight(
+                        contract, _TestQwenTokenizer(), identity),
+                    require_termination_confirmation=True, selection_cache=cache,
+                    claim_guard=state.claim_guard)
+                lanes.append({contract.challenge_id: worker})
+            app = create_app(store=store, dispatcher=OutboxDispatcher(store, queue, contract),
+                contract=contract, authenticate=_authenticate, allow_draft_submissions=True,
+                environment='test')
+
+            def execute():
+                try:
+                    run_bounded(lanes, state, stop, model_capacity=2, idle_seconds=.01)
+                except BaseException as error:
+                    errors.append(type(error).__name__)
+
+            with TestClient(app) as client:
+                submissions = []
+                for index, prompt in enumerate(prompts):
+                    headers = _headers('subject-' + owners[prompt], f'bounded-{index}')
+                    response = client.post('/v1/submissions', headers=headers,
+                        json={'challenge_id': contract.challenge_id, 'student_prompt': prompt})
+                    assert response.status_code == 202
+                    sid = response.json()['submission_id']
+                    assert client.get(f'/v1/submissions/{sid}/result',
+                                      headers=headers).status_code == 409
+                    submissions.append(sid)
+                thread = threading.Thread(target=execute)
+                thread.start()
+                try:
+                    expected_results = 2 if early_stop else 4
+                    deadline = time.monotonic() + 60
+                    while (store.count_results() < expected_results and not errors
+                           and time.monotonic() < deadline):
+                        time.sleep(.02)
+                    assert not errors and store.count_results() == expected_results
+                    completed_prompts = {prompt for prompt, _, _ in recorded}
+                    for sid, prompt in zip(submissions, prompts, strict=True):
+                        headers = _headers('subject-' + owners[prompt])
+                        if prompt not in completed_prompts:
+                            assert client.get(f'/v1/submissions/{sid}/result',
+                                              headers=headers).status_code == 409
+                            assert client.get(f'/v1/submissions/{sid}',
+                                              headers=headers).json()['status'] == 'queued'
+                            continue
+                        result = client.get(f'/v1/submissions/{sid}/result', headers=headers).json()
+                        assert result['samples_valid'] == result['samples_total'] == 50
+                        assert result['score'] == labels[prompt].count('X') / 2
+                        assert result['student_prompt_sha256'] == hashlib.sha256(
+                            prompt.encode()).hexdigest()
+                        other = _headers('subject-carol' if owners[prompt] != 'carol'
+                                         else 'subject-bob')
+                        assert client.get(f'/v1/submissions/{sid}/result',
+                                          headers=other).status_code == 404
+                finally:
+                    stop.set()
+                    thread.join(15)
+                assert not thread.is_alive() and not errors
+            state.require_clean()
+            assert peak == 2 and len(recorded) == expected_results * 50
+            assert Counter(prompt for prompt, _, _ in recorded) == dict.fromkeys(
+                completed_prompts, 50)
+            baseline_inputs = [model_input for prompt, model_input, _ in recorded
+                               if prompt == recorded[0][0]]
+            for prompt in completed_prompts:
+                assert [value for owner, value, _ in recorded if owner == prompt] == baseline_inputs
+            serialized = (directory / 'state.json').read_text()
+            assert all(prompt not in serialized for prompt in prompts)
+    finally:
+        stop.set()
+        server.shutdown()
+        server.server_close()
+        http_thread.join(5)
+
+
 def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: EvaluationContract):
     store = SubmissionStore(tmp_path / "submissions.db")
     store.register_user(auth_subject="subject-alice", public_handle="alice")
@@ -346,6 +683,11 @@ def _headers(subject: str, idempotency_key: str | None = None) -> dict[str, str]
     return headers
 
 
+def _cursor(value: dict[str, object]) -> str:
+    payload = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
 def test_anonymous_challenge_catalog_is_sorted_and_allowlisted(tmp_path: Path) -> None:
     executable = _artifacts(
         tmp_path,
@@ -400,6 +742,13 @@ def test_anonymous_challenge_catalog_is_sorted_and_allowlisted(tmp_path: Path) -
         [executable.public.challenge_id, public_only_description.challenge_id]
     )
     summary_fields = {
+        "aggregation_version", "dataset_sha256", "response_schema_version",
+        "scorer_version", "secondary_metrics", "selection_sha256",
+        "annotation_license", "attribution_requirements", "source_release", "source_commit",
+        "source_file_sha256s", "share_alike_requirements", "underlying_text_rights",
+        "benchmark_limitations", "evaluation_identity_sha256", "model_identity",
+        "student_prompt_utf8_bytes", "submission_enabled", "runtime_available",
+        "accepting_submissions", "admissions_closed",
         "challenge_id",
         "language",
         "primary_metric",
@@ -421,25 +770,7 @@ def test_anonymous_challenge_catalog_is_sorted_and_allowlisted(tmp_path: Path) -
     _assert_no_private_fields(catalog)
 
     assert detail.status_code == 200
-    assert set(detail.json()) == {
-        "aggregation_version",
-        "challenge_id",
-        "dataset_sha256",
-        "language",
-        "primary_metric",
-        "response_schema_version",
-        "sample_count",
-        "scorer_version",
-        "secondary_metrics",
-        "security_level",
-        "selection_sha256",
-        "status",
-        "submissions_open",
-        "task",
-        "title",
-        "treebank",
-        "version",
-    }
+    assert set(detail.json()) == summary_fields
     assert detail.json()["dataset_sha256"] == executable.public.dataset_sha256
     assert detail.json()["selection_sha256"] == executable.public.selection_sha256
     _assert_no_private_fields(detail.json())
@@ -450,9 +781,9 @@ def test_anonymous_challenge_catalog_is_sorted_and_allowlisted(tmp_path: Path) -
     assert public_only_detail.json()["submissions_open"] is False
     _assert_no_private_fields(public_only_detail.json())
     assert missing.status_code == 404
-    assert missing.json() == {"detail": "Challenge not found"}
+    assert missing.json()["error"]["code"] == "CHALLENGE_NOT_FOUND"
     assert unauthenticated_submission.status_code == 401
-    assert unauthenticated_submission.json() == {"detail": "Authentication required"}
+    assert unauthenticated_submission.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
 
 
 def test_catalog_reports_draft_closed_without_override(tmp_path: Path) -> None:
@@ -612,7 +943,8 @@ def test_unknown_and_public_only_challenges_cannot_create_submissions(tmp_path: 
         )
 
     assert unknown.status_code == 404
-    assert unavailable.status_code == 403
+    assert unavailable.status_code == 409
+    assert unavailable.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
     assert len(queue) == 0
 
 
@@ -633,7 +965,9 @@ def test_active_reviewed_challenge_can_accept_production_submission(tmp_path: Pa
     )
     contract = EvaluationContract.from_mapping(contract_mapping)
     assert contract.external_activation_ready is True
-    active_public = artifacts.public.model_copy(update={"status": "active"})
+    active_public = type(artifacts.public).model_validate_json(json.dumps({
+        **artifacts.public.model_dump(), **contract_mapping["catalog"],
+    }))
     store = SubmissionStore(tmp_path / "active-submissions.db")
     store.register_user(auth_subject="subject-alice", public_handle="alice")
     queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
@@ -688,7 +1022,7 @@ def test_api_requires_a_dispatcher_for_every_executable_challenge(tmp_path: Path
         },
     )
 
-    with pytest.raises(ValueError, match="dispatchers must exactly match"):
+    with pytest.raises(ValueError, match="contracts and dispatchers"):
         create_app(
             store=store,
             registry=registry,
@@ -825,7 +1159,13 @@ def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path,
     assert live.json() == {"status": "live"}
     assert live.headers["x-request-id"] == "health-check-1"
     assert ready.status_code == 503
-    assert ready.json() == {"detail": "Service not ready"}
+    assert ready.json() == {
+        "error": {
+            "code": "SERVICE_NOT_READY",
+            "details": {},
+            "message": "Service is not ready",
+        }
+    }
     records = [
         json.loads(record.message)
         for record in caplog.records
@@ -835,6 +1175,164 @@ def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path,
     assert records[0]["request_id"] == "health-check-1"
     assert all("top-secret" not in record.message for record in caplog.records)
     assert all("redis password" not in record.message for record in caplog.records)
+
+
+def test_frontend_is_packaged_with_restrictive_document_headers(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    _, _, _, _, _, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        document = client.get("/")
+        stylesheet = client.get("/assets/app-shell.css")
+        script = client.get("/assets/app.js")
+
+    assert document.status_code == stylesheet.status_code == script.status_code == 200
+    assert document.headers["content-type"].startswith("text/html")
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert "javascript" in script.headers["content-type"]
+    assert "default-src 'self'" in document.headers["content-security-policy"]
+    assert document.headers["x-frame-options"] == "DENY"
+    assert document.headers["x-content-type-options"] == "nosniff"
+    assert '<main id="main-content" tabindex="-1">' in document.text
+    assert 'src="/assets/app.js?v=pages-1"' in document.text
+    assert 'href="/assets/brand-palette.css?v=fudan-1"' in document.text
+    assert 'src="/assets/account.js?v=pages-1"' in document.text
+    assert 'src="/assets/teaching.js?v=xpos-1"' in document.text
+
+
+def test_api_errors_and_openapi_security_are_machine_readable(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    _, _, _, _, _, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        unauthenticated = client.get("/v1/users/me")
+        missing_idempotency_key = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+        invalid_body = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "invalid-body"),
+            json={"challenge_id": contract.challenge_id},
+        )
+        missing_route = client.get("/v1/not-a-route")
+        schema = client.get("/openapi.json").json()
+
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["www-authenticate"] == "Bearer"
+    assert unauthenticated.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+    assert missing_idempotency_key.status_code == 422
+    assert missing_idempotency_key.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"
+    assert invalid_body.status_code == 422
+    assert invalid_body.json()["error"]["code"] == "REQUEST_VALIDATION_ERROR"
+    assert missing_route.status_code == 404
+    assert missing_route.json()["error"]["code"] == "ROUTE_NOT_FOUND"
+    assert schema["components"]["securitySchemes"]["BearerAuth"] == {
+        "scheme": "bearer",
+        "type": "http",
+    }
+    assert schema["paths"]["/v1/users/me"]["get"]["security"] == [{"BearerAuth": []}]
+    result_schema = schema["paths"]["/v1/submissions/{submission_id}/result"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["schema"]
+    assert result_schema["discriminator"]["propertyName"] == "outcome"
+    assert len(result_schema["oneOf"]) == 3
+    assert {
+        "DependencyResultResponse",
+        "SegmentationResultResponse",
+        "TransliterationResultResponse",
+        "UposResultResponse",
+        "XposResultResponse",
+    } <= set(schema["components"]["schemas"])
+
+
+def test_unavailable_challenge_runtime_is_visible_and_rejected_before_persistence(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, dispatcher, _, _, _ = _components(tmp_path, artifacts, contract)
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        public_challenges={contract.challenge_id: artifacts.public},
+        authenticate=_authenticate,
+        runtime_availability={contract.challenge_id: False},
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        challenge = client.get(f"/v1/challenges/{contract.challenge_id}").json()
+        response = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "runtime-unavailable"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+    assert challenge["submission_enabled"] is True
+    assert challenge["runtime_available"] is False
+    assert challenge["accepting_submissions"] is False
+    assert challenge["submissions_open"] is False
+    assert challenge["student_prompt_utf8_bytes"] == contract.student_prompt_utf8_bytes
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "CHALLENGE_RUNTIME_UNAVAILABLE"
+    assert store.count_submissions() == 0
+
+
+def test_post_returns_durable_acceptance_when_immediate_outbox_publish_fails(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+
+    class UnavailableQueue(InMemoryJobQueue):
+        def publish(self, message: JobMessage) -> None:
+            raise OSError("private redis failure")
+
+    queue = UnavailableQueue(contract.contract_snapshot_sha256)
+    dispatcher = OutboxDispatcher(store, queue, contract)
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+    payload = {"challenge_id": contract.challenge_id, "student_prompt": "Prompt."}
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "durable-outbox"),
+            json=payload,
+        )
+        replay = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "durable-outbox"),
+            json=payload,
+        )
+        visible = client.get(
+            f"/v1/submissions/{created.json()['submission_id']}",
+            headers=_headers("subject-alice"),
+        )
+
+    assert created.status_code == replay.status_code == 202
+    assert replay.json()["submission_id"] == created.json()["submission_id"]
+    assert created.json()["evaluation_identity_sha256"] == contract.evaluation_identity_sha256
+    assert visible.status_code == 200
+    assert store.count_submissions() == store.count_outbox_records() == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == (created.json()["submission_id"],)
 
 
 def _assert_no_private_fields(value: object) -> None:
@@ -857,6 +1355,266 @@ def _assert_no_private_fields(value: object) -> None:
     elif isinstance(value, list):
         for nested in value:
             _assert_no_private_fields(nested)
+
+
+def test_current_user_and_submission_history_are_owner_scoped_and_paginated(
+    tmp_path: Path,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, _, _, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        assert client.get("/v1/users/me").status_code == 401
+        assert client.get(
+            "/v1/users/me",
+            headers=_headers("subject-unknown"),
+        ).status_code == 403
+        current_user = client.get(
+            "/v1/users/me",
+            headers=_headers("subject-alice"),
+        )
+        submission_ids = []
+        for index in range(3):
+            response = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-alice", f"history-{index}"),
+                json={
+                    "challenge_id": contract.challenge_id,
+                    "student_prompt": f"Prompt {index}",
+                },
+            )
+            assert response.status_code == 202
+            submission_ids.append(response.json()["submission_id"])
+
+        first_page = client.get(
+            "/v1/submissions?limit=2",
+            headers=_headers("subject-alice"),
+        )
+        empty_page = client.get(
+            "/v1/submissions",
+            headers=_headers("subject-bob"),
+        )
+        invalid_cursor = client.get(
+            "/v1/submissions?cursor=not-base64!",
+            headers=_headers("subject-alice"),
+        )
+        invalid_timestamp_cursor = client.get(
+            "/v1/submissions",
+            params={
+                "cursor": _cursor(
+                    {
+                        "created_at": "not-a-timestamp",
+                        "submission_id": "a" * 32,
+                        "version": 1,
+                    }
+                )
+            },
+            headers=_headers("subject-alice"),
+        )
+
+        first_payload = first_page.json()
+        second_page = client.get(
+            "/v1/submissions",
+            headers=_headers("subject-alice"),
+            params={"limit": 2, "cursor": first_payload["next_cursor"]},
+        )
+
+    assert current_user.status_code == 200
+    assert current_user.json()["public_handle"] == "alice"
+    assert "auth_subject" not in current_user.json()
+    assert first_page.status_code == 200
+    assert len(first_payload["items"]) == 2
+    assert first_payload["next_cursor"]
+    assert second_page.status_code == 200
+    all_history_ids = [
+        item["submission_id"]
+        for item in [*first_payload["items"], *second_page.json()["items"]]
+    ]
+    assert len(all_history_ids) == len(set(all_history_ids)) == 3
+    assert set(all_history_ids) == set(submission_ids)
+    assert all(
+        item["evaluation_identity_sha256"] == contract.evaluation_identity_sha256
+        for item in [*first_payload["items"], *second_page.json()["items"]]
+    )
+    _assert_no_private_fields(first_payload)
+    assert empty_page.json() == {"items": [], "next_cursor": None}
+    assert invalid_cursor.status_code == 422
+    assert invalid_timestamp_cursor.status_code == 422
+    assert invalid_timestamp_cursor.json()["error"]["code"] == "INVALID_SUBMISSION_CURSOR"
+    assert store.count_submissions() == 3
+
+
+def test_live_runtime_probe_gates_admission_but_keeps_existing_results_readable(tmp_path):
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, queue, dispatcher, provider, worker, _ = _components(tmp_path, artifacts, contract)
+    healthy = [True]
+    app = create_app(store=store, dispatcher=dispatcher, contract=contract,
+        authenticate=_authenticate, allow_draft_submissions=True, environment='test',
+        public_challenges={contract.challenge_id: artifacts.public},
+        runtime_probe=lambda key: healthy[0])
+    with TestClient(app) as client:
+        payload = {'challenge_id': contract.challenge_id, 'student_prompt': 'Return JSON.'}
+        first = client.post('/v1/submissions', json=payload,
+                            headers=_headers('subject-alice', 'before-outage'))
+        assert first.status_code == 202 and worker.run_once()
+        sid = first.json()['submission_id']
+        healthy[0] = False
+        catalog = client.get('/v1/challenges').json()
+        assert catalog[0]['runtime_available'] is False
+        assert catalog[0]['accepting_submissions'] is False
+        assert catalog[0]['submissions_open'] is False
+        blocked = client.post('/v1/submissions', json=payload,
+                              headers=_headers('subject-alice', 'during-outage'))
+        assert blocked.status_code == 503
+        assert blocked.json()['error']['code'] == 'CHALLENGE_RUNTIME_UNAVAILABLE'
+        assert store.count_submissions() == 1 and len(queue) == 0 and provider.calls == 2
+        assert client.get(f'/v1/submissions/{sid}/result',
+                          headers=_headers('subject-alice')).status_code == 200
+        healthy[0] = True
+        second = client.post('/v1/submissions', json=payload,
+                             headers=_headers('subject-alice', 'after-outage'))
+        assert second.status_code == 202
+        app.state.admin_context['runtime_availability'][contract.challenge_id] = False
+        assert client.post('/v1/submissions', json=payload,
+            headers=_headers('subject-alice', 'explicitly-disabled')).status_code == 503
+        assert store.count_submissions() == 2
+
+
+def test_owner_prompt_preserves_exact_text_without_exposing_it_to_other_users(tmp_path):
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, provider, _, app = _components(tmp_path, artifacts, contract)
+    prompt = '  中文 e\u0301 العربية\n<img src=x onerror=alert(1)>\n'
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "owner-prompt"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": prompt},
+        )
+        assert created.status_code == 202
+        submission_id = created.json()["submission_id"]
+        path = f"/v1/submissions/{submission_id}/prompt"
+        assert client.get(path).status_code == 401
+        other = client.get(path, headers=_headers("subject-bob"))
+        missing = client.get(
+            "/v1/submissions/missing/prompt", headers=_headers("subject-bob")
+        )
+        assert other.status_code == missing.status_code == 404
+        assert other.json() == missing.json()
+        owned = client.get(path, headers=_headers("subject-alice"))
+        assert owned.status_code == 200
+        assert owned.headers["cache-control"] == "no-store"
+        assert owned.json() == {
+            "submission_id": submission_id,
+            "challenge_id": contract.challenge_id,
+            "student_prompt": prompt,
+            "student_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        }
+        _assert_no_private_fields(client.get(
+            "/v1/submissions", headers=_headers("subject-alice")
+        ).json())
+        assert store.count_submissions() == 1
+        assert provider.calls == 0
+
+
+def test_multi_challenge_api_routes_jobs_and_results_by_contract(tmp_path: Path) -> None:
+    upos_artifacts = _artifacts(tmp_path)
+    segmentation_artifacts = _artifacts(tmp_path, task="segmentation", version="v2")
+    upos_contract = _mock_contract(upos_artifacts)
+    segmentation_contract = _mock_contract(segmentation_artifacts)
+    store = SubmissionStore(tmp_path / "multi-challenge.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+    queues = {
+        upos_contract.challenge_id: InMemoryJobQueue(
+            upos_contract.contract_snapshot_sha256
+        ),
+        segmentation_contract.challenge_id: InMemoryJobQueue(
+            segmentation_contract.contract_snapshot_sha256
+        ),
+    }
+    dispatchers = {
+        upos_contract.challenge_id: OutboxDispatcher(
+            store,
+            queues[upos_contract.challenge_id],
+            upos_contract,
+        ),
+        segmentation_contract.challenge_id: OutboxDispatcher(
+            store,
+            queues[segmentation_contract.challenge_id],
+            segmentation_contract,
+        ),
+    }
+    workers = {
+        upos_contract.challenge_id: SubmissionWorker(
+            store=store,
+            queue=queues[upos_contract.challenge_id],
+            contract=upos_contract,
+            artifacts=upos_artifacts,
+            provider=DeterministicMockProvider(),
+        ),
+        segmentation_contract.challenge_id: SubmissionWorker(
+            store=store,
+            queue=queues[segmentation_contract.challenge_id],
+            contract=segmentation_contract,
+            artifacts=segmentation_artifacts,
+            provider=DeterministicMockProvider(),
+        ),
+    }
+    contracts = {
+        upos_contract.challenge_id: upos_contract,
+        segmentation_contract.challenge_id: segmentation_contract,
+    }
+    app = create_app(
+        store=store,
+        dispatcher=dispatchers,
+        contract=contracts,
+        public_challenges={
+            upos_artifacts.public.challenge_id: upos_artifacts.public,
+            segmentation_artifacts.public.challenge_id: segmentation_artifacts.public,
+        },
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        catalog = client.get("/v1/challenges").json()
+        created = {}
+        for challenge_id in contracts:
+            response = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-alice", f"route-{challenge_id}"),
+                json={
+                    "challenge_id": challenge_id,
+                    "student_prompt": "Return the required JSON.",
+                },
+            )
+            assert response.status_code == 202
+            created[challenge_id] = response.json()["submission_id"]
+
+        assert len(queues[upos_contract.challenge_id]) == 1
+        assert len(queues[segmentation_contract.challenge_id]) == 1
+        assert all(worker.run_once() for worker in workers.values())
+
+        for challenge_id, submission_id in created.items():
+            result = client.get(
+                f"/v1/submissions/{submission_id}/result",
+                headers=_headers("subject-alice"),
+            )
+            assert result.status_code == 200
+            assert result.json()["challenge_id"] == challenge_id
+
+    assert {item["challenge_id"] for item in catalog} == set(contracts)
+    assert all(item["submission_enabled"] for item in catalog)
+    assert all(item["runtime_available"] for item in catalog)
+    assert all(item["accepting_submissions"] for item in catalog)
+    assert all(item["submissions_open"] for item in catalog)
+    assert all(
+        len(store.leaderboard(contract.evaluation_identity_sha256)) == 1
+        for contract in contracts.values()
+    )
 
 
 def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
@@ -952,7 +1710,8 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
         )
         assert result_response.status_code == 200
         result = result_response.json()
-        assert set(result) == set(contract.owner_result_fields)
+        assert set(result) == {*contract.owner_result_fields, "outcome"}
+        assert result["outcome"] == "succeeded"
         assert result["score"] == 1.0
         assert result["samples_valid"] == result["samples_total"] == 2
 
@@ -961,18 +1720,21 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
         )
         assert leaderboard_response.status_code == 200
         leaderboard = leaderboard_response.json()
-        assert leaderboard == [
-            {
-                "evaluation_identity_sha256": contract.evaluation_identity_sha256,
-                "public_handle": "alice",
-                "rank": 1,
-                "samples_invalid": 0,
-                "samples_total": 2,
-                "samples_valid": 2,
-                "score": 1.0,
-                "succeeded_at": leaderboard[0]["succeeded_at"],
-            }
-        ]
+        assert leaderboard == {
+            "items": [
+                {
+                    "evaluation_identity_sha256": contract.evaluation_identity_sha256,
+                    "public_handle": "alice",
+                    "rank": 1,
+                    "samples_invalid": 0,
+                    "samples_total": 2,
+                    "samples_valid": 2,
+                    "score": 1.0,
+                    "succeeded_at": leaderboard["items"][0]["succeeded_at"],
+                }
+            ],
+            "next_cursor": None,
+        }
         _assert_no_private_fields(submission)
         _assert_no_private_fields(result)
         _assert_no_private_fields(leaderboard)
@@ -1016,16 +1778,129 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
             )
             assert second_created.status_code == 202
             assert second_worker.run_once() is True
-            assert len(
-                second_client.get(
-                    f"/v1/leaderboards/{second_contract.evaluation_identity_sha256}"
-                ).json()
-            ) == 1
-            assert len(
-                second_client.get(
-                    f"/v1/leaderboards/{contract.evaluation_identity_sha256}"
-                ).json()
-            ) == 1
+            current_leaderboard = second_client.get(
+                f"/v1/leaderboards/{second_contract.evaluation_identity_sha256}"
+            )
+            historical_leaderboard = second_client.get(
+                f"/v1/leaderboards/{contract.evaluation_identity_sha256}"
+            )
+            assert len(current_leaderboard.json()["items"]) == 1
+            assert historical_leaderboard.status_code == 404
+            assert historical_leaderboard.json()["error"]["code"] == "LEADERBOARD_NOT_FOUND"
+
+
+def test_leaderboard_is_bounded_cursor_paginated_and_snapshot_stable(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, _, worker, app = _components(tmp_path, artifacts, contract)
+    store.register_user(auth_subject="subject-charlie", public_handle="charlie")
+    store.register_user(auth_subject="subject-dave", public_handle="dave")
+
+    with TestClient(app) as client:
+        for index, subject in enumerate(
+            ("subject-alice", "subject-bob", "subject-charlie"),
+            start=1,
+        ):
+            created = client.post(
+                "/v1/submissions",
+                headers=_headers(subject, f"leaderboard-{index}"),
+                json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+            )
+            assert created.status_code == 202
+            assert worker.run_once() is True
+
+        first = client.get(
+            f"/v1/leaderboards/{contract.evaluation_identity_sha256}",
+            params={"limit": 2},
+        )
+        first_payload = first.json()
+        assert [item["rank"] for item in first_payload["items"]] == [1, 2]
+        assert first_payload["next_cursor"] is not None
+
+        later = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-dave", "leaderboard-later"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+        assert later.status_code == 202
+        assert worker.run_once() is True
+
+        second = client.get(
+            f"/v1/leaderboards/{contract.evaluation_identity_sha256}",
+            params={"limit": 2, "cursor": first_payload["next_cursor"]},
+        )
+        unknown = client.get(f"/v1/leaderboards/{'0' * 64}")
+        invalid = client.get(
+            f"/v1/leaderboards/{contract.evaluation_identity_sha256}",
+            params={
+                "cursor": _cursor(
+                    {
+                        "as_of": datetime.now(UTC).isoformat(timespec="microseconds"),
+                        "evaluation_identity_sha256": "f" * 64,
+                        "rank": 1,
+                        "version": 1,
+                    }
+                )
+            },
+        )
+
+    assert second.status_code == 200
+    assert [item["rank"] for item in second.json()["items"]] == [3]
+    assert second.json()["next_cursor"] is None
+    assert unknown.status_code == 404
+    assert unknown.json()["error"]["code"] == "LEADERBOARD_NOT_FOUND"
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "INVALID_LEADERBOARD_CURSOR"
+
+
+def test_api_returns_structured_rate_and_outstanding_quota_feedback(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    _, _, _, _, worker, app = _components(tmp_path, artifacts, contract)
+
+    with TestClient(app) as client:
+        for index in range(contract.submissions_per_user_per_challenge_per_24h):
+            accepted = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-alice", f"rate-{index}"),
+                json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+            )
+            assert accepted.status_code == 202
+            assert worker.run_once() is True
+        rate_limited = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "rate-exceeded"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+        for index in range(contract.max_outstanding_submissions_per_user):
+            accepted = client.post(
+                "/v1/submissions",
+                headers=_headers("subject-bob", f"outstanding-{index}"),
+                json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+            )
+            assert accepted.status_code == 202
+        outstanding_limited = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-bob", "outstanding-exceeded"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+    rate_error = rate_limited.json()["error"]
+    assert rate_limited.status_code == 429
+    assert rate_error["code"] == "SUBMISSION_RATE_LIMIT"
+    assert rate_error["details"]["limit"] == 5
+    assert rate_error["details"]["current"] == 5
+    assert int(rate_limited.headers["retry-after"]) == rate_error["details"][
+        "retry_after_seconds"
+    ]
+    outstanding_error = outstanding_limited.json()["error"]
+    assert outstanding_limited.status_code == 429
+    assert outstanding_error == {
+        "code": "OUTSTANDING_SUBMISSION_LIMIT",
+        "details": {"current": 3, "limit": 3},
+        "message": "Submission quota exceeded",
+    }
 
 
 def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path) -> None:
@@ -1064,7 +1939,8 @@ def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path
             headers=_headers("subject-alice", "closed-draft"),
             json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
         )
-        assert closed.status_code == 403
+        assert closed.status_code == 409
+        assert closed.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
 
     open_app = _create_test_app(
         store=store,
@@ -1144,6 +2020,7 @@ def test_platform_failure_returns_only_the_safe_failure_contract(tmp_path: Path)
         assert failed.json() == {
             "code": "RUNTIME_MISCONFIGURATION",
             "failure_contract_version": "platform-failure-v1",
+            "outcome": "failed",
             "retryable": False,
         }
         assert "private provider detail" not in failed.text
@@ -1228,6 +2105,7 @@ def test_retryable_transport_failure_stops_after_max_attempts(tmp_path: Path) ->
         assert failed.json() == {
             "code": "PROVIDER_TRANSPORT",
             "failure_contract_version": "platform-failure-v1",
+            "outcome": "failed",
             "retryable": False,
         }
         assert provider.calls == 2
@@ -1387,6 +2265,7 @@ def test_qwen_worker_does_not_retry_ambiguous_remote_timeout(
         assert failure.json() == {
             "code": "PROVIDER_TIMEOUT",
             "failure_contract_version": "platform-failure-v1",
+            "outcome": "failed",
             "retryable": False,
         }
 
@@ -1490,6 +2369,7 @@ def test_duplicate_running_submission_waits_for_visibility(
 
         assert worker.run_once() is False
         assert worker.run_once() is False
+        assert len(queue) == 1
         assert store.complete_failure(
             claim,
             failure_contract_version=contract.failure_contract_version,
@@ -1498,7 +2378,7 @@ def test_duplicate_running_submission_waits_for_visibility(
         )
         assert queue.ack(first_delivery) is True
 
-        now[0] += queue.visibility_timeout_seconds
+        now[0] += 1  # Retry-later backoff must elapse before the terminal duplicate is read.
         assert worker.run_once() is False
         assert queue.receive() is None
 
@@ -1549,7 +2429,13 @@ def test_mock_token_preflight_rejects_without_provider_calls(tmp_path: Path) -> 
             f"/v1/submissions/{submission_id}/result",
             headers=_headers("subject-alice"),
         )
-        assert result.status_code == 409
+        assert result.status_code == 200
+        assert result.json() == {
+            "code": "TOKEN_LIMIT_EXCEEDED",
+            "failure_contract_version": "platform-failure-v1",
+            "outcome": "rejected",
+            "retryable": False,
+        }
 
 
 def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path) -> None:
@@ -1565,6 +2451,26 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
     active_but_unreviewed["catalog"]["status"] = "active"
     unready_contract = EvaluationContract.from_mapping(active_but_unreviewed)
     assert unready_contract.external_activation_ready is False
+    unready_dispatcher = OutboxDispatcher(
+        store,
+        InMemoryJobQueue(unready_contract.contract_snapshot_sha256),
+        unready_contract,
+    )
+    unready_app = create_app(
+        store=store,
+        dispatcher=unready_dispatcher,
+        contract=unready_contract,
+        authenticate=_authenticate,
+        environment="test",
+    )
+    with TestClient(unready_app) as client:
+        response = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "not-ready"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
 
     with pytest.raises(ValueError, match="deployment environment"):
         _create_test_app(
@@ -1581,7 +2487,7 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
         hybrid_mapping["evaluation_identity"]
     )
     hybrid_contract = EvaluationContract.from_mapping(hybrid_mapping)
-    with pytest.raises(ValueError, match="dispatcher does not match challenge contract"):
+    with pytest.raises(ValueError, match="dispatcher does not match"):
         _create_test_app(
             store=store,
             dispatcher=dispatcher,
@@ -1597,6 +2503,24 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
             contract=hybrid_contract,
             artifacts=artifacts,
             provider=DeterministicMockProvider(),
+        )
+
+    incompatible_mapping = json.loads(contract.snapshot_json)
+    incompatible_mapping["feedback"]["owner_result_fields"].remove("errors")
+    incompatible_contract = EvaluationContract.from_mapping(incompatible_mapping)
+    incompatible_dispatcher = OutboxDispatcher(
+        store,
+        InMemoryJobQueue(incompatible_contract.contract_snapshot_sha256),
+        incompatible_contract,
+    )
+    with pytest.raises(ValueError, match="owner result fields"):
+        create_app(
+            store=store,
+            dispatcher=incompatible_dispatcher,
+            contract=incompatible_contract,
+            authenticate=_authenticate,
+            allow_draft_submissions=True,
+            environment="test",
         )
 
 
@@ -1666,6 +2590,122 @@ def test_unpublished_outbox_job_is_dispatched_when_api_starts(tmp_path: Path) ->
     assert delivery.message.submission_id == created.submission.submission_id
 
 
+def test_outbox_background_dispatch_retries_after_publish_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="background-outbox",
+        student_prompt="Return JSON.",
+        contract=contract,
+    )
+
+    class FailOnceJobQueue(InMemoryJobQueue):
+        def __init__(self) -> None:
+            super().__init__(contract.contract_snapshot_sha256)
+            self.failures = 1
+
+        def publish(self, message: JobMessage) -> None:
+            if self.failures:
+                self.failures -= 1
+                raise OSError("temporary queue failure")
+            super().publish(message)
+
+    queue = FailOnceJobQueue()
+    dispatcher = OutboxDispatcher(store, queue, contract)
+    monkeypatch.setattr(api_module, "_OUTBOX_DISPATCH_INTERVAL_SECONDS", 0.01)
+    app = create_app(
+        store=store,
+        dispatcher=dispatcher,
+        contract=contract,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app):
+        deadline = time.monotonic() + 1
+        while len(queue) == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert len(queue) == 1
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+    delivery = queue.receive()
+    assert delivery is not None
+    assert delivery.message.submission_id == created.submission.submission_id
+
+
+def test_queued_deadline_sweep_fails_stale_unpublished_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [datetime(2026, 8, 30, tzinfo=UTC)]
+    monkeypatch.setattr(submission_store_module, "_utc_now", lambda: now[0])
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    created = store.create_submission(
+        user=user,
+        idempotency_key="queued-deadline",
+        student_prompt="Prompt.",
+        contract=contract,
+    )
+
+    now[0] += timedelta(seconds=contract.job_deadline_seconds + 1)
+    assert (
+        store.expire_queued_deadlines(
+            evaluation_identity_sha256=contract.evaluation_identity_sha256
+        )
+        == 1
+    )
+    submission = store.submission_for_owner(created.submission.submission_id, user.user_id)
+    result = store.owner_result(created.submission.submission_id, user.user_id)
+
+    assert submission is not None and submission.status.value == "failed"
+    assert result is not None and result.failure == {
+        "code": "JOB_DEADLINE",
+        "failure_contract_version": "platform-failure-v1",
+        "retryable": False,
+    }
+    assert store.unpublished_submission_ids(
+        contract.evaluation_identity_sha256,
+        contract.contract_snapshot_sha256,
+    ) == ()
+
+
+def test_idle_worker_throttles_lease_sweeps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store, _, _, _, worker, _ = _components(tmp_path, artifacts, contract)
+    sweep_calls = 0
+    expire_leases = store.expire_leases
+
+    def count_sweep(*, evaluation_identity_sha256: str | None = None) -> int:
+        nonlocal sweep_calls
+        sweep_calls += 1
+        return expire_leases(
+            evaluation_identity_sha256=evaluation_identity_sha256,
+        )
+
+    monkeypatch.setattr(store, "expire_leases", count_sweep)
+
+    assert worker.run_once() is False
+    assert worker.run_once() is False
+    assert sweep_calls == 1
+
+
 def test_streaming_body_limit_rejects_chunked_oversize_before_route() -> None:
     downstream_called = False
 
@@ -1704,7 +2744,15 @@ def test_streaming_body_limit_rejects_chunked_oversize_before_route() -> None:
     assert sent[0]["status"] == 413
 
 
-@pytest.mark.parametrize("invalid_path", ["/absolute.jsonl", "../escape.jsonl", "bad\\path"])
+@pytest.mark.parametrize(
+    "invalid_path",
+    [
+        "/absolute.jsonl",
+        "../escape.jsonl",
+        "bad\\path",
+        "data/source.jsonl:descriptor",
+    ],
+)
 def test_external_activation_requires_safe_complete_provenance(
     tmp_path: Path,
     invalid_path: str,

@@ -29,7 +29,7 @@ function catalogUrl(path: string): string {
       "LINGUISTIC_OJ_API_URL is required in production.",
     );
   }
-  const apiBase = configuredBase ?? "http://127.0.0.1:8000";
+  const apiBase = configuredBase ?? "http://127.0.0.1:8080";
   const base = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
 
   try {

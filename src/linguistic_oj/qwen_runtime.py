@@ -43,50 +43,32 @@ class QwenTokenLimitExceeded(ValueError):
 
 
 def validate_qwen_evaluation_contract(contract: EvaluationContract) -> None:
-    """Validate static Qwen requirements before API or Worker startup."""
-
+    """Check static Qwen requirements before constructing stores or queues."""
     if not isinstance(contract, EvaluationContract):
-        raise TypeError("contract must be an EvaluationContract")
+        raise TypeError('contract must be an EvaluationContract')
     if contract.contract_version != QWEN_EVALUATION_CONTRACT_VERSION:
-        raise QwenRuntimeAttestationError("Qwen worker requires mvp-evaluation-v2")
+        raise ValueError('Qwen runtime requires mvp-evaluation-v2')
     if contract.uses_mock_runtime:
-        raise QwenRuntimeAttestationError("Qwen worker cannot use a Mock contract")
+        raise ValueError('Qwen runtime cannot use a Mock contract')
     if not contract.retry_requires_prior_request_terminated:
-        raise QwenRuntimeAttestationError(
-            "Qwen retry policy must require prior request termination"
-        )
-
+        raise ValueError('Qwen retry policy must require prior request termination')
     identity = contract.evaluation_identity
-    if identity.get("prompt_envelope_version") != PROMPT_ENVELOPE_VERSION:
-        raise QwenRuntimeAttestationError("Qwen contract uses an unsupported prompt envelope")
-    model_identity = identity.get("model_identity")
-    generation_settings = identity.get("generation_settings")
-    if not isinstance(model_identity, dict) or not isinstance(generation_settings, dict):
-        raise QwenRuntimeAttestationError("Qwen contract lacks model configuration")
-    if set(generation_settings) != {
-        "temperature",
-        "top_p",
-        "max_tokens",
-        "seed",
-        "enable_thinking",
+    if identity.get('prompt_envelope_version') != PROMPT_ENVELOPE_VERSION:
+        raise ValueError('unsupported Qwen prompt envelope')
+    settings = identity.get('generation_settings')
+    if not isinstance(settings, dict) or set(settings) != {
+        'temperature', 'top_p', 'max_tokens', 'seed', 'enable_thinking'
     }:
-        raise QwenRuntimeAttestationError("Qwen contract generation settings are incomplete")
+        raise ValueError('Qwen generation settings are incomplete')
     try:
-        model = ModelIdentity(**model_identity)
-        generation = GenerationSettings(**generation_settings)
-    except (TypeError, ValueError) as error:
-        raise QwenRuntimeAttestationError("Qwen contract model configuration is invalid") from error
-    if model.runtime != "vllm":
-        raise QwenRuntimeAttestationError("Qwen contract requires the vLLM runtime")
-    tokenizer = _contract_tokenizer_identity(contract)
-    if not tokenizer.add_generation_prompt:
-        raise QwenRuntimeAttestationError(
-            "Qwen contract must enable the generation prompt"
-        )
-    if tokenizer.enable_thinking != generation.enable_thinking:
-        raise QwenRuntimeAttestationError(
-            "Qwen contract thinking controls do not match"
-        )
+        model = ModelIdentity(**identity['model_identity'])
+        generation = GenerationSettings(**settings)
+        tokenizer = _contract_tokenizer_identity(contract)
+    except (TypeError, KeyError, ValueError):
+        raise ValueError('invalid static Qwen configuration') from None
+    if (model.runtime != 'vllm' or not tokenizer.add_generation_prompt
+            or tokenizer.enable_thinking != generation.enable_thinking):
+        raise ValueError('Qwen runtime/tokenizer/generation settings do not match')
 
 
 @runtime_checkable
@@ -470,12 +452,13 @@ class QwenTokenizerPreflight:
                 "generation thinking mode does not match the tokenizer contract"
             )
 
+        # Batch-local only: never retain private prompts across calls or users.
+        prompt_counts: dict[str, int] = {}
         for request in requests:
-            prompt_tokens = self._tokenizer.encode(
-                request.student_prompt,
-                add_special_tokens=False,
-            )
-            if _token_count(prompt_tokens) > self._contract.student_prompt_tokens:
+            if request.student_prompt not in prompt_counts:
+                prompt_counts[request.student_prompt] = _token_count(self._tokenizer.encode(
+                    request.student_prompt, add_special_tokens=False))
+            if prompt_counts[request.student_prompt] > self._contract.student_prompt_tokens:
                 raise QwenTokenLimitExceeded("student prompt exceeds the Qwen token limit")
             rendered_tokens = self._tokenizer.apply_chat_template(
                 list(PromptEnvelope.from_request(request).to_messages()),
@@ -503,6 +486,12 @@ def verify_qwen_runtime(
         raise TypeError("Qwen runtime requires OpenAICompatibleProvider")
     if not isinstance(attestation, QwenRuntimeAttestation):
         raise TypeError("attestation must be a QwenRuntimeAttestation")
+    if getattr(provider, 'experimental_protocol', None) is not None:
+        raise QwenRuntimeAttestationError(
+            'experimental protocol providers cannot execute frozen evaluation contracts')
+    if getattr(provider, 'experimental_execution', False):
+        raise QwenRuntimeAttestationError(
+            'experimental executors require separate runtime qualification')
     if provider.structured_json:
         raise QwenRuntimeAttestationError(
             "structured JSON is not declared by the evaluation contract"

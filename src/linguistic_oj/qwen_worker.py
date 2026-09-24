@@ -9,10 +9,12 @@ from time import sleep
 
 from .challenge import load_challenge_artifacts
 from .challenge_registry import load_challenge_contract_registry
-from .postgres_migrations import resolve_postgres_url
+from .connection_config import resolve_connection_url
+from .mvp_contract import EvaluationContract, load_qwen_worker_contract
 from .providers import GenerationSettings, ModelIdentity, OpenAICompatibleProvider
 from .qwen_runtime import validate_qwen_evaluation_contract
-from .redis_job_queue import RedisJobQueue, resolve_redis_url
+from .redis_job_queue import RedisJobQueue
+from .sample_cache import VerifiedSelectionCache
 from .submission_jobs import QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS, QwenSubmissionWorker
 from .submission_store_factory import build_submission_store
 
@@ -30,10 +32,9 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--challenge-registry",
         type=Path,
-        required=True,
         help="root-relative challenge registry path",
     )
-    parser.add_argument("--challenge-id", required=True)
+    parser.add_argument("--challenge-id")
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
     storage.add_argument("--postgres-database-url", help="PostgreSQL database URL")
@@ -41,6 +42,11 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     redis = parser.add_mutually_exclusive_group(required=True)
     redis.add_argument("--redis-url")
     redis.add_argument("--redis-url-file", type=Path)
+    parser.add_argument(
+        "--contract",
+        type=Path,
+        help="evaluation contract path; defaults to config/mvp_evaluation_v2.json",
+    )
     parser.add_argument("--public-challenge", type=Path, required=True)
     parser.add_argument("--private-challenge", type=Path, required=True)
     parser.add_argument("--dataset", type=Path, required=True)
@@ -57,22 +63,23 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--idle-sleep-seconds", type=float, default=0.25)
     args = parser.parse_args(arguments)
+    if bool(args.challenge_registry) != bool(args.challenge_id):
+        parser.error('--challenge-registry and --challenge-id must be supplied together')
+    if args.contract is not None and args.challenge_registry is not None:
+        parser.error('--contract and --challenge-registry are mutually exclusive')
     if args.idle_sleep_seconds <= 0:
         parser.error("--idle-sleep-seconds must be positive")
     if args.environment == "production" and args.database is not None:
         parser.error("production Qwen Worker requires PostgreSQL persistence")
     try:
         if args.database is None:
-            args.postgres_database_url = resolve_postgres_url(
-                inline_url=args.postgres_database_url,
+            args.postgres_database_url = resolve_connection_url(
+                'postgres', inline_url=args.postgres_database_url,
                 credential_file=args.postgres_database_url_file,
-                allow_inline_credentials=args.environment != "production",
-            )
-        args.redis_url = resolve_redis_url(
-            inline_url=args.redis_url,
-            credential_file=args.redis_url_file,
-            allow_inline_credentials=False,
-        )
+                production=args.environment == 'production')
+        args.redis_url = resolve_connection_url(
+            'redis', inline_url=args.redis_url, credential_file=args.redis_url_file,
+            production=args.environment == 'production')
     except ValueError as error:
         parser.error(str(error))
     return args
@@ -83,20 +90,27 @@ def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
 
     if args.environment == "production" and args.database is not None:
         raise ValueError("production Qwen Worker requires PostgreSQL persistence")
-    registry = load_challenge_contract_registry(args.root, args.challenge_registry)
-    public = registry.public_challenges.get(args.challenge_id)
-    if public is None:
-        raise ValueError(f"challenge is not registered: {args.challenge_id}")
-    contract = registry.contracts.get(args.challenge_id)
-    if contract is None:
-        raise ValueError(f"challenge has no evaluation contract: {args.challenge_id}")
+    public = None
+    if getattr(args, 'challenge_registry', None) is not None:
+        registry = load_challenge_contract_registry(args.root, args.challenge_registry)
+        public = registry.public_challenges.get(args.challenge_id)
+        if public is None:
+            raise ValueError(f"challenge is not registered: {args.challenge_id}")
+        contract = registry.contracts.get(args.challenge_id)
+        if contract is None:
+            raise ValueError(f"challenge has no evaluation contract: {args.challenge_id}")
+    elif args.contract is None:
+        contract = load_qwen_worker_contract(args.root)
+    else:
+        contract_path = args.contract if args.contract.is_absolute() else args.root / args.contract
+        contract = EvaluationContract.from_path(contract_path)
     validate_qwen_evaluation_contract(contract)
     artifacts = load_challenge_artifacts(
         args.public_challenge,
         args.private_challenge,
         dataset_path=args.dataset,
     )
-    if artifacts.public != public:
+    if public is not None and artifacts.public != public:
         raise ValueError("configured public challenge does not match the registry")
     identity = contract.evaluation_identity
     model_identity = identity.get("model_identity")
@@ -130,6 +144,7 @@ def build_worker(args: argparse.Namespace) -> QwenSubmissionWorker:
         provider=provider,
         tokenizer_snapshot_path=args.tokenizer_snapshot,
         launch_evidence_path=args.launch_evidence,
+        selection_cache=VerifiedSelectionCache(),
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, RLock
@@ -39,6 +40,7 @@ from .runner import (
     JobDeadlineExceeded,
     run_challenge,
 )
+from .sample_cache import VerifiedSelectionCache
 from .submission_store import (
     SQLITE_LOCK_TIMEOUT_SECONDS,
     ClaimedSubmission,
@@ -289,6 +291,8 @@ class _SubmissionWorkerCore:
         lease_seconds: int,
         request_preflight: Callable[[tuple[ModelRequest, ...]], None],
         require_termination_confirmation: bool,
+        selection_cache: VerifiedSelectionCache | None = None,
+        claim_guard: Callable[[], AbstractContextManager] | None = None,
     ) -> None:
         if queue.routing_key != contract.contract_snapshot_sha256:
             raise ValueError("queue does not match the evaluation contract")
@@ -314,6 +318,10 @@ class _SubmissionWorkerCore:
         self._request_preflight = request_preflight
         self._require_termination_confirmation = require_termination_confirmation
         self._next_lease_sweep_at = 0.0
+        if selection_cache is not None and not isinstance(selection_cache, VerifiedSelectionCache):
+            raise TypeError("selection_cache must be a VerifiedSelectionCache")
+        self._selection_cache = selection_cache
+        self._claim_guard = claim_guard
         self._next_receive_at = 0.0
 
     def run_once(self) -> bool:
@@ -324,16 +332,32 @@ class _SubmissionWorkerCore:
         ):
             # Do not claim unrelated work while an ambiguous remote request remains live.
             return False
-        now = monotonic()
-        if now < self._next_receive_at:
+        with self._claim_guard() if self._claim_guard is not None else nullcontext():
+            claimed = self._receive_and_claim()
+        if claimed is None:
             return False
+        delivery, claim = claimed
+
+        return self._evaluate_claim(delivery, claim)
+
+    def _receive_and_claim(self):
+        # Serial polling backs off after busy work. Request executors call the attempt
+        # primitive directly and own their bounded scans/backoff, so another user's
+        # delivery on this route remains eligible in the same admission round.
+        if monotonic() < self._next_receive_at:
+            return None
+        return self._receive_and_claim_attempt()[1]
+
+    def _receive_and_claim_attempt(self):
+        """Return observed message identity as well as a claim, without losing empty/busy detail."""
+        now = monotonic()
         if now >= self._next_lease_sweep_at:
             self._store.expire_leases()
             self._store.expire_queued_deadlines()
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
         if delivery is None:
-            return False
+            return None, None
         message = delivery.message
         if (
             message.evaluation_identity_sha256
@@ -342,7 +366,7 @@ class _SubmissionWorkerCore:
             != self._contract.contract_snapshot_sha256
         ):
             self._queue.ack(delivery)
-            return False
+            return message.submission_id, None
         claim_attempt = self._store.claim_submission(
             message.submission_id,
             evaluation_identity_sha256=self._contract.evaluation_identity_sha256,
@@ -357,9 +381,10 @@ class _SubmissionWorkerCore:
                 self._next_receive_at = monotonic() + _RETRY_LATER_BACKOFF_SECONDS
             else:
                 self._queue.ack(delivery)
-            return False
-        claim = claim_attempt.claim
+            return message.submission_id, None
+        return message.submission_id, (delivery, claim_attempt.claim)
 
+    def _evaluate_claim(self, delivery, claim):
         if (
             claim.contract_snapshot_json != self._contract.snapshot_json
             or claim.evaluation_identity_sha256
@@ -378,6 +403,7 @@ class _SubmissionWorkerCore:
                 student_prompt=claim.student_prompt,
                 request_preflight=self._request_preflight,
                 deadline=JobDeadline.from_timestamp(claim.deadline_at),
+                selection_cache=self._selection_cache,
             )
         except (TokenLimitExceeded, QwenTokenLimitExceeded):
             if not self._store.complete_rejected(claim):
@@ -488,6 +514,7 @@ class SubmissionWorker(_SubmissionWorkerCore):
         contract: EvaluationContract,
         artifacts: ChallengeArtifacts,
         provider: ModelProvider,
+        selection_cache: VerifiedSelectionCache | None = None,
     ) -> None:
         if not isinstance(provider, DeterministicMockProvider):
             raise ValueError("the Mock submission slice requires DeterministicMockProvider")
@@ -511,6 +538,7 @@ class SubmissionWorker(_SubmissionWorkerCore):
             lease_seconds=min(30, contract.job_deadline_seconds),
             request_preflight=MockRequestPreflight(contract),
             require_termination_confirmation=False,
+            selection_cache=selection_cache,
         )
 
 
@@ -527,6 +555,7 @@ class QwenSubmissionWorker(_SubmissionWorkerCore):
         provider: OpenAICompatibleProvider,
         tokenizer_snapshot_path: Path,
         launch_evidence_path: Path,
+        selection_cache: VerifiedSelectionCache | None = None,
     ) -> None:
         validate_qwen_evaluation_contract(contract)
         runtime = attest_qwen_runtime_from_snapshot(
@@ -549,4 +578,5 @@ class QwenSubmissionWorker(_SubmissionWorkerCore):
             lease_seconds=contract.job_deadline_seconds,
             request_preflight=request_preflight,
             require_termination_confirmation=True,
+            selection_cache=selection_cache,
         )

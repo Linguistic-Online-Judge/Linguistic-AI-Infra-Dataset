@@ -2,7 +2,7 @@ name: Python quality
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'integration/**']
   pull_request:
 
 permissions:
@@ -36,6 +36,7 @@ jobs:
           --health-retries 10
     env:
       POSTGRES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/linguistic_oj_test
+      LOJ_ADMIN_POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/linguistic_oj_test
       REDIS_TEST_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +47,21 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install development dependencies
-        run: python -m pip install -e ".[dev,postgres]"
+        run: python -m pip install -e ".[api,dev,postgres]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Select installed browser
+        shell: bash
+        run: |
+          for browser in google-chrome chromium chromium-browser; do
+            if command -v "$browser" >/dev/null; then
+              echo "LOJ_BROWSER=$(command -v "$browser")" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "A Chromium browser is required for the browser checks." >&2
+          exit 1
       - name: Initialize PostgreSQL test schema
         run: >-
           python -c "from linguistic_oj.postgres_migrations import migrate_postgres;
@@ -54,4 +69,29 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Test
-        run: python -m pytest
+        env:
+          POSTGRES_TEST_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: python -m pytest --junitxml=runtime/ci/pytest.xml
+      - name: Require database coverage
+        run: python scripts/check_ci_service_coverage.py runtime/ci/pytest.xml
+      - name: Frontend contracts
+        run: node --test tests/browser/contracts.test.mjs
+      - name: Real local browser flows
+        run: python scripts/check_admin_browser.py
+      - name: Build and smoke-test installed wheel
+        shell: bash
+        run: |
+          python -m pip wheel --no-deps --wheel-dir runtime/wheels .
+          python -m venv runtime/wheel-env
+          runtime/wheel-env/bin/python -m pip install "$(echo runtime/wheels/linguistic_online_judge-*.whl)[api]"
+          python scripts/check_installed_package.py --python runtime/wheel-env/bin/python
+      - name: Preserve failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failure-evidence
+          path: |
+            runtime/ci/*.xml
+            runtime/browser-tests/**/*.png
+            runtime/browser-tests/**/*.log
+          retention-days: 7

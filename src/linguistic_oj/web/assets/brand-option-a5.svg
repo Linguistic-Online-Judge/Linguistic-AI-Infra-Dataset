@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>A5 · 上翻折页</title>
+  <path fill="#0e419c" d="M12 8H26V40L40 26L54 40L40 54H12Z"/>
+  <path fill="#fff" fill-opacity=".38" d="M26 40L40 26L54 40Z"/>
+</svg>

@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "it-kiparlaforest-segmentation-foundation-v1",
+  "dataset_sha256": "8c93c5af9524d66614a0979a834dd972ac5bb41f1fb027d7bcbb94cd9f7db7c7",
+  "language": "Italian",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "0782722d854e5105a7777ff7fb88caf3fbb19e4c4c697a42c6ee3079e23bb499",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Italian KIParlaForest segmentation challenge",
+  "treebank": "KIParlaForest",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

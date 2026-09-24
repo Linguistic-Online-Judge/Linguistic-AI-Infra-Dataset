@@ -1,0 +1,3 @@
+Assign one German HDT treebank-specific XPOS tag to every supplied token using the Stuttgart-Tuebingen Tagset conventions. Use sentence context, morphology, syntax, punctuation, and the token's actual function. Do not split, merge, omit, or add tokens.
+
+Return exactly the required JSON object with one tag per input token in identical order. Do not include explanations, markdown, confidence values, token text, or extra keys.

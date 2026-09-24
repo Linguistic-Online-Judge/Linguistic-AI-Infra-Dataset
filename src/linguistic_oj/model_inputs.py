@@ -61,7 +61,7 @@ SafeModelInput = (
 def _fixed_tokens(sample: DatasetSample) -> tuple[str, ...]:
     tokens = sample.answers.get(TaskType.SEGMENTATION.value)
     if not isinstance(tokens, list) or not tokens or any(
-        not isinstance(token, str) or not token for token in tokens
+        not isinstance(token, str) or not token or token == "_" for token in tokens
     ):
         raise ModelInputError(
             f"Sample {sample.id} must have a non-empty segmentation token list"

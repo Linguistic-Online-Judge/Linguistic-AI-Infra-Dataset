@@ -5,6 +5,7 @@ from linguistic_oj.dataset import DatasetSample
 from linguistic_oj.model_inputs import (
     DependencyModelInput,
     DependencyTokenInput,
+    ModelInputError,
     SegmentationModelInput,
     TaggingModelInput,
     TransliterationModelInput,
@@ -125,3 +126,17 @@ def test_response_expectations_come_from_safe_input() -> None:
 
     with pytest.raises(TypeError, match="wrong model input"):
         response_expectations("upos", segmentation)
+
+
+def test_model_input_rejects_missing_form_markers() -> None:
+    sample = _sample().model_copy(
+        update={
+            "answers": {
+                **_sample().answers,
+                "segmentation": ["_", "B"],
+            }
+        }
+    )
+
+    with pytest.raises(ModelInputError, match="non-empty segmentation token list"):
+        build_model_input(sample, "upos")

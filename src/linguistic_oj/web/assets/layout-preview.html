@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; connect-src 'none'">
+  <title>浅色视觉预览 · Linguistic Online Judge</title>
+  <link id="brand-favicon" rel="icon" href="brand-option-a.svg?v=fudan-1" type="image/svg+xml">
+  <link rel="stylesheet" href="brand-palette.css?v=fudan-1">
+  <link rel="stylesheet" href="layout-preview.css?v=light-4">
+  <script src="layout-preview.js?v=light-5" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">跳到主要内容</a>
+  <div class="prototype-notice"><span>浅色视觉预览 · 示例数据，不执行评测</span><a href="/" id="back-to-app">返回现有平台 ↗</a></div>
+  <header class="shell-header">
+    <a class="brand" href="#catalog" aria-label="Linguistic Online Judge，返回任务目录">
+      <img class="brand-mark" src="brand-option-a.svg?v=fudan-1" width="48" height="48" alt="">
+      <span class="brand-name"><span>Linguistic</span> <span>Online Judge</span></span>
+    </a>
+    <nav aria-label="切换预览页面">
+      <a href="#catalog" data-page="catalog">任务目录</a>
+      <a href="#practice/en-upos" data-page="practice" id="practice-link">练习页</a>
+      <a href="#result" data-page="result">结果页</a>
+    </nav>
+  </header>
+  <main id="content">
+    <section id="catalog-view" class="view" aria-labelledby="catalog-title">
+       <div class="page-heading"><h1 id="catalog-title" tabindex="-1">选择任务</h1><span class="quiet-label">18种语言 · 示例目录</span></div>
+      <div class="filters" role="search" aria-label="筛选示例任务">
+        <label class="search">搜索<input id="search" type="search" placeholder="搜索语言或任务" autocomplete="off"></label>
+        <label>语言<select id="language"><option value="">全部语言</option></select></label>
+        <label>类型<select id="task-type"><option value="">全部类型</option><option value="pos">词性标注</option><option value="segmentation">分词</option><option value="dependency">依存句法</option><option value="transliteration">转写</option></select></label>
+      </div>
+      <p class="list-caption" id="catalog-count" role="status"></p>
+      <table class="task-table"><caption class="sr-only">任务结构示例，不代表实时开放状态</caption><thead><tr><th scope="col">任务</th><th scope="col">语言</th><th scope="col">题量</th><th scope="col"><span class="sr-only">进入任务</span></th></tr></thead><tbody id="task-rows"></tbody></table>
+      <div id="empty" class="empty" hidden><h2>没有匹配的任务</h2><p>换一个搜索词，或清除筛选。</p><button type="button" id="clear-filters">清除筛选</button></div>
+    </section>
+
+    <section id="practice-view" class="view" aria-labelledby="practice-title" hidden>
+      <a class="back-link" href="#catalog">← 返回任务目录</a>
+      <div class="page-heading"><div><h1 id="practice-title" tabindex="-1"></h1><p id="practice-meta"></p></div></div>
+      <div class="practice-layout">
+        <article class="lesson">
+          <div class="tabs" role="tablist" aria-label="任务资料">
+            <button id="tab-description" role="tab" type="button" aria-controls="panel-description" aria-selected="true" tabindex="0">说明</button>
+            <button id="tab-example" role="tab" type="button" aria-controls="panel-example" aria-selected="false" tabindex="-1">示例</button>
+            <button id="tab-scoring" role="tab" type="button" aria-controls="panel-scoring" aria-selected="false" tabindex="-1">评分</button>
+          </div>
+          <section id="panel-description" role="tabpanel" aria-labelledby="tab-description" tabindex="0">
+            <h2 id="lesson-heading"></h2><p id="lesson-description"></p>
+            <div class="token-example" id="token-example" aria-label="英语通用词性格式示例"><span><b>Birds</b><code>NOUN</code></span><span><b>sing</b><code>VERB</code></span><span><b>.</b><code>PUNCT</code></span></div>
+            <p class="quiet-label" id="example-note">英语格式示例；实际任务语言以标题为准。</p>
+            <details class="more-info"><summary>更多任务信息</summary><p>此预览未包含完整标签表、输入限制与数据来源。</p></details>
+          </section>
+          <section id="panel-example" role="tabpanel" aria-labelledby="tab-example" tabindex="0" hidden><h2>输入与输出</h2><p class="quiet-label" id="example-language"></p><h3>输入</h3><pre id="example-input" dir="ltr"></pre><h3>输出</h3><pre id="example-output" dir="ltr"></pre></section>
+          <section id="panel-scoring" role="tabpanel" aria-labelledby="tab-scoring" tabindex="0" hidden><h2>如何评分</h2><p id="scoring-description"></p><p>输出格式不符合要求的样本仍计入评测，正确项数记为0。</p><p>因服务异常而失败的评测不生成分数。</p></section>
+        </article>
+        <section class="editor" aria-labelledby="editor-title">
+          <div class="editor-heading"><h2 id="editor-title">提示词</h2><label class="template-picker"><span class="sr-only">选择提示词模板</span><select id="template"><option value="">选择模板</option><option value="zero">零样本模板</option><option value="few">少样本模板</option></select></label></div>
+          <label class="sr-only" for="prompt">编写指导模型完成任务的提示词</label>
+          <textarea id="prompt" rows="12" spellcheck="false" dir="auto" aria-describedby="prompt-help" placeholder="写下任务指令，或选择一个模板开始。"></textarea>
+          <div class="editor-actions"><span id="prompt-help" class="quiet-label">内容仅在预览中临时保留。</span><button id="preview-result" class="primary" type="button" disabled>预览评测结果 →</button></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="result-view" class="view result-view" aria-labelledby="result-title" hidden>
+      <a id="back-to-practice" class="back-link" href="#practice/en-upos">← 返回练习</a>
+      <div class="page-heading"><div><h1 id="result-title" tabindex="-1">评测结果</h1><p id="result-task"></p></div></div>
+      <div class="result-summary"><div><span class="quiet-label" id="score-label">示例分数</span><strong class="score">72.0<span>%</span></strong></div><div class="result-readout"><h2>输出格式</h2><p><strong>48 / 50</strong> 个有效 <span class="quiet-label">（示例）</span></p><p class="quiet-label">格式有效不等于答案正确。</p></div></div>
+      <details class="result-detail"><summary>格式问题 <span>2个样本 · 示例</span></summary><p>2个样本的输出格式不符合要求。请对照任务的输出示例，检查提示词中的格式要求。</p></details>
+      <details class="result-detail"><summary>查看本次提示词</summary><pre id="submitted-prompt" dir="auto"></pre></details>
+      <details class="result-detail"><summary>评测版本与其他指标</summary><p>此预览未包含评测版本与其他指标。</p></details>
+      <div class="result-actions"><a class="primary button-link" id="continue-editing" href="#practice/en-upos">继续修改提示词 →</a><a href="#catalog">选择其他任务</a></div>
+    </section>
+  </main>
+  <footer>浅色视觉预览 · 不连接账号与评测服务</footer>
+</body>
+</html>

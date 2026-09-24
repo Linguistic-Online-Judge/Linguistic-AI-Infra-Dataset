@@ -7,7 +7,7 @@ import json
 import math
 import sqlite3
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -15,10 +15,18 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+from .admin_store import (
+    ADMIN_SCHEMA_V4,
+    AdminState,
+    AdminStoreMixin,
+    assert_admissions_open,
+)
+from .auth_schema_migration import complete_legacy_auth_schema
+from .auth_store import AUTH_SCHEMA_V3, AuthConflictError, AuthStoreMixin, AuthTransaction
 from .mvp_contract import EvaluationContract, canonical_json
 
 SQLITE_LOCK_TIMEOUT_SECONDS = 5.0
-SQLITE_SCHEMA_VERSION = 3
+SQLITE_SCHEMA_VERSION = 4
 
 
 class SubmissionStatus(StrEnum):
@@ -66,7 +74,7 @@ class UserRecord:
     user_id: str
     auth_subject: str
     public_handle: str
-    role: UserRole
+    role: UserRole | str = UserRole.USER
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +113,14 @@ class ClaimedSubmission:
 class ClaimAttempt:
     claim: ClaimedSubmission | None
     retry_later: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerPromptRecord:
+    submission_id: str
+    challenge_id: str
+    student_prompt: str
+    student_prompt_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +182,8 @@ class SubmissionStoreProtocol(Protocol):
 
     def user_by_subject(self, auth_subject: str) -> UserRecord | None: ...
 
+    def admin_states(self, challenge_ids: Sequence[str]) -> dict[str, AdminState]: ...
+
     def create_submission(
         self,
         *,
@@ -173,6 +191,7 @@ class SubmissionStoreProtocol(Protocol):
         idempotency_key: str,
         student_prompt: str,
         contract: EvaluationContract,
+        source_fingerprint: str | None = None,
     ) -> CreatedSubmission: ...
 
     def unpublished_submission_ids(
@@ -198,9 +217,13 @@ class SubmissionStoreProtocol(Protocol):
 
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool: ...
 
-    def expire_leases(self) -> int: ...
+    def claim_is_current(self, claim: ClaimedSubmission) -> bool: ...
 
-    def expire_queued_deadlines(self) -> int: ...
+    def outstanding_contract_hashes(self) -> set[str]: ...
+
+    def expire_leases(self, *, evaluation_identity_sha256: str | None = None) -> int: ...
+
+    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str | None = None) -> int: ...
 
     def complete_success(
         self, claim: ClaimedSubmission, *, owner_result: dict[str, Any]
@@ -231,6 +254,8 @@ class SubmissionStoreProtocol(Protocol):
     ) -> tuple[OwnerSubmissionRecord, ...]: ...
 
     def owner_result(self, submission_id: str, user_id: str) -> OwnerResultRecord | None: ...
+
+    def owner_prompt(self, submission_id: str, user_id: str) -> OwnerPromptRecord | None: ...
 
     def leaderboard(
         self,
@@ -323,15 +348,11 @@ CREATE INDEX IF NOT EXISTS idx_results_leaderboard_v2
 ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC, submission_id ASC);
 """
 
-_SCHEMA_V3 = """
-ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
-CHECK (role IN ('user', 'admin'));
-"""
-
 _SQLITE_MIGRATIONS = {
     1: _SCHEMA_V1,
     2: _SCHEMA_V2,
-    3: _SCHEMA_V3,
+    3: AUTH_SCHEMA_V3,
+    4: ADMIN_SCHEMA_V4,
 }
 _EXPECTED_SQLITE_SCHEMA_VERSIONS = tuple(range(1, SQLITE_SCHEMA_VERSION + 1))
 
@@ -398,7 +419,7 @@ def _execute_sqlite_migration(connection: sqlite3.Connection, script: str) -> No
             connection.execute(statement)
 
 
-class SubmissionStore:
+class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
     def __init__(self, database_path: Path) -> None:
         if not isinstance(database_path, Path):
             raise TypeError("database_path must be a Path")
@@ -434,6 +455,7 @@ class SubmissionStore:
                     ).fetchall()
                 )
                 _validate_migration_prefix(versions, _EXPECTED_SQLITE_SCHEMA_VERSIONS)
+            complete_legacy_auth_schema(connection.cursor(), versions, postgres=False)
             for version in _EXPECTED_SQLITE_SCHEMA_VERSIONS[len(versions) :]:
                 _execute_sqlite_migration(connection, _SQLITE_MIGRATIONS[version])
                 connection.execute(
@@ -462,6 +484,20 @@ class SubmissionStore:
             if versions != _EXPECTED_SQLITE_SCHEMA_VERSIONS:
                 raise RuntimeError(f"unsupported SQLite schema versions: {versions}")
 
+    @contextmanager
+    def _auth_transaction(self):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield AuthTransaction(connection.cursor())
+                connection.commit()
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                raise AuthConflictError("account constraint rejected") from None
+            except BaseException:
+                connection.rollback()
+                raise
+
     def register_user(
         self,
         *,
@@ -489,8 +525,7 @@ class SubmissionStore:
     def user_by_subject(self, auth_subject: str) -> UserRecord | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT id, auth_subject, public_handle, role FROM users "
-                "WHERE auth_subject = ?",
+                "SELECT id, auth_subject, public_handle, role FROM users WHERE auth_subject = ?",
                 (auth_subject,),
             ).fetchone()
         if row is None:
@@ -509,6 +544,7 @@ class SubmissionStore:
         idempotency_key: str,
         student_prompt: str,
         contract: EvaluationContract,
+        source_fingerprint: str | None = None,
     ) -> CreatedSubmission:
         prompt_utf8 = student_prompt.encode("utf-8")
         request_sha256 = _request_sha256(
@@ -540,6 +576,10 @@ class SubmissionStore:
                     )
                 connection.commit()
                 return CreatedSubmission(_submission_from_row(existing), replayed=True)
+
+            assert_admissions_open(
+                AuthTransaction(connection.cursor()), contract.challenge_id, source_fingerprint
+            )
 
             accepted_quota = connection.execute(
                 """
@@ -788,7 +828,25 @@ class SubmissionStore:
     def claim_deadline_expired(self, claim: ClaimedSubmission) -> bool:
         return claim.deadline_at <= _timestamp(_utc_now())
 
-    def expire_leases(self) -> int:
+    def outstanding_contract_hashes(self) -> set[str]:
+        with self._connect() as connection:
+            return {row[0] for row in connection.execute(
+                "SELECT DISTINCT contract_snapshot_sha256 FROM submissions "
+                "WHERE status IN ('queued', 'running')").fetchall()}
+
+    def claim_is_current(self, claim: ClaimedSubmission) -> bool:
+        with self._connect() as connection:
+            now = _timestamp(_utc_now())
+            return connection.execute(
+                "SELECT 1 FROM submissions WHERE id = ? AND user_id = ? AND status = 'running' "
+                "AND attempt_number = ? AND lease_token = ? AND lease_expires_at > ? "
+                "AND deadline_at > ? AND evaluation_identity_sha256 = ? "
+                "AND contract_snapshot_sha256 = ?",
+                (claim.submission_id, claim.user_id, claim.attempt_number, claim.lease_token,
+                 now, now, claim.evaluation_identity_sha256, claim.contract_snapshot_sha256),
+            ).fetchone() is not None
+
+    def expire_leases(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -803,13 +861,15 @@ class SubmissionStore:
                     END,
                     failure_retryable = 0
                 WHERE status = 'running' AND lease_expires_at <= ?
-                """,
-                (now_text, now_text, now_text),
+                """ + (" AND evaluation_identity_sha256 = ?"
+                       if evaluation_identity_sha256 is not None else ""),
+                (now_text, now_text, now_text) + ((evaluation_identity_sha256,)
+                                                if evaluation_identity_sha256 is not None else ()),
             )
             connection.commit()
         return updated.rowcount
 
-    def expire_queued_deadlines(self) -> int:
+    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -819,8 +879,10 @@ class SubmissionStore:
                 SET status = 'failed', completed_at = ?, failure_code = 'JOB_DEADLINE',
                     failure_retryable = 0
                 WHERE status = 'queued' AND deadline_at <= ?
-                """,
-                (now_text, now_text),
+                """ + (" AND evaluation_identity_sha256 = ?"
+                       if evaluation_identity_sha256 is not None else ""),
+                (now_text, now_text) + ((evaluation_identity_sha256,)
+                                      if evaluation_identity_sha256 is not None else ()),
             )
             connection.commit()
         return updated.rowcount
@@ -1093,6 +1155,22 @@ class SubmissionStore:
                     ),
                 ).fetchall()
         return tuple(_owner_submission_from_row(row) for row in rows)
+
+    def owner_prompt(self, submission_id: str, user_id: str) -> OwnerPromptRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id, challenge_id, student_prompt_utf8, student_prompt_sha256 "
+                "FROM submissions WHERE id = ? AND user_id = ?",
+                (submission_id, user_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return OwnerPromptRecord(
+            submission_id=row["id"],
+            challenge_id=row["challenge_id"],
+            student_prompt=bytes(row["student_prompt_utf8"]).decode("utf-8"),
+            student_prompt_sha256=row["student_prompt_sha256"],
+        )
 
     def owner_result(self, submission_id: str, user_id: str) -> OwnerResultRecord | None:
         with self._connect() as connection:

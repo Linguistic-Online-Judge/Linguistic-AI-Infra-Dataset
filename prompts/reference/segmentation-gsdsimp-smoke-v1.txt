@@ -1,0 +1,3 @@
+Segment the Simplified Chinese input into syntactic word tokens using Universal Dependencies Chinese GSDSimp conventions. Preserve every input character exactly and in order. Keep punctuation as separate tokens, keep coherent names and lexical words together when appropriate, and never normalize, add, or remove text.
+
+Return exactly the required JSON object. The tokens array must reconstruct the original input when concatenated. Do not include explanations, markdown, or extra keys.

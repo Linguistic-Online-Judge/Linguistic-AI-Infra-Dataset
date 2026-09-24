@@ -1,0 +1,22 @@
+# Validated by the installed-wheel Mock acceptance on Windows/Python 3.14.
+# This pins application dependencies, not the school vLLM environment.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+cffi==2.1.1
+click==8.5.0
+dnspython==2.8.0
+email-validator==2.3.0
+fastapi==0.141.1
+h11==0.16.0
+idna==3.19
+pycparser==3.0
+pydantic==2.13.5
+pydantic-core==2.46.5
+redis==6.4.0
+starlette==1.6.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uvicorn==0.52.4

@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "hi-hdtb-segmentation-foundation-v1",
+  "dataset_sha256": "7c8374ea5c4ad73e636456709ea481090cdf62f1ce2d1c661a01102611a2ea31",
+  "language": "Hindi",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "850fcb5b3efc8633ff993871f6e42a6d9595f9855c38c0cffb1f076ab9d72edf",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Hindi HDTB segmentation challenge",
+  "treebank": "HDTB",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

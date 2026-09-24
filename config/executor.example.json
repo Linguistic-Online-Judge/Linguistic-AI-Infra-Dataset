@@ -1,0 +1,13 @@
+{
+  "version": "qwen-serial-executor-v1",
+  "root": "/srv/linguistic-oj/releases/RELEASE_ID",
+  "registry": "config/challenge_contract_registry_xpos_v1.json",
+  "state_dir": "/srv/linguistic-oj/shared/production/executor-state",
+  "postgres_database_url_file": "/srv/linguistic-oj/shared/production/postgres.url",
+  "redis_url_file": "/srv/linguistic-oj/shared/production/redis.url",
+  "namespace": "loj-public",
+  "vllm_base_url": "http://127.0.0.1:8000/v1",
+  "tokenizer_snapshot": null,
+  "launch_evidence": null,
+  "artifacts": {}
+}

@@ -8,7 +8,6 @@ import linguistic_oj.qwen_worker as qwen_worker_module
 from linguistic_oj.challenge import PublicChallenge
 from linguistic_oj.challenge_registry import ChallengeContractRegistry
 from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
-from linguistic_oj.qwen_runtime import QwenRuntimeAttestationError
 from linguistic_oj.qwen_worker import build_worker, parse_args
 
 ROOT = Path(__file__).parents[1]
@@ -85,6 +84,8 @@ def test_qwen_worker_cli_requires_deployment_owned_inputs() -> None:
             "runtime/submissions.db",
             "--redis-url",
             "redis://127.0.0.1:6379/0",
+            "--environment",
+            "development",
             "--public-challenge",
             "challenges/public/en-ewt-upos-v1.json",
             "--private-challenge",
@@ -104,9 +105,41 @@ def test_qwen_worker_cli_requires_deployment_owned_inputs() -> None:
     )
 
     assert args.database == Path("runtime/submissions.db")
+    assert args.contract is None
     assert args.challenge_registry == Path("config/registry.json")
     assert args.challenge_id == "en-ewt-upos-v1"
     assert args.once is True
+
+
+def test_qwen_worker_cli_accepts_an_explicit_contract() -> None:
+    args = parse_args(
+        [
+            "--root",
+            ".",
+            "--database",
+            "runtime/submissions.db",
+            "--redis-url",
+            "redis://127.0.0.1:6379/0",
+            "--environment",
+            "development",
+            "--contract",
+            "config/second-contract.json",
+            "--public-challenge",
+            "challenges/public/en-ewt-upos-v1.json",
+            "--private-challenge",
+            "runtime/private/challenges/en-ewt-upos-v1.json",
+            "--dataset",
+            "Standard_Dataset/standard_dataset.jsonl",
+            "--vllm-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--tokenizer-snapshot",
+            "runtime/models/c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+            "--launch-evidence",
+            "runtime/qwen-launch.json",
+        ]
+    )
+
+    assert args.contract == Path("config/second-contract.json")
 
 
 def test_qwen_worker_cli_rejects_non_positive_idle_sleep() -> None:
@@ -123,6 +156,8 @@ def test_qwen_worker_cli_rejects_non_positive_idle_sleep() -> None:
                 "runtime/submissions.db",
                 "--redis-url",
                 "redis://127.0.0.1:6379/0",
+                "--environment",
+                "development",
                 "--public-challenge",
                 "challenges/public/en-ewt-upos-v1.json",
                 "--private-challenge",
@@ -137,15 +172,46 @@ def test_qwen_worker_cli_rejects_non_positive_idle_sleep() -> None:
                 "runtime/qwen-launch.json",
                 "--idle-sleep-seconds",
                 "0",
-                "--environment",
-                "development",
             ]
         )
 
 
-def test_qwen_worker_cli_reads_redis_credential_file(tmp_path: Path) -> None:
+def test_qwen_worker_cli_rejects_sqlite_in_production() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(
+            [
+                "--root",
+                ".",
+                "--database",
+                "runtime/submissions.db",
+                "--redis-url",
+                "redis://127.0.0.1:6379/0",
+                "--public-challenge",
+                "challenges/public/en-ewt-upos-v1.json",
+                "--private-challenge",
+                "runtime/private/challenges/en-ewt-upos-v1.json",
+                "--dataset",
+                "Standard_Dataset/standard_dataset.jsonl",
+                "--vllm-base-url",
+                "http://127.0.0.1:8000/v1",
+                "--tokenizer-snapshot",
+                "runtime/models/c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+                "--launch-evidence",
+                "runtime/qwen-launch.json",
+            ]
+        )
+
+
+def test_qwen_worker_cli_reads_redis_credential_file(tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    from linguistic_oj import auth_config
+
+    if os.name == "nt":
+        monkeypatch.setattr(auth_config, "_check_windows_acl", lambda path: None)
     credential = tmp_path / "redis-url"
     credential.write_text("rediss://worker:secret@redis.example/0\n", encoding="utf-8")
+    credential.chmod(0o600)
     args = parse_args(
         [
             "--root",
@@ -320,5 +386,5 @@ def test_build_worker_rejects_static_contract_mismatch_before_artifacts(monkeypa
         lambda *args, **kwargs: pytest.fail("artifacts loaded before contract validation"),
     )
 
-    with pytest.raises(QwenRuntimeAttestationError, match="prompt envelope"):
+    with pytest.raises(ValueError, match="prompt envelope"):
         build_worker(_build_args())

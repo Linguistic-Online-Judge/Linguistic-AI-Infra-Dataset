@@ -145,6 +145,20 @@ class EvaluationContract:
         )
         if type(retry_requires_termination) is not bool:
             raise ValueError("retry termination policy must be boolean")
+        generation_settings = _mapping(
+            identity.get("generation_settings"),
+            "evaluation_identity.generation_settings",
+        )
+        max_tokens = generation_settings.get("max_tokens")
+        max_rendered_input_tokens = limits.get("max_rendered_input_tokens")
+        model_context_tokens = limits.get("model_context_tokens")
+        if any(
+            type(item) is not int or item <= 0
+            for item in (max_tokens, max_rendered_input_tokens, model_context_tokens)
+        ):
+            raise ValueError("model token limits must be positive integers")
+        if max_rendered_input_tokens + max_tokens > model_context_tokens:
+            raise ValueError("input and generation token limits exceed the model context")
 
         return cls(
             snapshot_json=snapshot_json,
@@ -254,7 +268,7 @@ class EvaluationContract:
                 pure_path.is_absolute()
                 or not pure_path.parts
                 or ".." in pure_path.parts
-                or ":" in pure_path.parts[0]
+                or any(":" in part for part in pure_path.parts)
                 or path in paths
             ):
                 return False

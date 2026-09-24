@@ -1,0 +1,487 @@
+{
+  "blocking_reasons": [
+    "No treebank has completed a documented project-owner rights review.",
+    "Annotation licenses do not by themselves establish rights to redistribute underlying sentence text.",
+    "Several selected treebanks impose noncommercial, no-derivatives, academic-use, privacy, or upstream agreement constraints."
+  ],
+  "file_canonicalization": "sha256-utf8-normalize-crlf-to-lf-v1",
+  "local_ingestion_commit": "b2886040489296503f1b711b075ae15d2c7858c9",
+  "release": {
+    "archive_url": "https://hdl.handle.net/11234/1-6149",
+    "name": "Universal Dependencies 2.18",
+    "published_on": "2026-05-15",
+    "tag": "r2.18"
+  },
+  "reviewed_on": "2026-09-03",
+  "schema_version": "v1-source-provenance-v1",
+  "treebanks": [
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 3.0",
+      "attribution_summary": "Credit the PUD and CoNLL 2017 contributors, Arabic translators, and preserved sentence sources.",
+      "challenge_ids": [
+        "ar-pud-upos-v1"
+      ],
+      "language": "Arabic",
+      "license_document_sha256": "b278eb53fe50b8bb7fa0d90fb8536c35fdcaa80f9d63812cb51db539555d2a89",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Arabic-PUD/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Arabic_阿拉伯语/ar_pud-ud-test.conllu",
+      "readme_document_sha256": "f7cf6304cd0f2e829558ec04dbcdfd3ce8c60a2b5df2b3d2dc42143e6f42fa9c",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Arabic-PUD/r2.18/README.md",
+      "release_commit": "2865170299b7bc25ae742fd5a0c62ca62022170c",
+      "repository": "https://github.com/UniversalDependencies/UD_Arabic-PUD",
+      "share_alike_review": "required",
+      "source_file_sha256": "befc6dd18b5b8803644ae8208e2e5f52c0957a36437627c05110914ec42281a3",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Arabic-PUD/r2.18/ar_pud-ud-test.conllu",
+      "treebank": "PUD",
+      "underlying_text_review": "PUD states that source sentences may be copyrighted; redistribution scope remains unresolved."
+    },
+    {
+      "activation_decision": "hold",
+      "annotation_license": "CC BY-NC-SA 3.0",
+      "attribution_summary": "Credit Chinese Grammar Wiki and AllSet Learning, mSUD/SUD, converters, and the README citations.",
+      "challenge_ids": [
+        "zh-beginner-upos-v1"
+      ],
+      "language": "Chinese",
+      "license_document_sha256": "8e52de6d28cf096aa72b129e798ff61b716813fba109f78bb4d8b81fcdb8cd4e",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-Beginner/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Chinese_中文/zh_beginner-ud-test.conllu",
+      "readme_document_sha256": "35b5ac640a5ff82ba9a9f84dbaeaab4d473ee1aab8b575e6e4f2e4c3513df4f6",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-Beginner/r2.18/README.md",
+      "release_commit": "dbecf16c54c784d5c448e0ee15d4ee817b61db3f",
+      "repository": "https://github.com/UniversalDependencies/UD_Chinese-Beginner",
+      "share_alike_review": "required",
+      "source_file_sha256": "f9cf5aebf620d370097e7f46c26ac1233f201f923cdb0eb5e70ac0aeafefff41",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-Beginner/r2.18/zh_beginner-ud-test.conllu",
+      "treebank": "Beginner",
+      "underlying_text_review": "Noncommercial terms expressly restrict advertising-revenue sites and applications; deployment policy is unresolved."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Credit Google and the listed Chinese GSD contributors; identify project transformations.",
+      "challenge_ids": [
+        "zh-gsd-upos-holdout-v1"
+      ],
+      "language": "Chinese",
+      "license_document_sha256": "899b1804a12ebc090b96339614eede1b64b686721b650a71430b55b5235f7f79",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-GSD/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Chinese_中文/zh_gsd-ud-test.conllu",
+      "readme_document_sha256": "f9748d8a752833c4fba6ecac6a15e1c87520c5f7ec39db73f6d84d3834e254f4",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-GSD/r2.18/README.md",
+      "release_commit": "e0d85a020182e264d6384be2a59c0f4879a1cc35",
+      "repository": "https://github.com/UniversalDependencies/UD_Chinese-GSD",
+      "share_alike_review": "required",
+      "source_file_sha256": "ff01a3d01d62b623756396085e78bdaeefb7c2b7935a890dde5b18e92712d54f",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-GSD/r2.18/zh_gsd-ud-test.conllu",
+      "treebank": "GSD",
+      "underlying_text_review": "The README limits relicensing to annotations and says Google claims no ownership of underlying content."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Credit Chinese GSD and GSDSimp contributors, converters, and applicable source-text providers.",
+      "challenge_ids": [
+        "zh-gsdsimp-segmentation-v2",
+        "zh-gsdsimp-transliteration-v1",
+        "zh-gsdsimp-upos-v1"
+      ],
+      "language": "Chinese",
+      "license_document_sha256": "899b1804a12ebc090b96339614eede1b64b686721b650a71430b55b5235f7f79",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-GSDSimp/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Chinese_中文/zh_gsdsimp-ud-test.conllu",
+      "readme_document_sha256": "02287bdf80282151d8ca7ef3c3f7a3c3b98609f7266f145e3e3dd0a05693abd3",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-GSDSimp/r2.18/README.md",
+      "release_commit": "7b61ed473f963e911788efdf1f478154bc1053e4",
+      "repository": "https://github.com/UniversalDependencies/UD_Chinese-GSDSimp",
+      "share_alike_review": "required",
+      "source_file_sha256": "3af8046a6f32477b4d5cf3dd06bbf38682a380fe77aade3f68de97e51ab94900",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Chinese-GSDSimp/r2.18/zh_gsdsimp-ud-test.conllu",
+      "treebank": "GSDSimp",
+      "underlying_text_review": "The annotation license does not establish rights in the underlying content."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Cite Johannsen et al. 2015, Buch-Kromann et al. 2003, and Keson 1998; preserve DDT/PAROLE-DK credit.",
+      "challenge_ids": [
+        "da-ddt-upos-v1"
+      ],
+      "language": "Danish",
+      "license_document_sha256": "df653272772ee86b0098bfc640b0ab583f6ecf59bb6254b82feaba3aed3ed93c",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Danish-DDT/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Danish_丹麦语/da_ddt-ud-test.conllu",
+      "readme_document_sha256": "54afd0e605cae5e7a8494a330edacf784f500e086694c21da573e56cae7c4f35",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Danish-DDT/r2.18/README.md",
+      "release_commit": "36dc40e43302925941a60fb0201907ce50efbeb1",
+      "repository": "https://github.com/UniversalDependencies/UD_Danish-DDT",
+      "share_alike_review": "required",
+      "source_file_sha256": "2232ee43dcd35dba32b476534d230edf1aa26d4bd830813f452fd829c276f737",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Danish-DDT/r2.18/da_ddt-ud-test.conllu",
+      "treebank": "DDT",
+      "underlying_text_review": "The README records a Creative Commons distribution alternative; project-owner review is still required."
+    },
+    {
+      "activation_decision": "hold",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Credit Heise and HDT and cite Borges Volker et al. 2019; identify project transformations.",
+      "challenge_ids": [
+        "de-hdt-dependency-v1",
+        "de-hdt-upos-v1",
+        "de-hdt-xpos-v1"
+      ],
+      "language": "German",
+      "license_document_sha256": "4babe4b8aa201a260984073b558cd8d9f3039765ab8a949a9075bc0d4b137ac7",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_German-HDT/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/German_德语/de_hdt-ud-test.conllu",
+      "readme_document_sha256": "88bf522f6b7a096263fdacb14df3411587501b8f1ca45c179b1321a87c3a3e24",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_German-HDT/r2.18/README.md",
+      "release_commit": "7725af2d7e01f7401a22a80b73b85d51f15555c6",
+      "repository": "https://github.com/UniversalDependencies/UD_German-HDT",
+      "share_alike_review": "required",
+      "source_file_sha256": "6e1b32752a20022b33bf40493402488eff1df2467b9cf9b32313311cd4872ddf",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_German-HDT/r2.18/de_hdt-ud-test.conllu",
+      "treebank": "HDT",
+      "underlying_text_review": "Heise text distribution is limited to academic use; intended deployment scope requires written review."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Cite Yang et al. 2025 and every source CHILDES corpus; acknowledge NICHD grant HD082736.",
+      "challenge_ids": [
+        "en-childes-upos-v1"
+      ],
+      "language": "English",
+      "license_document_sha256": "899b1804a12ebc090b96339614eede1b64b686721b650a71430b55b5235f7f79",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-CHILDES/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/English_英语/en_childes-ud-test.conllu",
+      "readme_document_sha256": "c22c2350eed8282d4f48c5015f32e225ff9eea6bed8ccba3b38521f07ef012cf",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-CHILDES/r2.18/README.md",
+      "release_commit": "41596ed7793a47cb0cba96e40bf654404dbc171e",
+      "repository": "https://github.com/UniversalDependencies/UD_English-CHILDES",
+      "share_alike_review": "required",
+      "source_file_sha256": "a985573aeb9fabc10ab54bd3f99fb739628e4bb16da95fd814f84aee19d95f90",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-CHILDES/r2.18/en_childes-ud-test.conllu",
+      "treebank": "CHILDES",
+      "underlying_text_review": "Corpus-specific attribution and child-data privacy and ethics review remain required."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0 annotations and database rights",
+      "attribution_summary": "Credit Stanford annotation copyright, preserve source and license notices, identify modifications, and cite the supplied source corpus.",
+      "challenge_ids": [
+        "en-ewt-upos-v1"
+      ],
+      "language": "English",
+      "license_document_sha256": "b3d1b0f4c6ae151f7eb78738f46ebd5ee140f8a7f76501ba26af123140d35ae7",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-EWT/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/English_英语/en_ewt-ud-test.conllu",
+      "readme_document_sha256": "c2dc7edaf5937d18cb3ff142410fde7460e32faa69b2bd0a041abc3f957da281",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-EWT/r2.18/README.md",
+      "release_commit": "b7711cce01cdd4f5fcc0a8199b8a50d951b16c0c",
+      "repository": "https://github.com/UniversalDependencies/UD_English-EWT",
+      "share_alike_review": "required",
+      "source_file_sha256": "fa024f43dc5da3c5ac02563bc9bd0e974f46cbb1560823976a8f342a37dc494a",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-EWT/r2.18/en_ewt-ud-test.conllu",
+      "treebank": "EWT",
+      "underlying_text_review": "The annotation license excludes underlying LDC2012T13 text rights, which vary by source."
+    },
+    {
+      "activation_decision": "hold",
+      "annotation_license": "CC BY-NC-SA 4.0",
+      "attribution_summary": "Credit GUM annotators and each text source, cite Zeldes 2017 and applicable layer-specific references, and identify modifications.",
+      "challenge_ids": [
+        "en-gum-upos-holdout-v1"
+      ],
+      "language": "English",
+      "license_document_sha256": "b6310e2df084d7cf04d592a748a1449439768afe8c68d49a4248237db646915f",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-GUM/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/English_英语/en_gum-ud-test.conllu",
+      "readme_document_sha256": "40b253668943368365fd7b246eef488f2071a18676abe4b9138a575c9b742413",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-GUM/r2.18/README.md",
+      "release_commit": "b58e74bc22d17220c9198864c253a50a897bf27f",
+      "repository": "https://github.com/UniversalDependencies/UD_English-GUM",
+      "share_alike_review": "required",
+      "source_file_sha256": "cd96a285e7339f401f4803dd0f4f61109c51692e3ef6f9186a1f977544080b69",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_English-GUM/r2.18/en_gum-ud-test.conllu",
+      "treebank": "GUM",
+      "underlying_text_review": "Noncommercial and source-specific terms apply across mixed genres; commercial or closed use is prohibited upstream."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY 4.0",
+      "attribution_summary": "Cite Taule et al. 2008 and preserve AnCora attribution and modification notices.",
+      "challenge_ids": [
+        "es-ancora-upos-v1"
+      ],
+      "language": "Spanish",
+      "license_document_sha256": "653702c7fdee69f7d7a439c9ba4c178c26e745479f6e6d2943bed1a9b9c7bf67",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Spanish_西班牙语/es_ancora-ud-test.conllu",
+      "readme_document_sha256": "695eeb9e89e7da50f08a9831c5e95063d124f873d8e47ded77c461790af467e2",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/r2.18/README.md",
+      "release_commit": "197cca385e0e7db1b1fe26a5772dade1b6fbbee8",
+      "repository": "https://github.com/UniversalDependencies/UD_Spanish-AnCora",
+      "share_alike_review": "not_required_by_annotation_license",
+      "source_file_sha256": "679f1c05ca654aa26801c80319df45f8f97606718fb534b91755b48f3e67fa6f",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/r2.18/es_ancora-ud-test.conllu",
+      "treebank": "AnCora",
+      "underlying_text_review": "No additional blocker was identified in the pinned README, but project-owner review remains required."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "LGPL-LR",
+      "attribution_summary": "Cite Seddah and Candito 2016 and conversion references; preserve source, license, and modification notices.",
+      "challenge_ids": [
+        "fr-fqb-upos-v1"
+      ],
+      "language": "French",
+      "license_document_sha256": "d15c5249ad87636ddd5e904b15852507d7ddc938f272b8c21db22d809f7a926a",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_French-FQB/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/French_法语/fr_fqb-ud-test.conllu",
+      "readme_document_sha256": "d5f1d2013402f2835061c6d51146e5aecc5ed8fff18ea665cc4eaa365f2ea329",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_French-FQB/r2.18/README.md",
+      "release_commit": "dc5f488d591c85570d82476539f7c9ede765bd46",
+      "repository": "https://github.com/UniversalDependencies/UD_French-FQB",
+      "share_alike_review": "license_specific_review_required",
+      "source_file_sha256": "a69d8e10f10a8de921c272d15494c93ac79f72c7ef6c3cf0bd390e25b3cd4fe0",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_French-FQB/r2.18/fr_fqb-ud-test.conllu",
+      "treebank": "FQB",
+      "underlying_text_review": "Translated TREC questions and government or NGO FAQ source terms require review."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-NC-SA 4.0",
+      "attribution_summary": "Credit the Hebrew Treebank and MILA sources and preserve the supplied citation and license notices.",
+      "challenge_ids": [
+        "he-htb-upos-v1"
+      ],
+      "language": "Hebrew",
+      "license_document_sha256": "47c51ab15022b0245959914ecd17f446ab37cb9eedd58a5c0cf5975f7f1c60ee",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hebrew-HTB/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Hebrew_希伯来语/he_htb-ud-test.conllu",
+      "readme_document_sha256": "d7762cefa0b87dd289746657a35b85ada311122aaa64f9387aec4eadd8b44a92",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hebrew-HTB/r2.18/README.md",
+      "release_commit": "7fac1e5df74d9ebb7a58c1634214c0a07881be83",
+      "repository": "https://github.com/UniversalDependencies/UD_Hebrew-HTB",
+      "share_alike_review": "required",
+      "source_file_sha256": "026fcebd2e953776fe9e954ae5506a2c9d1a7449266ce0cbe76b3297ed793ce7",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hebrew-HTB/r2.18/he_htb-ud-test.conllu",
+      "treebank": "HTB",
+      "underlying_text_review": "Noncommercial terms apply and the separate grant for Haaretz publisher text is not established in the README."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-NC-SA 4.0",
+      "attribution_summary": "Credit IIIT Hyderabad HDTB and cite the Bhat and Palmer references supplied upstream.",
+      "challenge_ids": [
+        "hi-hdtb-upos-v1"
+      ],
+      "language": "Hindi",
+      "license_document_sha256": "5a691cc37612e912f0ad932edc4a328a9b747a37b901fb9242ac99edc79d48cd",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hindi-HDTB/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Hindi_印地语/hi_hdtb-ud-test.conllu",
+      "readme_document_sha256": "d19e200cf617f03d61231acf4780488f4d81306c22760e7ffb8c400c6e3ffd5f",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hindi-HDTB/r2.18/README.md",
+      "release_commit": "144c3741fd6804c493fbe3235d88d07a46389bec",
+      "repository": "https://github.com/UniversalDependencies/UD_Hindi-HDTB",
+      "share_alike_review": "required",
+      "source_file_sha256": "ad5c21d8774847a3a0f5f4c1b85313222f8e5dda8874d6fde6880f9f46b02975",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hindi-HDTB/r2.18/hi_hdtb-ud-test.conllu",
+      "treebank": "HDTB",
+      "underlying_text_review": "Noncommercial terms apply and exact publisher provenance for news text is not supplied."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-NC-SA 3.0",
+      "attribution_summary": "Credit the Szeged Treebank and cite Vincze et al. 2010; preserve source and modification notices.",
+      "challenge_ids": [
+        "hu-szeged-upos-v1"
+      ],
+      "language": "Hungarian",
+      "license_document_sha256": "d0555fe66e793bf2609de31c72b6028ce4c7ea197089928a0d0bb00001641e1d",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hungarian-Szeged/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Hungarian_匈牙利语/hu_szeged-ud-test.conllu",
+      "readme_document_sha256": "aa33c42fd46b961eed1b73121e4d539972165a06a3b838f791a1d7caa0121cab",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hungarian-Szeged/r2.18/README.md",
+      "release_commit": "3a712753d3560f871d6c9d60305eb0c1ead2b36c",
+      "repository": "https://github.com/UniversalDependencies/UD_Hungarian-Szeged",
+      "share_alike_review": "required",
+      "source_file_sha256": "9031ec98f775ceae6940580a1bb4ef8a2a9e9bee38c40eb9e8ce0f006b56fa59",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Hungarian-Szeged/r2.18/hu_szeged-ud-test.conllu",
+      "treebank": "Szeged",
+      "underlying_text_review": "Noncommercial terms and newspaper publisher text require review."
+    },
+    {
+      "activation_decision": "hold",
+      "annotation_license": "CC BY-NC-SA 4.0",
+      "attribution_summary": "Cite Pannitto et al. 2025 and Mauri et al. 2019 and preserve KIParla participant and corpus notices.",
+      "challenge_ids": [
+        "it-kiparlaforest-upos-v1"
+      ],
+      "language": "Italian",
+      "license_document_sha256": "9e502ba75fd0fd30cea5497b438a4bc12f07f02bc932a7a6041fd6a18b8f46a0",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Italian-KIParlaForest/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Italian_意大利语/it_kiparlaforest-ud-test.conllu",
+      "readme_document_sha256": "16e57b670c2d6476fb9b20bd4eca09dfccecf980c4ab6d81f356451d8a8ea2c1",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Italian-KIParlaForest/r2.18/README.md",
+      "release_commit": "a7f890baf141734a166d9fa239fdc0da867e4e21",
+      "repository": "https://github.com/UniversalDependencies/UD_Italian-KIParlaForest",
+      "share_alike_review": "required",
+      "source_file_sha256": "b879a507c87706690f8039fa592dfffcdd5ddb8fcd4fbda379879a410785431b",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Italian-KIParlaForest/r2.18/it_kiparlaforest-ud-test.conllu",
+      "treebank": "KIParlaForest",
+      "underlying_text_review": "KIParla terms require agreement before inclusion in another resource and impose research, nonprofit, privacy, and audio restrictions."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 3.0",
+      "attribution_summary": "Credit the PUD and CoNLL 2017 contributors, Japanese translators and annotators, and preserved sentence sources.",
+      "challenge_ids": [
+        "ja-pud-upos-v1"
+      ],
+      "language": "Japanese",
+      "license_document_sha256": "b278eb53fe50b8bb7fa0d90fb8536c35fdcaa80f9d63812cb51db539555d2a89",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Japanese-PUD/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Japanese_日语/ja_pud-ud-test.conllu",
+      "readme_document_sha256": "3dd0a9634d25eb76ff67959f91be63115c8bcd122f003ebbebf9b0c276d000b9",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Japanese-PUD/r2.18/README.md",
+      "release_commit": "4abd575c57bfa125dd4bc564f2ceb8973bbbf422",
+      "repository": "https://github.com/UniversalDependencies/UD_Japanese-PUD",
+      "share_alike_review": "required",
+      "source_file_sha256": "7ac51383189bdf5513102f9f8ac7ee1b967d5449f8c2dc1a9108fa21a8f1a688",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Japanese-PUD/r2.18/ja_pud-ud-test.conllu",
+      "treebank": "PUD",
+      "underlying_text_review": "PUD states that source sentences may be copyrighted; redistribution scope remains unresolved."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Credit original KAIST contributors and cite Chun et al. 2018; identify project transformations.",
+      "challenge_ids": [
+        "ko-kaist-upos-v1"
+      ],
+      "language": "Korean",
+      "license_document_sha256": "899b1804a12ebc090b96339614eede1b64b686721b650a71430b55b5235f7f79",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Korean-Kaist/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Korean_韩语/ko_kaist-ud-test.conllu",
+      "readme_document_sha256": "1219e86b630204112ced11c61a7922634d4f03372dce3cfb3488e8187f6ac2fb",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Korean-Kaist/r2.18/README.md",
+      "release_commit": "4797c05ab58a49dc1e413ce2d0b46f9e4aa00a54",
+      "repository": "https://github.com/UniversalDependencies/UD_Korean-Kaist",
+      "share_alike_review": "required",
+      "source_file_sha256": "fd94dc89afb01d1f7f340a46d567e0f27ae6903a70d7b6f650b49f7427f83b97",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Korean-Kaist/r2.18/ko_kaist-ud-test.conllu",
+      "treebank": "Kaist",
+      "underlying_text_review": "Original news, fiction, and academic source-text terms are not separately established upstream."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0 claim with inconsistent CC BY-NC-SA links",
+      "attribution_summary": "Cite Bouma and van Noord 2017 and the original Lassy work; preserve Wikipedia-source and modification notices.",
+      "challenge_ids": [
+        "nl-lassysmall-upos-v1"
+      ],
+      "language": "Dutch",
+      "license_document_sha256": "4e79ecccdff32143c53088aaa320cf8f3aa6cdd0bedfa4ca503bfaf9365e8bee",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Dutch-LassySmall/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Dutch_荷兰语/nl_lassysmall-ud-test.conllu",
+      "readme_document_sha256": "12dbbe879d79e042da67d1b026484dd24f7ceb0fb5164831371d0f9a704c9cff",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Dutch-LassySmall/r2.18/README.txt",
+      "release_commit": "b8cdca9661408608945133e80bb566a6a58146ea",
+      "repository": "https://github.com/UniversalDependencies/UD_Dutch-LassySmall",
+      "share_alike_review": "license_clarification_required",
+      "source_file_sha256": "a52efa0878331f1d49f6350ee95f86d1f6dc8578fcf90c652ce5764d486ad4cf",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Dutch-LassySmall/r2.18/nl_lassysmall-ud-test.conllu",
+      "treebank": "LassySmall",
+      "underlying_text_review": "The included section is described as Wikipedia-derived, but the inconsistent license document must be clarified."
+    },
+    {
+      "activation_decision": "hold",
+      "annotation_license": "CC BY-NC-ND 4.0",
+      "attribution_summary": "Cite Branco et al. 2022 and preserve CINTIL source and license notices.",
+      "challenge_ids": [
+        "pt-cintil-upos-v1"
+      ],
+      "language": "Portuguese",
+      "license_document_sha256": "73c169eb6bbfe69a71351963820fd1d7d16d0eedfbde058ca6ffc1d5f2300d58",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Portuguese-CINTIL/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Portuguese_葡萄牙语/pt_cintil-ud-test.conllu",
+      "readme_document_sha256": "c766624194aa136d683fce940cd2e2c2324957d12916bd2dbf3319337337a70f",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Portuguese-CINTIL/r2.18/README.md",
+      "release_commit": "49d3fcb01107f0bdb9452071afa1379037427c50",
+      "repository": "https://github.com/UniversalDependencies/UD_Portuguese-CINTIL",
+      "share_alike_review": "no_derivatives_restriction",
+      "source_file_sha256": "4d0377c39985c57c834e5a0912927815a375e6edbfb18362752870e8c6f466fe",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Portuguese-CINTIL/r2.18/pt_cintil-ud-test.conllu",
+      "treebank": "CINTIL",
+      "underlying_text_review": "The no-derivatives term creates a material risk for converted annotations and generated exercises; written clearance or replacement is required."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-NC-SA 4.0",
+      "attribution_summary": "Cite Droganova et al. 2018 and the supplied SynTagRus and Russian National Corpus sources.",
+      "challenge_ids": [
+        "ru-syntagrus-upos-v1"
+      ],
+      "language": "Russian",
+      "license_document_sha256": "3258892bc0af40c43a686e7f7267782778ffacf334acf25301f8f0fdab6c9cbe",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Russian_俄语/ru_syntagrus-ud-test.conllu",
+      "readme_document_sha256": "15cdbba19238d971c842b0a73944939172e33d802e20c8b4958785aa16027d28",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/r2.18/README.md",
+      "release_commit": "6377522610550b696fcc70d39074d2ce03da0e7b",
+      "repository": "https://github.com/UniversalDependencies/UD_Russian-SynTagRus",
+      "share_alike_review": "required",
+      "source_file_sha256": "97f473474d1aa8c007572cd122f90030bc7dc1707579d56b0b354c19b64af258",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/r2.18/ru_syntagrus-ud-test.conllu",
+      "treebank": "SynTagRus",
+      "underlying_text_review": "Noncommercial terms and heterogeneous fiction, news, journal, and science source texts require review."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 4.0",
+      "attribution_summary": "Credit original and conversion teams and preserve all Talbanken README citations and modification notices.",
+      "challenge_ids": [
+        "sv-talbanken-upos-v1"
+      ],
+      "language": "Swedish",
+      "license_document_sha256": "55d116ac4f9bc34715c7823a5f5ca2e4c0cac4917db9e58a470a3d48033d261c",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Swedish-Talbanken/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Swedish_瑞典语/sv_talbanken-ud-test.conllu",
+      "readme_document_sha256": "a27b0892569ea75c11a6a00df6c395c561912c8441cac70adb9c285d7bbe67be",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Swedish-Talbanken/r2.18/README.md",
+      "release_commit": "e64439a3a27906617e34b61fe1d29e3435f04ab6",
+      "repository": "https://github.com/UniversalDependencies/UD_Swedish-Talbanken",
+      "share_alike_review": "required",
+      "source_file_sha256": "f7bc84ce37cd6a71e95b8d8684801da0bb6d2be4e419ba2e865eb109d6cd1bc6",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Swedish-Talbanken/r2.18/sv_talbanken-ud-test.conllu",
+      "treebank": "Talbanken",
+      "underlying_text_review": "No additional express restriction was identified, but project-owner review remains required."
+    },
+    {
+      "activation_decision": "review_required",
+      "annotation_license": "CC BY-SA 3.0",
+      "attribution_summary": "Credit the PUD and CoNLL 2017 contributors, Thai translators and annotators, and preserved sentence sources.",
+      "challenge_ids": [
+        "th-pud-upos-v1"
+      ],
+      "language": "Thai",
+      "license_document_sha256": "b278eb53fe50b8bb7fa0d90fb8536c35fdcaa80f9d63812cb51db539555d2a89",
+      "license_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Thai-PUD/r2.18/LICENSE.txt",
+      "local_source_path": "Target_Conllus/Thai_泰语/th_pud-ud-test.conllu",
+      "readme_document_sha256": "4522657c3e02641d03c7324c353dfe7b394f13b783a3f487984f2efa6eb8b4c4",
+      "readme_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Thai-PUD/r2.18/README.md",
+      "release_commit": "4e0e10fd6d026750990d578c939507cfd2de13af",
+      "repository": "https://github.com/UniversalDependencies/UD_Thai-PUD",
+      "share_alike_review": "required",
+      "source_file_sha256": "0eeeaf5cf4352df2fe0b7f114e29d5ab5c1f54476faf64e99313de14d588a31b",
+      "source_url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Thai-PUD/r2.18/th_pud-ud-test.conllu",
+      "treebank": "PUD",
+      "underlying_text_review": "PUD states that source sentences may be copyrighted; redistribution scope remains unresolved."
+    }
+  ],
+  "verdict": "blocked",
+  "report_sha256": "7fd8e9b56661c6ab2fc15e2667291d4097f4f5d2fed932817b55afaa7ac5dd76"
+}

@@ -1,5 +1,15 @@
 # Qwen3.5 Model Runtime
 
+## Current Worker Dependency
+
+The `qwen-worker` extra now pins Transformers `5.15.1`, the tokenizer client
+actually used by the isolated Qwen3.5-9B acceptance on 2026-09-07. The previous
+`>=4.57,<5` range did not describe that working school-server environment. This
+corrects the installation declaration; it does not upgrade the running vLLM
+environment, change model weights, or change a scoring contract. The acceptance
+used a private dependency overlay for the updated API/auth libraries and left
+the existing model environment unchanged. See `docs/OPERATIONS.md` for scope.
+
 ## Verified baselines
 
 Both real-model baselines use one RTX 3090 in text-only mode and share one
@@ -109,10 +119,11 @@ python -m linguistic_oj.qwen_api \
   --challenge-registry config/deployment-challenges.json \
   --postgres-database-url-file /run/credentials/postgres-url \
   --redis-url-file /run/credentials/redis-url \
-  --authenticate package.module:callback
+  --auth-config-file /run/credentials/auth.json
 ```
 
-The authentication callback receives a FastAPI request and must return
+Production requires protected cookie-auth/HTTPS/mail configuration; authentication callbacks
+are restricted to explicit development/test compositions. Such a callback must return
 `linguistic_oj.api.Principal`; it is deployment-owned rather than a built-in
 header-based fallback. The API creates one contract-snapshot Redis route per
 executable registry entry. A Worker selects one of those same snapshots by

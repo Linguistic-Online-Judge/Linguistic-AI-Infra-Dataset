@@ -1,0 +1,17 @@
+{
+  "release_root": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/RELEASE_ID/source",
+  "data_root": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/xpos-20260913-v1/data",
+  "python": "/mnt/local/babylm26_g2/venvs/vllm/bin/python",
+  "dependency_overlay": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/acceptance-20260907-admin-cookie-v1/deps",
+  "state_dir": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/qwen-development-18-v1/state",
+  "profile": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/RELEASE_ID/execution-profile.json",
+  "registry": "config/challenge_contract_registry_xpos_v1.json",
+  "postgres_socket": "/mnt/local/babylm26_g2/projects/linguistic-oj/services/postgresql/run",
+  "postgres_port": 5433,
+  "redis_socket": "/mnt/local/babylm26_g2/projects/linguistic-oj/services/redis/run/redis.sock",
+  "tokenizer_snapshot": "/mnt/local/babylm26_g2/models/Qwen3.5-9B",
+  "launch_evidence": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/RELEASE_ID/qwen-launch.json",
+  "port": 8090,
+  "request_slots": 32,
+  "max_active_jobs": 4
+}

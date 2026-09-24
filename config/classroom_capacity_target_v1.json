@@ -1,0 +1,14 @@
+{
+  "schema_version": "classroom-capacity-target-v1",
+  "simultaneous_students": 30,
+  "samples_per_submission": 50,
+  "completion_budget_seconds": 50,
+  "task_scope": "all_advertised_tasks_including_dependency",
+  "completion": "all_students_receive_complete_final_scores",
+  "clock_start": "simultaneous_submission_release",
+  "clock_end": "last_complete_final_score_received",
+  "model": "Qwen/Qwen3.5-9B",
+  "authorized_optimization": "increase_batch_concurrency",
+  "sample_count_and_scoring_unchanged": true,
+  "model_only_success_is_not_end_to_end_acceptance": true
+}

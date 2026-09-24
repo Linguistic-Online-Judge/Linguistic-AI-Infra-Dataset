@@ -1,0 +1,61 @@
+{
+  "aggregation_version": "1.0",
+  "challenge_id": "de-hdt-xpos-v1",
+  "dataset_sha256": "7e8b60b22fdf53718369753892258d7af80b0cfb5e96a54f7afd118683255a89",
+  "errors": {},
+  "generation_diagnostics": {
+    "execution_seconds": 64.19907031580806,
+    "finish_reasons": {
+      "stop": 50
+    },
+    "generated_tokens": {
+      "maximum": 134,
+      "mean_observed": 55.68,
+      "missing_count": 0,
+      "observed_count": 50,
+      "total": 2784
+    },
+    "parse_errors": {},
+    "request_count": 50,
+    "request_latency_seconds": {
+      "maximum": 2.883699491620064,
+      "mean": 1.265093746483326,
+      "minimum": 0.3168138191103935,
+      "total": 63.2546873241663
+    },
+    "response_utf8_bytes": {
+      "maximum": 282,
+      "mean": 129.38,
+      "minimum": 25,
+      "total": 6469
+    },
+    "schema_version": "generation-diagnostics-v1"
+  },
+  "generation_settings": {
+    "enable_thinking": false,
+    "max_tokens": 256,
+    "seed": 2026,
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "metrics": {
+    "micro_accuracy": 0.33125
+  },
+  "model_identity": {
+    "model": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129"
+  },
+  "primary_metric": "micro_accuracy",
+  "prompt_envelope_version": "1.0",
+  "samples_invalid": 0,
+  "samples_total": 50,
+  "samples_valid": 50,
+  "score": 0.33125,
+  "scorer_version": "1.0",
+  "selection_sha256": "fda3c3b884d1f6fe2a306df221a8720a8b75a9b0e901dc415d678acaf510aa7f",
+  "structured_output_contract_version": "dynamic-response-constraint-v5",
+  "student_prompt_sha256": "ea106fc052e09f8c3f70409dde906660fce5825cac201efa9f362e6f674b6c2d",
+  "task": "xpos"
+}

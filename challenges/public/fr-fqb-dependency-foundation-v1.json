@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "fr-fqb-dependency-foundation-v1",
+  "dataset_sha256": "d524d2aaf27bcca579d3af8b5be8afbcda797a120c8d44094a0d83ba44d5c75b",
+  "language": "French",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "a9b304ed38d2ba35c5e985c7022bfd02342780299c65f18d8b566e93c93b61ab",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "French FQB dependency challenge",
+  "treebank": "FQB",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

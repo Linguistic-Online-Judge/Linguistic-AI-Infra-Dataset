@@ -1,0 +1,9 @@
+/* Fudan's published RGB reference: 14, 65, 156 (#0e419c).
+   Source: https://www.fudan.edu.cn/2405/list.htm */
+:root {
+  --accent: #0e419c;
+  --accent-hover: #0b347d;
+  --accent-soft: #ecf0f7;
+  --accent-line: #c3d0e6;
+  --accent-wash: #f5f7fb;
+}

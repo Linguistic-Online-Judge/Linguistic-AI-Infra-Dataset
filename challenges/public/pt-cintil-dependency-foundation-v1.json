@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "pt-cintil-dependency-foundation-v1",
+  "dataset_sha256": "a59c360c50cfa070ba0b070f32ece3b54156382ab0fdd0b16d81152cb2e151d7",
+  "language": "Portuguese",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "3b2b6c817eabf467c307f27e69e4fecfd4f3a1e4d0f1397183eb21c2eb5a814f",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "Portuguese CINTIL dependency challenge",
+  "treebank": "CINTIL",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

@@ -1,0 +1,28 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Source-rights review and production activation remain separate.",
+  "challenge_id": "es-pud-dependency-foundation-v1",
+  "dataset_sha256": "e71e034f2e32a2c420618f3867410211fae6fc0c85f31678d28b58721e54ea2e",
+  "language": "Spanish",
+  "primary_metric": "las",
+  "response_schema_version": "dependency-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "uas"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "12fb9b2fecd00409d4eb99acf6e7b5fce549ecc628c9953e97657418c0e3e89d",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "dependency",
+  "title": "Spanish PUD dependency challenge",
+  "treebank": "PUD",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

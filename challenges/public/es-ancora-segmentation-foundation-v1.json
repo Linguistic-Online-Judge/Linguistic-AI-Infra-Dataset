@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "es-ancora-segmentation-foundation-v1",
+  "dataset_sha256": "e71e034f2e32a2c420618f3867410211fae6fc0c85f31678d28b58721e54ea2e",
+  "language": "Spanish",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "98d7b59a6c43bccc2d7fa7e504226109b69d0b59f4badde2e5bb299e5db58d6e",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Spanish AnCora segmentation challenge",
+  "treebank": "AnCora",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

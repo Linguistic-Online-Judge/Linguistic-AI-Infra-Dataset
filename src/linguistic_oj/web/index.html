@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#0e419c">
+    <meta name="description" content="学习语言标注，编写提示词，在固定模型与任务版本下评测并比较结果。">
+    <title>Linguistic Online Judge</title>
+    <link rel="icon" href="/assets/brand-option-a.svg?v=fudan-1" type="image/svg+xml">
+    <link rel="stylesheet" href="/assets/brand-palette.css?v=fudan-1">
+    <link rel="stylesheet" href="/assets/app-shell.css?v=1">
+    <script src="/assets/language-lessons.js?v=foundation-1" defer></script>
+    <script src="/assets/template-rules.js?v=2" defer></script>
+    <script src="/assets/xpos-lessons.js?v=1" defer></script>
+    <script src="/assets/xpos-labels.js?v=1" defer></script>
+    <script src="/assets/teaching.js?v=xpos-1" defer></script>
+    <script src="/assets/account.js?v=pages-1" defer></script>
+    <script src="/assets/admin.js" defer></script>
+    <script src="/assets/app.js?v=pages-1" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到工作区</a>
+
+    <header class="site-header">
+      <a class="wordmark" href="#challenges" aria-label="语言学在线评测首页">
+        <img class="wordmark-mark" src="/assets/brand-option-a.svg?v=fudan-1" width="48" height="48" alt="">
+        <span class="wordmark-name">Linguistic<br>Online Judge</span>
+      </a>
+
+      <nav class="primary-nav" aria-label="主导航">
+        <a class="nav-link is-active" href="#challenges" data-view-link="challenges">任务目录</a>
+        <a class="nav-link" href="#runs" data-view-link="runs">我的评测</a>
+        <a class="nav-link is-hidden" id="admin-nav" href="#admin" data-view-link="admin">教学管理</a>
+      </nav>
+
+      <button class="session-button" id="session-button" type="button">
+        <span class="session-indicator" aria-hidden="true"></span>
+        <span id="session-label">登录 / 注册</span>
+      </button>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <p class="environment-banner is-hidden" id="mock-banner" role="status">本地模拟评测（mock）：用于测试操作流程，不代表 Qwen3.5-9B 的能力。分数与排名仅供本地测试。</p>
+      <div class="catalog-status"><p class="global-status" id="global-status" role="status" aria-live="polite">正在加载任务目录…</p><button class="secondary-action is-hidden" id="catalog-retry" type="button">重新加载目录</button></div>
+      <section class="app-view challenge-view" id="challenges-view" aria-labelledby="challenge-index-title">
+          <div class="index-heading">
+            <h1 id="challenge-index-title" tabindex="-1">选择任务</h1>
+            <span class="quiet-label" id="catalog-coverage"></span>
+          </div>
+
+          <div class="catalog-filters">
+            <label class="search-field">
+              <span>搜索</span>
+              <input id="challenge-search" type="search" placeholder="搜索语言、任务或树库" autocomplete="off">
+            </label>
+            <label><span>语言</span><select id="language-filter"><option value="">全部语言</option></select></label>
+              <label>
+                <span>类型</span>
+                <select id="task-filter">
+                  <option value="">全部类型</option>
+                </select>
+              </label>
+              <label>
+                <span>状态</span>
+                <select id="availability-filter">
+                  <option value="">全部状态</option>
+                  <option value="open">可提交</option>
+                  <option value="closed">暂不可提交</option>
+                </select>
+              </label>
+          </div>
+          <p class="quiet-label" id="catalog-count" role="status"></p>
+          <table class="task-table"><caption class="visually-hidden">任务目录</caption><thead><tr><th scope="col">任务</th><th scope="col">语言</th><th scope="col">题量</th><th scope="col">状态</th><th scope="col"><span class="visually-hidden">进入任务</span></th></tr></thead><tbody id="challenge-list"></tbody></table>
+          <p class="empty-message is-hidden" id="catalog-empty">没有匹配的任务。请修改搜索词或清除筛选。</p>
+          <button class="text-action is-hidden" id="filters-clear" type="button">清除筛选</button>
+      </section>
+
+      <section class="app-view practice-view is-hidden" id="practice-view" aria-labelledby="workbench-title">
+          <a class="back-link" href="#challenges">← 返回任务目录</a>
+          <header class="challenge-header">
+            <div>
+              <h1 id="workbench-title" tabindex="-1">正在加载任务…</h1>
+              <p class="coordinate-line" id="challenge-coordinate"></p>
+            </div>
+            <span class="availability-mark" id="availability-mark">检查中</span>
+          </header>
+
+          <div class="availability-note" id="availability-note" role="status">
+            正在加载任务详情。
+          </div>
+
+          <div class="practice-layout">
+          <section class="task-guide is-hidden" id="task-guide" aria-label="任务资料">
+            <div class="lesson-tabs" role="tablist" aria-label="任务资料">
+              <button id="lesson-tab-description" type="button" role="tab" aria-selected="true" aria-controls="lesson-description" tabindex="0">说明</button>
+              <button id="lesson-tab-example" type="button" role="tab" aria-selected="false" aria-controls="lesson-example" tabindex="-1">示例</button>
+              <button id="lesson-tab-scoring" type="button" role="tab" aria-selected="false" aria-controls="lesson-scoring" tabindex="-1">评分</button>
+            </div>
+            <section id="lesson-description" role="tabpanel" aria-labelledby="lesson-tab-description" tabindex="0">
+            <h2 id="task-guide-title">任务说明</h2>
+            <p id="task-description"></p>
+            <p class="template-help" id="task-family-help"></p>
+            <section class="published-teaching is-hidden" id="published-teaching" aria-labelledby="published-title">
+              <p class="eyebrow" id="published-version"></p>
+              <h3 id="published-title"></h3>
+              <p class="plain-text" id="published-summary"></p>
+              <p class="plain-text" id="published-instructions"></p>
+            </section>
+            <p class="template-help" id="teaching-status" role="status"></p>
+            <button class="text-action is-hidden" id="teaching-retry" type="button">重新加载教学内容</button>
+            <details class="provenance-panel"><summary>任务信息与数据来源</summary>
+              <dl class="challenge-facts" id="challenge-facts">
+                <div><dt>评测样本</dt><dd id="sample-count">—</dd></div>
+                <div><dt>主要指标</dt><dd id="primary-metric">—</dd></div>
+                <div><dt>评测模型</dt><dd id="model-name">—</dd></div>
+                <div><dt>任务版本</dt><dd id="challenge-version">—</dd></div>
+              </dl><dl id="provenance-details"></dl>
+            </details>
+            </section>
+            <section id="lesson-example" role="tabpanel" aria-labelledby="lesson-tab-example" tabindex="0" hidden>
+              <h2>输入与输出</h2>
+              <p id="task-example-language" class="quiet-label"></p>
+              <h3>输入</h3><pre id="task-example-input" dir="ltr"></pre>
+              <h3>输出</h3><pre id="task-example-output" dir="ltr"></pre>
+            <details id="teaching-details">
+              <summary>输出结构与标注规则</summary>
+              <p id="task-rules"></p><p id="task-schema-help"></p><pre id="task-schema" dir="ltr"></pre>
+            </details>
+            <details id="xpos-reference" class="label-reference is-hidden"><summary>专用词性标签参考</summary><p id="xpos-reference-help"></p><pre id="xpos-label-list" dir="ltr"></pre></details>
+            </section>
+            <section id="lesson-scoring" role="tabpanel" aria-labelledby="lesson-tab-scoring" tabindex="0" hidden>
+              <h2>如何评分</h2><p id="scoring-description"></p>
+              <p>输出格式不符合要求的样本仍计入评测，正确项数记为0。</p>
+              <p>因服务异常而失败的评测不生成分数。</p>
+            </section>
+          </section>
+
+          <form class="prompt-form" id="prompt-form">
+            <div class="form-heading">
+              <div>
+                <h2>提示词</h2>
+              </div>
+              <output id="prompt-count" for="student-prompt">0 字节</output>
+            </div>
+            <label class="visually-hidden" for="student-prompt">编写指导模型完成任务的提示词</label>
+            <div class="template-actions">
+              <button class="secondary-action" id="template-zero" type="button" disabled>载入零样本模板</button>
+              <button class="secondary-action" id="template-few" type="button" disabled>载入少样本模板</button>
+            </div>
+            <textarea
+              id="student-prompt"
+              name="student_prompt"
+              aria-describedby="submit-hint prompt-error"
+              rows="12"
+               required
+               spellcheck="false"
+               dir="auto"
+               placeholder="写下任务指令，或载入模板开始。"
+            ></textarea>
+            <p class="field-error is-hidden" id="prompt-error" role="alert"></p>
+            <div class="prompt-actions">
+              <p id="submit-hint">登录后即可提交评测。</p>
+              <button class="primary-action" id="run-button" type="submit" disabled>提交评测</button>
+            </div>
+            <button class="text-action" id="prompt-login" type="button">登录以提交</button>
+            <details class="editor-help"><summary>模板与输入限制</summary><p class="template-help">零样本模板仅提供规则；少样本模板附有示例。提示词会原样用于每个样本。长度按UTF-8编码的字节数计算。草稿仅保留在当前页面，刷新或退出登录会清除。</p></details>
+          </form>
+          </div>
+          <div class="practice-links"><button class="text-action" id="practice-leaderboard" type="button">查看此任务排行榜</button><a href="#runs">我的评测</a></div>
+      </section>
+
+      <section class="app-view result-view is-hidden" id="result-view" aria-labelledby="result-page-title">
+          <a class="back-link" id="result-back" href="#runs">← 返回我的评测</a>
+          <header class="page-heading"><h1 id="result-page-title" tabindex="-1">评测结果</h1><p id="result-task" class="quiet-label"></p></header>
+          <section class="result-sheet" id="result-sheet" aria-label="评测结果" aria-live="polite" tabindex="-1">
+            <div class="result-empty" id="result-empty">
+              <h3 id="result-title">尚未选择评测记录</h3>
+              <p id="result-empty-help">从“我的评测”打开一条记录。</p><button class="text-action is-hidden" id="result-login" type="button">登录查看结果</button>
+            </div>
+            <div class="result-content is-hidden" id="result-content"></div>
+          </section>
+
+          <section id="result-prompt-panel" class="is-hidden">
+            <details class="result-detail"><summary>查看本次提示词</summary><p id="result-prompt-status" role="status"></p><pre id="submitted-prompt" dir="auto"></pre><button id="result-prompt-retry" class="text-action is-hidden" type="button">重新加载提示词</button></details>
+            <div class="result-actions"><button id="continue-editing" class="primary-action" type="button" disabled>继续修改提示词 →</button><button id="result-leaderboard" class="text-action" type="button">查看本次评测排行榜</button></div>
+          </section>
+      </section>
+
+      <section class="app-view leaderboard-view is-hidden" id="leaderboard-view" aria-labelledby="leaderboard-title">
+        <a class="back-link" id="leaderboard-back" href="#challenges">← 返回任务目录</a>
+        <section class="leaderboard-panel">
+          <header>
+            <div>
+              <h1 id="leaderboard-title" tabindex="-1">排行榜</h1><p id="leaderboard-task" class="quiet-label"></p>
+            </div>
+            <span class="identity-stamp" id="identity-stamp" title="评测身份：区分可比较的任务、模型与配置">—</span>
+          </header>
+          <div class="leaderboard-column-head" aria-hidden="true">
+            <span>名次 / 公开昵称</span><span>得分</span>
+          </div>
+          <ol class="leaderboard-list" id="leaderboard-list"></ol>
+          <p class="empty-message" id="leaderboard-empty" role="status">选择任务后查看对应排行榜。</p>
+          <button class="text-action" id="leaderboard-refresh" type="button">刷新排行榜</button>
+          <button class="text-action is-hidden" id="leaderboard-more" type="button">加载更多排名</button>
+           <p class="template-help">按相同任务、模型与评测版本排名。提示词不公开。</p>
+        </section>
+      </section>
+
+      <section class="app-view runs-view is-hidden" id="runs-view" aria-labelledby="runs-title">
+        <header class="runs-header">
+          <div>
+            <h1 id="runs-title" tabindex="-1">我的评测</h1>
+          </div>
+          <button class="secondary-action" id="refresh-runs" type="button">刷新记录</button>
+        </header>
+        <div class="runs-list" id="runs-list"></div>
+        <div class="runs-empty" id="runs-empty" role="status">
+          <p class="eyebrow">评测记录</p>
+          <h2>登录后查看你的评测</h2>
+          <p>提示词不公开。排行榜仅显示公开昵称、分数与评测统计。</p>
+          <button class="primary-action" id="runs-connect" type="button">登录 / 注册</button>
+          <a class="text-action" href="#challenges">返回任务目录</a>
+        </div>
+        <button class="text-action is-hidden" id="runs-more" type="button">加载更早记录</button>
+      </section>
+      <section class="app-view admin-view is-hidden" id="admin-view" aria-labelledby="admin-title">
+        <header class="runs-header">
+          <div><p class="eyebrow">现有任务 · 教学内容与提交开关</p><h1 id="admin-title">教学管理</h1></div>
+          <button class="secondary-action" id="admin-refresh" type="button">刷新任务列表</button>
+        </header>
+        <p class="template-help">只管理已有任务。不新建任务，不更改数据文件、模型、评分规则或许可。保存草稿不会向学生公开；发布教学内容也不会开放评测。</p>
+        <p id="admin-status" role="status">请使用管理员账户登录。</p>
+        <div class="admin-layout">
+          <aside class="admin-index" aria-label="已有任务列表"><div id="admin-list" class="admin-list"></div></aside>
+          <article id="admin-detail" class="admin-detail is-hidden" aria-labelledby="admin-task-title">
+            <header class="challenge-header"><div><p class="coordinate-line" id="admin-coordinate"></p><h2 id="admin-task-title"></h2></div><span class="availability-mark" id="admin-admission-mark"></span></header>
+            <p class="admin-revisions" id="admin-revisions"></p>
+            <details class="provenance-panel admin-source"><summary>任务来源与评测配置（只读）</summary><dl id="admin-source"></dl></details>
+            <form id="admin-form" class="admin-form" novalidate>
+              <h3>教学草稿</h3>
+              <p class="template-help" id="admin-field-help">全部按纯文本展示，不解析 HTML 或 Markdown。长度按 Unicode 字符计算；整个保存请求不超过 16 KiB（16,384 字节）。</p>
+              <label for="admin-content-title">教学标题 <span>1–120 字符</span></label><input id="admin-content-title" autocomplete="off" aria-describedby="admin-field-help admin-validation">
+              <label for="admin-content-summary">摘要 <span>0–500 字符，可留空</span></label><textarea id="admin-content-summary" rows="3" aria-describedby="admin-validation"></textarea>
+              <label for="admin-content-instructions">任务讲解 <span>1–4,000 字符</span></label><textarea id="admin-content-instructions" rows="7" aria-describedby="admin-validation"></textarea>
+              <label for="admin-content-zero_shot_prompt">零样本提示词 <span>1–3,000 字符</span></label><textarea id="admin-content-zero_shot_prompt" rows="5" aria-describedby="admin-validation"></textarea>
+              <label for="admin-content-few_shot_prompt">少样本提示词 <span>1–3,000 字符</span></label><textarea id="admin-content-few_shot_prompt" rows="7" aria-describedby="admin-validation"></textarea>
+              <p class="template-help" id="admin-validation" role="status"></p>
+              <div class="template-actions"><button class="secondary-action" id="admin-preview-button" type="button">预览草稿</button><button class="primary-action" id="admin-save" type="submit">保存草稿</button><button class="secondary-action" id="admin-check" type="button">检查发布条件</button><button class="primary-action" id="admin-publish" type="button">发布教学内容</button></div>
+            </form>
+            <p id="admin-action-status" role="status"></p>
+            <ul id="admin-issues" class="field-error"></ul>
+            <p class="field-error is-hidden" id="admin-error" role="alert"></p>
+            <button class="text-action" id="admin-reload" type="button">重新加载此任务</button>
+            <section class="admin-preview is-hidden" id="admin-preview" aria-labelledby="admin-preview-title"><p class="eyebrow">草稿预览 · 尚未发布</p><h3 id="admin-preview-title"></h3><div id="admin-preview-content"></div></section>
+            <details class="admin-published"><summary>查看当前已发布内容</summary><p id="admin-published-status"></p><div id="admin-published-content"></div></details>
+            <section class="admin-admissions" aria-labelledby="admin-admissions-title"><h3 id="admin-admissions-title">新提交开关</h3><p class="template-help" id="admin-admissions-help"></p><div class="template-actions"><button class="secondary-action" id="admin-pause" type="button">暂停新提交</button><button class="secondary-action" id="admin-resume" type="button">恢复新提交</button></div></section>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <details class="development-panel is-hidden" id="development-panel">
+        <summary>开发者工具</summary>
+        <p><a href="/docs">接口文档</a></p>
+        <p id="development-help">仅供开发测试。以下为共享测试账号，请勿使用真实个人信息。</p>
+        <div id="development-accounts" class="development-accounts"></div>
+        <button class="secondary-action" id="development-mail-refresh" type="button">刷新测试收件箱</button>
+        <p id="development-mail-status" role="status">注册或找回密码后，在此查看测试邮件。</p>
+        <ul id="development-mail"></ul>
+      </details>
+    </footer>
+
+    <dialog class="auth-dialog" id="auth-dialog" aria-labelledby="auth-title">
+      <form id="auth-form">
+        <button class="dialog-close" id="auth-close" type="button" aria-label="关闭账户窗口">×</button>
+        <h2 id="auth-title">邮箱登录</h2>
+        <p id="auth-help">使用邮箱和密码登录。</p>
+        <div id="auth-email-field" class="auth-field"><label for="auth-email">邮箱地址</label><input id="auth-email" type="email" autocomplete="email" autocapitalize="none" spellcheck="false"></div>
+        <div id="auth-handle-field" class="auth-field is-hidden"><label for="auth-handle">公开昵称</label><input id="auth-handle" autocomplete="nickname" aria-describedby="handle-help"><p id="handle-help">3–32个字符，不含 @ 或首尾空格。会显示在排行榜上，建议使用昵称。</p></div>
+        <div id="auth-password-field" class="auth-field"><label for="auth-password">密码</label><input id="auth-password" type="password" autocomplete="current-password" aria-describedby="password-help auth-error"><p id="password-help">8–128位，可使用字母、数字、符号或中文。建议使用不易猜测的组合。</p></div>
+        <div id="auth-token-field" class="auth-field is-hidden"><label for="access-token">旧版访问令牌（Bearer token）</label><input id="access-token" type="password" aria-describedby="auth-help auth-error" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+        <p class="field-error is-hidden" id="auth-error" role="alert"></p>
+        <p class="is-hidden" id="auth-notice" role="status"></p>
+        <button class="primary-action" id="auth-submit" type="submit">登录</button>
+        <nav class="auth-links" aria-label="账户操作">
+          <a href="#login" id="auth-login-link">返回登录</a>
+          <a href="#register" id="auth-register-link">注册账户</a>
+          <a href="#forgot-password" id="auth-reset-link">忘记密码</a>
+        </nav>
+        <button class="text-action is-hidden" id="auth-retry" type="button">重新检查账户服务</button>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <template id="challenge-card-template">
+      <button class="challenge-card" type="button">
+        <span class="challenge-card-top"><b></b><i></i></span>
+        <span class="challenge-card-title"></span>
+        <span class="challenge-card-meta"></span>
+      </button>
+    </template>
+
+    <template id="leaderboard-row-template">
+      <li class="leaderboard-row">
+        <span class="rank"></span>
+        <span class="handle"></span>
+        <strong class="score"></strong>
+      </li>
+    </template>
+
+    <template id="run-row-template">
+      <article class="run-row">
+        <div class="run-order"></div>
+        <div class="run-copy">
+          <p class="run-coordinate"></p>
+          <h2></h2>
+          <p class="run-time"></p>
+        </div>
+        <span class="run-status"></span>
+        <button class="secondary-action" type="button">查看结果</button>
+      </article>
+    </template>
+  </body>
+</html>

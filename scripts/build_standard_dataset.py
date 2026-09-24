@@ -15,6 +15,8 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from linguistic_oj.responses import UD_UPOS_TAGS
+
 MISSING = "_"
 DEFAULT_TREEBANK_MAP = Path("config/treebank_names.json")
 
@@ -192,39 +194,65 @@ def make_sample(
 ) -> dict:
     comments = sentence["comments"]
     tokens = sentence["tokens"]
+    token_ids = [token["id"] for token in tokens]
+    forms = [token["form"] for token in tokens]
     id_to_form = {token["id"]: token["form"] for token in tokens}
 
     sent_id = comments.get("sent_id") or f"sent-{sentence['block_index']}"
     sample_id_sent = re.sub(r"[^A-Za-z0-9_.-]+", "_", sent_id)
 
-    dependency = [
-        [
-            token["id"],
-            token["form"],
-            token["head"],
-            "ROOT" if token["head"] == 0 else id_to_form.get(token["head"]),
-            token["deprel"],
-        ]
-        for token in tokens
-    ]
+    answers = {}
+    tasks_available = []
+    visible_forms = bool(forms) and all(
+        isinstance(form, str) and form and form != MISSING for form in forms
+    )
+    if visible_forms:
+        answers["segmentation"] = forms
+        tasks_available.append("segmentation")
 
-    answers = {
-        "segmentation": [token["form"] for token in tokens],
-        "upos": [token["upos"] for token in tokens],
-    }
-    tasks_available = ["segmentation", "upos", "dependency"]
+        upos_values = [token["upos"] for token in tokens]
+        if all(value in UD_UPOS_TAGS for value in upos_values):
+            answers["upos"] = upos_values
+            tasks_available.append("upos")
 
-    xpos_values = [token["xpos"] for token in tokens]
-    if xpos_values and all(value is not None for value in xpos_values):
-        answers["xpos"] = xpos_values
-        tasks_available.insert(2, "xpos")
+        xpos_values = [token["xpos"] for token in tokens]
+        if all(
+            isinstance(value, str) and value and value != MISSING for value in xpos_values
+        ):
+            answers["xpos"] = xpos_values
+            tasks_available.append("xpos")
 
-    answers["dependency"] = dependency
+        valid_token_ids = token_ids == list(range(1, len(tokens) + 1))
+        valid_heads = all(
+            type(token["head"]) is int and token["head"] in {0, *token_ids}
+            for token in tokens
+        )
+        valid_relations = all(
+            isinstance(token["deprel"], str)
+            and token["deprel"]
+            and token["deprel"] != MISSING
+            for token in tokens
+        )
+        if valid_token_ids and valid_heads and valid_relations:
+            answers["dependency"] = [
+                [
+                    token["id"],
+                    token["form"],
+                    token["head"],
+                    "ROOT" if token["head"] == 0 else id_to_form[token["head"]],
+                    token["deprel"],
+                ]
+                for token in tokens
+            ]
+            tasks_available.append("dependency")
 
-    translit_values = [token["misc"].get("Translit") for token in tokens]
-    if translit_values and all(value is not None for value in translit_values):
-        answers["transliteration"] = translit_values
-        tasks_available.append("transliteration")
+        translit_values = [token["misc"].get("Translit") for token in tokens]
+        if all(
+            isinstance(value, str) and value and value != MISSING
+            for value in translit_values
+        ):
+            answers["transliteration"] = translit_values
+            tasks_available.append("transliteration")
 
     sample = {
         "id": f"{language}_{treebank}_{sample_id_sent}",
@@ -325,13 +353,18 @@ def build_dataset(
                 "head_form",
                 "deprel",
             ],
+            "eligibility_policy": (
+                "A task is advertised only when every integer-ID token has a visible "
+                "FORM and that task's complete, structurally valid gold fields."
+            ),
+            "upos_policy": "Every UPOS value must belong to the 17-tag UD inventory.",
             "xpos_policy": (
-                "answers.xpos is included only when every token in the sentence has a "
-                "non-empty XPOS value."
+                "answers.xpos is included only when every token has a visible FORM and "
+                "a non-empty XPOS value."
             ),
             "transliteration_policy": (
-                "answers.transliteration is included only when every token in the sentence "
-                "has MISC.Translit."
+                "answers.transliteration is included only when every token has a visible "
+                "FORM and non-empty MISC.Translit."
             ),
         },
     }

@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "ja-pud-segmentation-foundation-v1",
+  "dataset_sha256": "4f2b5a152f945605969bf3b986d629dc31aaea07ed4db27d3a54a11bcd8a9f20",
+  "language": "Japanese",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "07b7a3dbb0811bad7a11811f98f6f6682d81d8a171f9cf7ce3822291008f8ad8",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Japanese PUD segmentation challenge",
+  "treebank": "PUD",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

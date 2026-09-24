@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "da-ddt-segmentation-foundation-v1",
+  "dataset_sha256": "611826fb6dd1d47442dcaf4306166b980a5ccf8fe470fd1515fefe49e5e3782d",
+  "language": "Danish",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "b3caa16250eda60505a541b50908509fbb2011090051ea571fe4d30430ae7cdc",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Danish DDT segmentation challenge",
+  "treebank": "DDT",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

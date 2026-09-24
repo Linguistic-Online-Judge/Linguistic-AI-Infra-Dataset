@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import threading
@@ -89,7 +90,8 @@ def test_postgres_store_persists_user_and_admin_roles() -> None:
     assert store.user_by_subject(admin.auth_subject) == admin
 
 
-def test_existing_postgres_v2_store_upgrades_users_to_default_role() -> None:
+@pytest.mark.parametrize("legacy_role", [None, "user", "admin"])
+def test_existing_postgres_store_upgrades_without_changing_roles(legacy_role) -> None:
     assert POSTGRES_TEST_DATABASE_URL is not None
     import psycopg
     from psycopg import sql
@@ -123,15 +125,28 @@ def test_existing_postgres_v2_store_upgrades_users_to_default_role() -> None:
                     "INSERT INTO users(id, auth_subject, public_handle, created_at) "
                     "VALUES ('old-user', 'old-subject', 'old-handle', '2026-09-02')"
                 )
+                if legacy_role is not None:
+                    from linguistic_oj.auth_store import ROLE_SCHEMA_V3
+
+                    cursor.execute(ROLE_SCHEMA_V3)
+                    cursor.execute("UPDATE users SET role = %s", (legacy_role,))
+                    cursor.execute("INSERT INTO schema_migrations VALUES (3, 'role-only')")
 
         migrate_postgres(isolated_url, applied_at="v3-test")
 
-        upgraded = PostgresSubmissionStore(isolated_url).user_by_subject("old-subject")
-        assert upgraded is not None and upgraded.role is UserRole.USER
+        store = PostgresSubmissionStore(isolated_url)
+        store.auth_health_check()
+        migrate_postgres(isolated_url, applied_at="repeat")
+        upgraded = store.user_by_subject("old-subject")
+        assert upgraded is not None and upgraded.role == (legacy_role or "user")
+        with pytest.raises(RuntimeError, match="unbound legacy users"):
+            store.auth_require_bound_accounts()
         with psycopg.connect(isolated_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version FROM schema_migrations ORDER BY version")
-                assert tuple(row[0] for row in cursor.fetchall()) == (1, 2, 3)
+                assert tuple(row[0] for row in cursor.fetchall()) == (1, 2, 3, 4)
+                cursor.execute("SELECT count(*) FROM auth_credentials")
+                assert cursor.fetchone()[0] == 0
         with pytest.raises(psycopg.errors.CheckViolation):
             with psycopg.connect(isolated_url) as connection:
                 with connection.cursor() as cursor:
@@ -194,6 +209,14 @@ def test_submission_outbox_claim_and_rejection_round_trip() -> None:
         contract.contract_snapshot_sha256,
     )
     assert created.submission.submission_id in unpublished
+    prompt = store.owner_prompt(created.submission.submission_id, user.user_id)
+    assert prompt is not None
+    assert prompt.student_prompt == "integration test prompt"
+    assert prompt.student_prompt_sha256 == hashlib.sha256(
+        b"integration test prompt"
+    ).hexdigest()
+    assert store.owner_prompt(created.submission.submission_id, "other-owner") is None
+    assert store.owner_prompt("missing", user.user_id) is None
     store.mark_outbox_published(created.submission.submission_id)
     claim = store.claim_submission(
         created.submission.submission_id,
@@ -209,6 +232,7 @@ def test_submission_outbox_claim_and_rejection_round_trip() -> None:
     result = store.owner_result(created.submission.submission_id, user.user_id)
     assert result is not None
     assert result.status.value == "rejected"
+    assert store.owner_prompt(created.submission.submission_id, user.user_id) == prompt
     assert result.failure == {
         "code": "TOKEN_LIMIT_EXCEEDED",
         "failure_contract_version": contract.failure_contract_version,

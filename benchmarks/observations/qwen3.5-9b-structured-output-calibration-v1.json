@@ -1,0 +1,322 @@
+{
+  "artifact_directory": "/mnt/local/babylm26_g2/projects/linguistic-oj/artifacts/candidate-20260903-v1-strict-upos-budget/structured-prompt-ab-v2",
+  "candidate": "candidate-20260903-structured-prompt-ab",
+  "checks": {
+    "app_current_unchanged": true,
+    "existing_evaluation_contracts_unchanged": true,
+    "frozen_qwen_worker_rejects_structured_mode": true,
+    "gpu_released_after_run": true,
+    "hdt_xpos_inventory_identity_frozen": true,
+    "logs_contain_credentials_or_prompt_bodies": false,
+    "prompt_candidate_runs_repeated": true,
+    "structured_v5_runs_repeated": true
+  },
+  "comparisons": [
+    {
+      "baseline": {
+        "artifact_paths": [
+          "benchmarks/observations/de-hdt-xpos-v1-prompt-v1.json",
+          "benchmarks/observations/de-hdt-xpos-v1-prompt-v1-run2.json"
+        ],
+        "artifact_sha256s": [
+          "29b243515763a8d6b0b97cd8ef2071f84c7b79c27354304067f86ed0c45bca1f",
+          "a46337069a3280504b5c36050f71829d1ef88de4d227ed563c52e2e2284bc91d"
+        ],
+        "errors": {
+          "INVALID_JSON": 7,
+          "LENGTH_MISMATCH": 17
+        },
+        "execution_seconds": [
+          104.15600701794028,
+          104.26349998638034
+        ],
+        "finish_reasons": {
+          "length": 7,
+          "stop": 43
+        },
+        "generated_tokens": 4724,
+        "mode": "unconstrained",
+        "prompt_sha256": "ea106fc052e09f8c3f70409dde906660fce5825cac201efa9f362e6f674b6c2d",
+        "samples_invalid": 24,
+        "samples_valid": 26,
+        "score": 0.13958333333333334
+      },
+      "challenge_id": "de-hdt-xpos-v1",
+      "control": {
+        "contract_snapshot_sha256": "44da8d2c176d8645c9bb61aa693ca85c7f519ecc08f0a44ce69d642f65ed3a68",
+        "dataset_sha256": "7e8b60b22fdf53718369753892258d7af80b0cfb5e96a54f7afd118683255a89",
+        "enable_thinking": false,
+        "max_tokens": 256,
+        "response_schema_version": "xpos-v1",
+        "selection_sha256": "fda3c3b884d1f6fe2a306df221a8720a8b75a9b0e901dc415d678acaf510aa7f",
+        "source_evaluation_identity_sha256": "6a51cbda3784f8269859f50c4ebb87933d985c08701f5140ac268688206d97e2"
+      },
+      "final_candidate": {
+        "artifact_paths": [
+          "benchmarks/observations/de-hdt-xpos-v1-structured-constraint-v5-run1.json",
+          "benchmarks/observations/de-hdt-xpos-v1-structured-constraint-v5-run2.json"
+        ],
+        "artifact_sha256s": [
+          "890aa62afbde78f5d43d4d1efc9a3143d1f0e54b4520a8b10d9a5d1095b58342",
+          "5d81b86a9a39bedfd37bfd7e90a64d8ce11d88704e70f78113191b894a24695c"
+        ],
+        "errors": {},
+        "execution_seconds": [
+          64.19907031580806,
+          64.16807732731104
+        ],
+        "finish_reasons": {
+          "stop": 50
+        },
+        "generated_tokens": 2784,
+        "mode": "dynamic-response-constraint-v5",
+        "prompt_sha256": "ea106fc052e09f8c3f70409dde906660fce5825cac201efa9f362e6f674b6c2d",
+        "samples_invalid": 0,
+        "samples_valid": 50,
+        "score": 0.33125
+      },
+      "prompt_only_candidates": [
+        {
+          "artifact_paths": [
+            "benchmarks/observations/de-hdt-xpos-v1-prompt-v2.json",
+            "benchmarks/observations/de-hdt-xpos-v1-prompt-v2-run2.json"
+          ],
+          "artifact_sha256s": [
+            "d5b255579ce54ac5d3ca0d800b60c2dce19ca4c99f048b857093f2cb8f9ffc02",
+            "60db6ae48dc091fa6f7c8a69252e43c55d65f213175d0f2ceb96a58148d4044d"
+          ],
+          "decision": "reject",
+          "errors": {
+            "INVALID_JSON": 7,
+            "LENGTH_MISMATCH": 23
+          },
+          "execution_seconds": [
+            84.11270297318697,
+            84.10474056750536
+          ],
+          "finish_reasons": {
+            "length": 7,
+            "stop": 43
+          },
+          "generated_tokens": 3683,
+          "prompt_sha256": "9c7423ba9b8a5a376b7f2f97b707d594b2d6bd25e124581776c6c87cc3df385a",
+          "samples_valid": 20,
+          "score": 0.11354166666666667,
+          "version": "v2"
+        },
+        {
+          "artifact_paths": [
+            "benchmarks/observations/de-hdt-xpos-v1-prompt-v3.json",
+            "benchmarks/observations/de-hdt-xpos-v1-prompt-v3-run2.json"
+          ],
+          "artifact_sha256s": [
+            "00b67cbe12e5954c47c14705f838495ff21839670b78cabbab2ff3da66d9e159",
+            "18cad54f1e070e48c26bf79a0f07fba4eb6f05cea684fc4a75080290c56fa024"
+          ],
+          "decision": "reject",
+          "errors": {
+            "INVALID_JSON": 7,
+            "LENGTH_MISMATCH": 18
+          },
+          "execution_seconds": [
+            109.16632231324911,
+            109.19208831712604
+          ],
+          "finish_reasons": {
+            "length": 7,
+            "stop": 43
+          },
+          "generated_tokens": 4938,
+          "prompt_sha256": "fd9f71cc12b1a0ddbcece10031ac40ae94aafbf9465391388cfc5319e3c7e70e",
+          "samples_valid": 25,
+          "score": 0.13229166666666667,
+          "version": "v3"
+        }
+      ],
+      "structured_iterations": [
+        {
+          "decision": "superseded",
+          "errors": {
+            "INVALID_JSON": 2
+          },
+          "mode": "dynamic-response-schema-v1",
+          "samples_valid": 48,
+          "score": 0.284375
+        },
+        {
+          "decision": "superseded",
+          "errors": {
+            "INVALID_JSON": 3
+          },
+          "mode": "dynamic-response-schema-v2-to-v4",
+          "samples_valid": 47,
+          "score": 0.33125
+        }
+      ],
+      "task": "xpos"
+    },
+    {
+      "baseline": {
+        "artifact_paths": [
+          "benchmarks/observations/zh-gsdsimp-transliteration-v1-prompt-v1.json"
+        ],
+        "artifact_sha256s": [
+          "e3f887558d20db0692ec731a295849dab43e73ce2a04ec5726565fd49134c3c5"
+        ],
+        "errors": {
+          "INVALID_JSON": 2,
+          "LENGTH_MISMATCH": 20
+        },
+        "execution_seconds": [
+          218.04034374281764
+        ],
+        "finish_reasons": {
+          "length": 2,
+          "stop": 48
+        },
+        "generated_tokens": 10257,
+        "mode": "unconstrained",
+        "prompt_sha256": "2101738b319def47eb163bb1d969b5616e02c35cd8fe67d5067d87f55b27a4c1",
+        "samples_invalid": 22,
+        "samples_valid": 28,
+        "score": 0.33114754098360655
+      },
+      "challenge_id": "zh-gsdsimp-transliteration-v1",
+      "control": {
+        "contract_snapshot_sha256": "6cfdfa6fd0d24a1934d54e822691735cf642ce89108dc114b7154f8a44122464",
+        "dataset_sha256": "6ed8c27ef391ccc0638fff87731f1898673f0ffe81b470173e2fa9ca2012f5ff",
+        "enable_thinking": false,
+        "max_tokens": 512,
+        "response_schema_version": "transliteration-v1",
+        "selection_sha256": "3f0583073ee5efadf0062e8f9b5a707bd29b7e6f9a85393742841d615f29f81d",
+        "source_evaluation_identity_sha256": "9dbd5f5462aa364b9d65ffeeca4ab8422b489aed8f1a635e68e81c8c76d8fffc"
+      },
+      "final_candidate": {
+        "artifact_paths": [
+          "benchmarks/observations/zh-gsdsimp-transliteration-v1-structured-constraint-v5-run1.json",
+          "benchmarks/observations/zh-gsdsimp-transliteration-v1-structured-constraint-v5-run2.json"
+        ],
+        "artifact_sha256s": [
+          "f856bacddc0da669d7a0e43d3a90ff78615fc56d581d459ca6836da049c6550e",
+          "78d8b96f0655c686ba1fafccd9d90baf671b0415a1a3e09fb860ec0b26d79c53"
+        ],
+        "errors": {},
+        "execution_seconds": [
+          194.44821996986866,
+          194.45909044519067
+        ],
+        "finish_reasons": {
+          "stop": 50
+        },
+        "generated_tokens": 9090,
+        "mode": "dynamic-response-constraint-v5",
+        "prompt_sha256": "2101738b319def47eb163bb1d969b5616e02c35cd8fe67d5067d87f55b27a4c1",
+        "samples_invalid": 0,
+        "samples_valid": 50,
+        "score": 0.37131147540983606
+      },
+      "prompt_only_candidates": [
+        {
+          "artifact_paths": [
+            "benchmarks/observations/zh-gsdsimp-transliteration-v1-prompt-v2.json",
+            "benchmarks/observations/zh-gsdsimp-transliteration-v1-prompt-v2-run2.json"
+          ],
+          "artifact_sha256s": [
+            "519cb61aca3239c51cdb6c1006cb0027083147207a93ad61fade261a20127b53",
+            "47f7f0e7163701bad165b3ac3e8792452a88f1054d9898ee095370188493153b"
+          ],
+          "decision": "reject",
+          "errors": {
+            "EMPTY_VALUE": 2,
+            "INVALID_JSON": 1,
+            "LENGTH_MISMATCH": 21
+          },
+          "execution_seconds": [
+            104.45585929602385,
+            104.37316334992647
+          ],
+          "finish_reasons": {
+            "stop": 50
+          },
+          "generated_tokens": 4672,
+          "prompt_sha256": "5a922d6530cdc4c6e791e019c33a0635ecad61423552d1b5d896f2876231dcfd",
+          "samples_valid": 26,
+          "score": 0.1778688524590164,
+          "version": "v2"
+        },
+        {
+          "artifact_paths": [
+            "benchmarks/observations/zh-gsdsimp-transliteration-v1-prompt-v3.json",
+            "benchmarks/observations/zh-gsdsimp-transliteration-v1-prompt-v3-run2.json"
+          ],
+          "artifact_sha256s": [
+            "bd7b13150256df2d20ba3cbc3772f89c921622771929dc39926f2cf2f49367df",
+            "ef5305b0fe7fd9d139eaace195b02d931044392f7e94d493a76cb83a6b776b00"
+          ],
+          "decision": "reject",
+          "errors": {
+            "INVALID_JSON": 2,
+            "LENGTH_MISMATCH": 24
+          },
+          "execution_seconds": [
+            202.70860093459487,
+            202.9188232831657
+          ],
+          "finish_reasons": {
+            "length": 2,
+            "stop": 48
+          },
+          "generated_tokens": 9482,
+          "prompt_sha256": "bce43e380538732a0a9e95bba195558041bcab568f2b16ce220783ba1e36cfae",
+          "samples_valid": 24,
+          "score": 0.3368852459016393,
+          "version": "v3"
+        }
+      ],
+      "task": "transliteration"
+    }
+  ],
+  "decision": {
+    "existing_contracts": "unchanged_draft",
+    "prompt_only_recommendation": "retain_v1",
+    "production_activation": false,
+    "structured_output_recommendation": "design_new_evaluation_identity_and_contract"
+  },
+  "evidence_policy": {
+    "contains_gold_answers": false,
+    "contains_model_inputs": false,
+    "contains_prompt_bodies": false,
+    "contains_raw_model_responses": false,
+    "contains_sample_ids": false
+  },
+  "protocol": {
+    "aggregation_version": "1.0",
+    "generation_seed": 2026,
+    "hdt_xpos_tag_inventory_sha256": "1edae8cc60e60644fd70bd107832b9c317cf180b99f84bf499e080526ec1a073",
+    "hdt_xpos_tag_inventory_version": "de-hdt-xpos-tags-v1",
+    "model": "Qwen/Qwen3.5-9B",
+    "model_context_tokens": 4096,
+    "model_revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "prompt_envelope_version": "1.0",
+    "runtime": "vllm",
+    "runtime_version": "0.27.1+cu129",
+    "scorer_version": "1.0",
+    "temperature": 0.0,
+    "tokenizer_identity": {
+      "add_generation_prompt": true,
+      "chat_template_sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+      "counting_method": "hf-apply-chat-template-tokenize-v1",
+      "enable_thinking": false,
+      "repository": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "tokenizer_config_sha256": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8",
+      "tokenizer_json_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+    },
+    "top_p": 1.0,
+    "worker_model_concurrency": 1
+  },
+  "remote_log_sha256": "512ae00ccfb60928c1a1265984050459e41c0e6db9e299ff9d2db26dec88b229",
+  "report_sha256": "3b7fdaaed8528c008da6d977c42d32e0e867639ac5c29c5e0012230a5d5bf7ce",
+  "schema_version": "qwen-structured-output-calibration-v1",
+  "verdict": "pass_for_versioned_contract_design"
+}

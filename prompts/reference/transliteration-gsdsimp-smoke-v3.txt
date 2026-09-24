@@ -1,0 +1,3 @@
+Transliterate each supplied Simplified Chinese token as Hanyu Pinyin with lowercase letters and tone marks. Return only the required JSON object with a transliterations array containing exactly the same number of items as input.tokens, in identical order. Never split, merge, omit, add, or reorder token positions, and do not put spaces inside an item.
+
+Use ASCII apostrophes where needed between Pinyin syllables. Preserve numbers and Latin-script text, including case. Follow GSDSimp punctuation forms: "（" to "(", "）" to ")", "，" or "、" to ",", "。" to ".", "：" to ":", "；" to ";", "《" to "«", "》" to "»", "〈" to "<", and "〉" to ">". Keep every punctuation token as one output item. Output no explanations, markdown, token text, indices, or extra keys.

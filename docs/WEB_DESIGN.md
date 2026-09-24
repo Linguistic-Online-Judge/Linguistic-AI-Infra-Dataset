@@ -1,5 +1,10 @@
 # Web design direction
 
+This document describes the independent read-only Next.js catalog in `web/` retained
+from the earlier main branch. The deployed full workbench is `src/linguistic_oj/web/`;
+its approved folded-L mark and Fudan-blue visual system are documented separately in
+`PRODUCT_UX_REVIEW.md` and the project guidance. These are separate applications.
+
 ## Product subject
 
 The web application is a formal linguistic evaluation interface for students,
@@ -85,8 +90,9 @@ The evaluation trace is the only assertive visual device:
 registered corpus -> controlled input -> fixed model -> code scoring
 ```
 
-It describes the real system architecture and reinforces why results are
-reproducible. No other decorative illustration, gradient, glass surface, or
+It describes the system architecture and the provenance of an evaluation. Fixed inputs
+and settings do not guarantee identical model outputs across scheduling conditions.
+No other decorative illustration, gradient, glass surface, or
 ambient animation competes with it.
 
 ## Content rules

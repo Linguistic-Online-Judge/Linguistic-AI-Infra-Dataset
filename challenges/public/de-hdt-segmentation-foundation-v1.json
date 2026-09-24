@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "de-hdt-segmentation-foundation-v1",
+  "dataset_sha256": "7e8b60b22fdf53718369753892258d7af80b0cfb5e96a54f7afd118683255a89",
+  "language": "German",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "fda3c3b884d1f6fe2a306df221a8720a8b75a9b0e901dc415d678acaf510aa7f",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "German HDT segmentation challenge",
+  "treebank": "HDT",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

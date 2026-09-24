@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 
 import pytest
 
+from linguistic_oj import auth_config
 from linguistic_oj.postgres_migrations import resolve_postgres_url, validate_postgres_url
 
 
@@ -46,12 +48,12 @@ def test_validate_postgres_url_cannot_bypass_tls_with_query_host() -> None:
 def test_validate_postgres_url_rejects_ambient_host_resolution(
     database_url: str,
 ) -> None:
-    with pytest.raises(ValueError, match="explicit host|service indirection"):
+    with pytest.raises(ValueError, match="explicit host|connection target"):
         validate_postgres_url(database_url)
 
 
 def test_validate_postgres_url_rejects_multihost_authority() -> None:
-    with pytest.raises(ValueError, match="exactly one host"):
+    with pytest.raises(ValueError, match="invalid connection URL"):
         validate_postgres_url(
             "postgresql://judge@127.0.0.1:5432,db.example:5432/linguistic_oj"
         )
@@ -69,7 +71,7 @@ def test_validate_postgres_url_rejects_multihost_authority() -> None:
     ),
 )
 def test_validate_postgres_url_rejects_target_overrides(database_url: str) -> None:
-    with pytest.raises(ValueError, match="target parameters|Unix socket"):
+    with pytest.raises(ValueError, match="target|Unix socket|explicit host"):
         validate_postgres_url(database_url)
 
 
@@ -83,13 +85,16 @@ def test_validate_postgres_url_rejects_libpq_environment(
 
 
 def test_resolve_postgres_url_reads_production_credentials_from_file(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if os.name == "nt":
+        monkeypatch.setattr(auth_config, "_check_windows_acl", lambda path: None)
     credential = tmp_path / "postgres-url"
     credential.write_text(
         "postgresql://judge:secret@db.example/linguistic_oj?sslmode=verify-full\n",
         encoding="utf-8",
     )
+    credential.chmod(0o600)
 
     assert resolve_postgres_url(
         inline_url=None,
@@ -114,7 +119,7 @@ def test_resolve_postgres_url_rejects_inline_production_password() -> None:
 def test_resolve_postgres_url_rejects_inline_extended_secrets(
     secret_parameter: str,
 ) -> None:
-    with pytest.raises(ValueError, match="credential"):
+    with pytest.raises(ValueError, match="credential|connection target"):
         resolve_postgres_url(
             inline_url=f"postgresql://judge@127.0.0.1/linguistic_oj?{secret_parameter}",
             credential_file=None,

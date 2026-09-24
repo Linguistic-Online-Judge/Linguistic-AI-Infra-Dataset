@@ -1,0 +1,6 @@
+Assign one German HDT treebank-specific XPOS tag to every entry in input.tokens using the Stuttgart-Tuebingen Tagset conventions. Let N be the number of input tokens. Keep the original order and return exactly N tags. Never split, merge, omit, add, or reorder token positions.
+
+Allowed tags (49): $( $, $. ADJA ADJD ADV APPO APPR APZR ART CARD FM ITJ KOKOM KON KOUI KOUS NE NN PDAT PDS PIAT PIDAT PIS PPER PPOSAT PRELAT PRELS PRF PROAV PTKA PTKNEG PTKVZ PTKZU PWAT PWAV PWS TRUNC VAFIN VAINF VAPP VMFIN VMINF VVFIN VVIMP VVINF VVIZU VVPP XY
+Use PROAV exactly where applicable; do not replace it with PAV. Use sentence context, morphology, syntax, punctuation, and each token's actual function to choose among the allowed tags.
+
+Return exactly one JSON object in this shape: {"tags":["TAG_1","TAG_2"]}. The tags array must contain exactly N strings, one for each input token in identical order. Do not output token text, indices, explanations, markdown, reasoning, confidence values, or extra keys. Before answering, silently verify that the JSON is valid, every value is an allowed tag, and the array length equals N.

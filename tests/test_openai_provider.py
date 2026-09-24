@@ -4,6 +4,7 @@ import threading
 import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import URLError
 
 import pytest
 
@@ -115,6 +116,27 @@ def _request() -> ModelRequest:
         student_prompt="Segment carefully.",
         model_input=SegmentationModelInput(text="AB"),
     )
+
+
+def test_transport_disconnect_keeps_remote_request_latched(monkeypatch):
+    attempts = []
+
+    def disconnected(*args, **kwargs):
+        attempts.append(1)
+        raise URLError('fixture connection lost')
+
+    monkeypatch.setattr(providers_module, 'urlopen', disconnected)
+    provider = OpenAICompatibleProvider(
+        base_url='http://127.0.0.1:8000/v1', identity=_identity(),
+        settings=GenerationSettings(),
+    )
+    with pytest.raises(ProviderTransportError) as error:
+        provider.generate(_request())
+    assert error.value.termination_confirmed is False
+    assert provider.has_active_request
+    with pytest.raises(ProviderTransportError, match='prior model request'):
+        provider.generate(_request())
+    assert attempts == [1]
 
 
 def _tagging_request() -> ModelRequest:
@@ -571,6 +593,14 @@ def test_openai_provider_enforces_absolute_deadline_and_keeps_timeout_poisoned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     release = threading.Event()
+    threads = []
+
+    def tracked_thread(*args, **kwargs):
+        thread = threading.Thread(*args, **kwargs)
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(providers_module, "Thread", tracked_thread)
 
     def fake_urlopen(request, *, timeout):
         release.wait()
@@ -590,11 +620,13 @@ def test_openai_provider_enforces_absolute_deadline_and_keeps_timeout_poisoned(
         provider.generate(_request(), timeout_seconds=1)
 
     release.set()
-    deadline = time.monotonic() + 1
-    while provider.has_active_request and time.monotonic() < deadline:
-        time.sleep(0.01)
+    threads[0].join(timeout=1)
+    assert not threads[0].is_alive()
     assert elapsed < 0.2
     assert provider.has_active_request is True
+    with pytest.raises(ProviderTransportError, match="prior model request"):
+        provider.generate(_request(), timeout_seconds=1)
+    assert len(threads) == 1
 
 
 def test_openai_provider_does_not_start_a_request_after_caller_timeout(

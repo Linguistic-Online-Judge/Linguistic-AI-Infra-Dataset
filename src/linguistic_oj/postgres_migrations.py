@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
-import re
-from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
 
-POSTGRES_SCHEMA_VERSION = 3
+from .admin_store import ADMIN_SCHEMA_V4
+from .auth_schema_migration import complete_legacy_auth_schema
+from .auth_store import AUTH_SCHEMA_V3
+from .connection_config import resolve_connection_url, validate_postgres_connection_url
+
+POSTGRES_SCHEMA_VERSION = 4
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
 POSTGRES_SESSION_OPTIONS = (
     "-c timezone=UTC "
@@ -16,10 +17,6 @@ POSTGRES_SESSION_OPTIONS = (
     "-c statement_timeout=10000 "
     "-c idle_in_transaction_session_timeout=15000"
 )
-_MAX_POSTGRES_CREDENTIAL_BYTES = 4096
-_SECURE_POSTGRES_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
-_LIBPQ_CONNECTION_ENVIRONMENT = re.compile(r"PG[A-Z0-9_]+")
-_POSTGRES_TARGET_QUERY_PARAMETERS = frozenset({"dbname", "hostaddr", "port", "user"})
 
 _EXPECTED_SCHEMA_VERSIONS = tuple(range(1, POSTGRES_SCHEMA_VERSION + 1))
 
@@ -97,72 +94,16 @@ CREATE INDEX IF NOT EXISTS idx_results_leaderboard_v2
 ON results(evaluation_identity_sha256, score DESC, succeeded_at ASC, submission_id ASC);
 """
 
-_SCHEMA_V3 = """
-ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
-CHECK (role IN ('user', 'admin'));
-"""
-
 _POSTGRES_MIGRATIONS = {
     1: _SCHEMA_V1,
     2: _SCHEMA_V2,
-    3: _SCHEMA_V3,
+    3: AUTH_SCHEMA_V3,
+    4: ADMIN_SCHEMA_V4,
 }
 
 
-def _is_loopback_postgres_host(hostname: str | None) -> bool:
-    if hostname is None or hostname == "localhost" or hostname.startswith("/"):
-        return True
-    try:
-        return ip_address(hostname).is_loopback
-    except ValueError:
-        return False
-
-
 def validate_postgres_url(database_url: str) -> str:
-    if not isinstance(database_url, str) or not database_url.strip():
-        raise ValueError("PostgreSQL database URL must not be empty")
-    parsed = urlparse(database_url)
-    if parsed.scheme not in {"postgres", "postgresql"} or parsed.path in {"", "/"}:
-        raise ValueError("database URL must be a PostgreSQL URL with a database name")
-    ambient_parameters = sorted(
-        key for key in os.environ if _LIBPQ_CONNECTION_ENVIRONMENT.fullmatch(key)
-    )
-    if ambient_parameters:
-        raise ValueError(
-            "libpq PG* connection environment is not supported: "
-            + ", ".join(ambient_parameters)
-        )
-    query = parse_qs(parsed.query, keep_blank_values=True)
-    if "service" in query:
-        raise ValueError("PostgreSQL service indirection is not supported")
-    if any(len(values) != 1 for values in query.values()):
-        raise ValueError("PostgreSQL URL must not repeat query parameters")
-    target_overrides = set(query) & _POSTGRES_TARGET_QUERY_PARAMETERS
-    if target_overrides:
-        raise ValueError(
-            "PostgreSQL URL contains unsupported target parameters: "
-            + ", ".join(sorted(target_overrides))
-        )
-    authority = unquote(parsed.netloc.rpartition("@")[2])
-    if "," in authority:
-        raise ValueError("PostgreSQL URL must specify exactly one host")
-    query_host = query.get("host", [])
-    if query_host and (
-        parsed.hostname is not None
-        or not query_host[0]
-        or not query_host[0].startswith("/")
-        or "," in query_host[0]
-    ):
-        raise ValueError("PostgreSQL query host must be an unambiguous Unix socket")
-    if parsed.hostname is None and not query_host:
-        raise ValueError("PostgreSQL URL must specify an explicit host or Unix socket")
-    if not query_host and not _is_loopback_postgres_host(parsed.hostname):
-        ssl_modes = query.get("sslmode", [])
-        if len(ssl_modes) != 1 or ssl_modes[0] not in _SECURE_POSTGRES_SSL_MODES:
-            raise ValueError(
-                "non-loopback PostgreSQL connections require a secure sslmode"
-            )
-    return database_url
+    return validate_postgres_connection_url(database_url)
 
 
 def resolve_postgres_url(
@@ -171,41 +112,9 @@ def resolve_postgres_url(
     credential_file: Path | None,
     allow_inline_credentials: bool,
 ) -> str:
-    """Resolve a PostgreSQL URL without exposing production secrets in argv."""
-
-    if (inline_url is None) == (credential_file is None):
-        raise ValueError("configure exactly one PostgreSQL URL source")
-    if credential_file is not None:
-        try:
-            if not credential_file.is_file():
-                raise ValueError("PostgreSQL credential path must be a regular file")
-            if credential_file.stat().st_size > _MAX_POSTGRES_CREDENTIAL_BYTES:
-                raise ValueError("PostgreSQL credential file is too large")
-            database_url = credential_file.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeError) as error:
-            raise ValueError("PostgreSQL credential file cannot be read") from error
-        if not database_url or "\n" in database_url or "\r" in database_url:
-            raise ValueError("PostgreSQL credential file must contain exactly one URL")
-    else:
-        database_url = inline_url
-    if not isinstance(database_url, str) or not database_url:
-        raise ValueError("PostgreSQL database URL must not be empty")
-    parsed = urlparse(database_url)
-    query = parse_qs(parsed.query, keep_blank_values=True)
-    if not allow_inline_credentials and inline_url is not None and (
-        parsed.password is not None
-        or any(
-            key == "password"
-            or key.endswith("password")
-            or "secret" in key
-            or (key.startswith("scram_") and key.endswith("_key"))
-            for key in query
-        )
-    ):
-        raise ValueError(
-            "production PostgreSQL credentials must use --postgres-database-url-file"
-        )
-    return validate_postgres_url(database_url)
+    """Compatibility entry point, using the shared protected-file/target validation."""
+    return resolve_connection_url('postgres', inline_url=inline_url,
+        credential_file=credential_file, production=not allow_inline_credentials)
 
 
 def migrate_postgres(database_url: str, *, applied_at: str) -> None:
@@ -234,6 +143,7 @@ def migrate_postgres(database_url: str, *, applied_at: str) -> None:
                     raise RuntimeError(f"unsupported PostgreSQL schema versions: {versions}")
             else:
                 versions = ()
+            complete_legacy_auth_schema(cursor, versions, postgres=True)
             for version in _EXPECTED_SCHEMA_VERSIONS[len(versions) :]:
                 cursor.execute(_POSTGRES_MIGRATIONS[version])
                 cursor.execute(

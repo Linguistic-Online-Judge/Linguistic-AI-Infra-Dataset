@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "ru-syntagrus-segmentation-foundation-v1",
+  "dataset_sha256": "a19bb5e730e45a2b84d5cfa54c7ca3374b22a9117afdc7631d7db2d54abb4f5c",
+  "language": "Russian",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "a207bb6e8db934755ba36ce21d2d2160fdb750b3d9543df0047c5a35e7f7f6b0",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Russian SynTagRus segmentation challenge",
+  "treebank": "SynTagRus",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

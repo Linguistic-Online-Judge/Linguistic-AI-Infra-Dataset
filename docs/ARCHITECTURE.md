@@ -72,10 +72,11 @@ Redis job queue ---- Python evaluation worker
   aggregate outcomes, and leaderboard rows. ADR 0001 does not persist raw
   per-sample responses for the teaching MVP.
 
-SQLite can be used for a single-machine prototype. PostgreSQL remains the
-deployment database target. A Redis Streams queue adapter is implemented for
-cross-process delivery; production still needs persistent Redis deployment,
-credentials, monitoring, and recovery operations.
+SQLite can be used for a single-machine prototype. PostgreSQL schema v2 and the
+Redis Streams queue are implemented and candidate-tested with user-owned services.
+Both stores now use schema v4 with cookie authentication and teaching administration.
+The private workbench has supervised operation and verified off-host backups; formal
+public deployment still needs its own HTTPS, mail, source-rights and release qualification.
 
 The current development slice implements an injected FastAPI app, SQLite schema
 migration, transactional submission/outbox creation, an immutable challenge
@@ -95,7 +96,10 @@ or malformed entries are removed rather than becoming permanent poison messages.
 Every queue instance appends a random incarnation ID to its configured consumer
 name, while receipt rotation is atomic with stale-entry claiming.
 Mock deliveries use a 30-second fenced database lease inside the persisted
-300-second job deadline; the 45-second queue visibility also budgets five seconds
+300-second default job deadline; the dependency exemplar uses 900 seconds because
+its frozen 1,024-token completion budget did not complete the full 50-sample GPU
+smoke within the default, and a 600-second calibration left only about 53 seconds
+of headroom. The 45-second queue visibility also budgets five seconds
 for SQLite lock acquisition, five seconds for claim processing, and five seconds
 of safety after the lease. Expired leases fail closed because `WORKER_CRASH` is
 non-retryable in this contract. A delivery blocked by an existing run or per-user
@@ -110,8 +114,9 @@ deployment-owned model/runtime evidence, a 4,096-token runtime context,
 single-model concurrency, and contract-matching provider timeout and response
 limits before it can consume a job. This is configuration attestation within a
 trusted host boundary, not cryptographic verification of a vLLM process or model
-weights. Its database lease covers the complete 300-second deadline, so its queue
-visibility must be at least 315 seconds. This conservative MVP avoids a heartbeat
+weights. Its database lease covers the complete contract-specific deadline, so
+queue visibility must be at least `job_deadline_seconds + 15`: 315 seconds by
+default and 915 seconds for dependency. This conservative MVP avoids a heartbeat
 race; a later deployment may replace it with fenced lease renewal.
 
 Only `PROVIDER_TIMEOUT` and `PROVIDER_TRANSPORT` can restart the complete job.
@@ -161,8 +166,9 @@ Unicode-code-point preflight. Qwen uses the new `mvp-evaluation-v2` partition,
 whose tokenizer revision, files, chat template, and counting method are part of
 the canonical evaluation identity. `QwenSubmissionWorker` itself loads the
 verified local tokenizer snapshot and verifies the co-located vLLM deployment
-before it consumes work. Production still requires protected launch evidence,
-authentication, PostgreSQL, persistent Redis operations, and deployment-safe
+before it consumes work. The candidate has passed this path with PostgreSQL and
+persistent Redis. Production still requires protected launch evidence, real
+authentication, schema migration, supervision, monitoring, and deployment-safe
 logging.
 
 ## Fairness and reproducibility

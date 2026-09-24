@@ -69,7 +69,6 @@ def _project_path(root: Path, value: str, name: str) -> Path:
         or any(":" in part for part in path.parts)
     ):
         raise ValueError(f"{name} must stay below the project root")
-
     resolved_root = root.resolve()
     candidate = resolved_root.joinpath(*path.parts)
     if candidate.is_symlink():
@@ -102,6 +101,15 @@ def validate_contract_matches_public(
         "response_schema_version": public.response_schema_version,
         "scorer_version": public.scorer_version,
         "aggregation_version": public.aggregation_version,
+        "annotation_license": public.annotation_license,
+        "attribution_requirements": public.attribution_requirements,
+        "source_release": public.source_release,
+        "source_commit": public.source_commit,
+        "source_file_sha256s": [
+            source.model_dump(mode="json") for source in public.source_file_sha256s
+        ],
+        "share_alike_requirements": public.share_alike_requirements,
+        "underlying_text_rights": public.underlying_text_rights,
     }
     actual = {
         "challenge_id": contract.challenge_id,
@@ -113,6 +121,13 @@ def validate_contract_matches_public(
         "response_schema_version": identity.get("response_schema_version"),
         "scorer_version": identity.get("scorer_version"),
         "aggregation_version": identity.get("aggregation_version"),
+        "annotation_license": contract.catalog.get("annotation_license"),
+        "attribution_requirements": contract.catalog.get("attribution_requirements"),
+        "source_release": contract.catalog.get("source_release"),
+        "source_commit": contract.catalog.get("source_commit"),
+        "source_file_sha256s": contract.catalog.get("source_file_sha256s"),
+        "share_alike_requirements": contract.catalog.get("share_alike_requirements"),
+        "underlying_text_rights": contract.catalog.get("underlying_text_rights"),
     }
     mismatches = sorted(field for field in expected if actual[field] != expected[field])
     if mismatches:
@@ -126,7 +141,7 @@ def load_challenge_contract_registry(
     root: Path,
     registry_path: Path,
 ) -> ChallengeContractRegistry:
-    """Load and validate all registry references eagerly for trusted startup."""
+    """Load safe public metadata and optional executable contracts from references."""
 
     if not isinstance(root, Path) or not isinstance(registry_path, Path):
         raise TypeError("root and registry_path must be Path values")
@@ -142,6 +157,7 @@ def load_challenge_contract_registry(
 
     public_challenges: dict[str, PublicChallenge] = {}
     contracts: dict[str, EvaluationContract] = {}
+    evaluation_identities: set[str] = set()
     public_paths: set[Path] = set()
     contract_paths: set[Path] = set()
     for index, entry in enumerate(document.entries):
@@ -172,12 +188,16 @@ def load_challenge_contract_registry(
                 f"duplicate evaluation contract path: {entry.evaluation_contract_path}"
             )
         contract_paths.add(contract_path)
-
         contract = EvaluationContract.from_path(contract_path)
         validate_contract_matches_public(contract, public)
+        if contract.evaluation_identity_sha256 in evaluation_identities:
+            raise ValueError(
+                f"duplicate evaluation identity: {contract.evaluation_identity_sha256}"
+            )
+        evaluation_identities.add(contract.evaluation_identity_sha256)
         contracts[public.challenge_id] = contract
 
     return ChallengeContractRegistry(
-        public_challenges=public_challenges,
-        contracts=contracts,
+        public_challenges=MappingProxyType(public_challenges),
+        contracts=MappingProxyType(contracts),
     )

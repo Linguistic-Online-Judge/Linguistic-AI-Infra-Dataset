@@ -1,0 +1,29 @@
+{
+  "aggregation_version": "1.0",
+  "annotation_license": "unrecorded",
+  "attribution_requirements": "unrecorded",
+  "benchmark_limitations": "Public-data foundation practice, 50 fixed samples; not a secret assessment. Input concatenates treebank tokens for boundary restoration. Source-rights review and production activation remain separate.",
+  "challenge_id": "nl-lassysmall-segmentation-foundation-v1",
+  "dataset_sha256": "e877b5df531b581ec681b706bd8198370592de8c78df3223fae12471de2a5763",
+  "language": "Dutch",
+  "primary_metric": "micro_f1",
+  "response_schema_version": "segmentation-v1",
+  "sample_count": 50,
+  "scorer_version": "1.0",
+  "secondary_metrics": [
+    "micro_precision",
+    "micro_recall"
+  ],
+  "security_level": "public_reproducible",
+  "selection_sha256": "a95ae70149ec6f8d2adbced321c08af9f273eaeee72cb09f35e759b474a4b242",
+  "share_alike_requirements": "review_required",
+  "source_commit": "unrecorded",
+  "source_file_sha256s": [],
+  "source_release": "unrecorded",
+  "status": "draft",
+  "task": "segmentation",
+  "title": "Dutch LassySmall segmentation challenge",
+  "treebank": "LassySmall",
+  "underlying_text_rights": "review_required",
+  "version": "foundation-v1"
+}

@@ -45,6 +45,47 @@ The builder rejects duplicate IDs in the matching candidate pool and requests
 larger than that pool. Selected IDs are sorted before hashing and storage so
 output is stable.
 
+## V1 representative catalog
+
+The V1 catalog contains one 50-sample UPOS challenge for each of the 18 V1
+languages, plus one executable exemplar for each remaining internal task.
+`scripts/build_v1_challenge_catalog.py` deterministically selects the largest
+UPOS-eligible treebank per language, validates every frozen supplemental
+language/treebank/task pool, and then uses seed `2026` for bounded sample
+selection.
+
+| Supplemental task | Frozen challenge |
+| --- | --- |
+| Segmentation | `zh-gsdsimp-segmentation-v2` |
+| XPOS | `de-hdt-xpos-v1` |
+| Dependency | `de-hdt-dependency-v1` |
+| Transliteration | `zh-gsdsimp-transliteration-v1` |
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_v1_challenge_catalog.py `
+  --root . `
+  --count 50 `
+  --seed 2026 `
+  --version v1
+```
+
+The builder preflights all public descriptors, private manifests, and evaluation
+contracts before writing new files. Existing immutable content may be reused, but
+different content under an existing challenge ID aborts the entire build. The
+mutable registry is updated only after every artifact passes preflight. An OS
+advisory lock serializes builds and is released automatically if the process exits;
+artifact and registry outputs reject symbolic links, and registry replacement uses
+a securely created temporary file.
+
+All 22 executable challenges are intentionally `draft`. They prove catalog and
+runtime coverage, not production readiness. The 22 catalog treebanks now have
+UD 2.18 release, source-file, LICENSE, README, and initial rights findings in
+`config/v1_source_provenance.json`; none has completed project-owner rights
+approval. A five-task-family GPU smoke passed, but 17 executable language
+representatives do not yet have contract-specific GPU evidence. Token-budget and
+five-task evidence are stored in `benchmarks/observations/`. See
+`docs/SOURCE_PROVENANCE.md` for restrictions and unresolved decisions.
+
 ## Challenge registry validation
 
 The challenge registry is a small index of public challenge descriptions and
@@ -77,7 +118,7 @@ startup, before accepting work. The loader performs all checks immediately:
 
 An entry may set `evaluation_contract_path` to `null` when it is public catalog
 metadata only. Such an entry appears in `public_challenges` but not in
-`contracts`. The API returns `403` if a client tries to submit to that entry and
+`contracts`. The API returns `409 CHALLENGE_NOT_OPEN` for submission to that entry and
 `404` for an unknown challenge ID. A mismatch or malformed entry raises an
 exception; startup fails instead of serving a partly validated registry.
 
@@ -93,7 +134,7 @@ or datasets. Those remain separate server-side inputs. Registry tests create all
 descriptions and contracts in temporary directories and do not register held or
 production data.
 
-No production registry is committed yet. Deployment must supply the registry
+Versioned development registries are committed. Production deployment must supply the registry
 path explicitly after its entries have passed source-rights and activation
 review.
 
@@ -101,28 +142,30 @@ review.
 
 The API exposes the validated public registry without authentication:
 
-- `GET /v1/challenges` returns summaries sorted by `challenge_id`.
+- `GET /v1/challenges` returns public metadata sorted by language, task and challenge ID.
 - `GET /v1/challenges/{challenge_id}` returns the full public description and
   returns `404` for an unknown challenge ID.
 
-List summaries contain only the challenge ID, title, version, language,
+List responses include the challenge ID, title, version, language,
 treebank, task, sample count, primary metric, security level, publication
-status, and `submissions_open`. Details additionally contain public secondary
+status, and `submissions_open`. Both list and detail also contain public secondary
 metrics, response/scorer/aggregation versions, and dataset/selection hashes.
 Both responses are copied field by field into dedicated response models; the
 API never serializes an evaluation contract directly.
 
 `submissions_open` reports whether this deployment has an executable contract
-that passes its activation policy. It is not an authentication decision:
+that passes activation, runtime-health and admission-pause checks. It aliases
+`accepting_submissions` for the standalone catalog client. It is not an authentication decision:
 creating a submission still requires a registered user. Public-only entries
 remain visible with `submissions_open: false`. A development or test process
 that explicitly enables draft submissions reports an executable draft as open,
 matching submission preflight behavior.
 
 The catalog never includes private manifests, selected sample IDs, gold
-answers, prompts, model configuration, queue routes, or contract snapshots.
+answers, private prompts, queue routes, or contract snapshots. Public provenance and
+model identity are intentionally exposed by the current catalog contract.
 
-## First challenge
+## Historical first challenge
 
 The initial development challenge is:
 
@@ -140,8 +183,10 @@ Security level: public_reproducible
 Status: draft
 ```
 
-The current builder only emits `public_reproducible` and `draft`; private-data
-security validation and challenge activation are future backend workflows.
+The challenge builder emits `public_reproducible` and `draft`. No production
+activation workflow exists yet; activation must remain fail closed until a
+reviewed promotion manifest and startup gate bind rights approval, release
+identity, deployed contract hashes, and matching GPU evidence.
 
 `micro_f1` declares the metric this challenge uses, and the deterministic
 aggregation and offline runner implement it. Submission persistence and
