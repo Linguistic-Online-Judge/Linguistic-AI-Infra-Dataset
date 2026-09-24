@@ -97,6 +97,20 @@ the opt-in PostgreSQL migration/concurrency parameters separately; the successfu
 remote basic chain is not a substitute. Source-rights approval and formal public
 launch are later, explicitly separate work, not prerequisites for improving this
 local administration phase.
+## Account and access boundary (with historical ADR context)
+
+- The public service does not depend on the school eHall identity system.
+- V1 uses only two account roles: general user and administrator. It does not
+  create separate student and teacher roles.
+- Authentication is server-verified email/password/cookie login. The earlier undecided
+  credential method in ADR0002 has been superseded by the implemented account lifecycle.
+- The formal service must be reachable on and off campus; the current school-hosted
+  private service is not proof of public ingress. Campus-network assumptions are not access control.
+- Frontend visual design is owned by the project team. The East China Normal
+  University online judge is an optional reference rather than a requirement.
+
+ADR0002 retains the historical decisions. Current capabilities and scope are documented
+in AUTHENTICATION.md, ADMINISTRATION.md and PUBLIC_DEPLOYMENT.md.
 
 ## Gate 0: security and specification
 
@@ -191,6 +205,7 @@ Qwen3.5-9B/vLLM smoke has completed all five task families over their frozen
 
 - Create the FastAPI application and database migrations.
 - Add users, challenges, model configurations, submissions, and result tables.
+- Store an explicit general-user or administrator role for every account.
 - Add submission, status, result, and leaderboard endpoints.
 - Run evaluations in a worker; never block an HTTP request on model inference.
 - Add rate limits, retry policy, idempotency, and safe logs.
@@ -210,12 +225,16 @@ Implemented so far: FastAPI app factory, SQLite schema migration, authenticated
 owner-scoped submission/status/result routes, transactional idempotency and
 outbox, identity-routed in-memory and Redis Streams queues, explicit fenced Mock
 Worker execution, bounded complete-job retries, aggregate-only results, safe
-failure DTOs, and version-isolated leaderboards. The integration suite covers
-`202 queued`, replay/conflict behavior, cross-owner `404`, preflight rejection,
-duplicate delivery, visibility recovery, retry success/exhaustion, safe platform
-failure, and Mock/Qwen identity separation. CI validates Redis behavior against a
-real Redis 7.4 service; local runs skip that one test when `REDIS_TEST_URL` is not
-configured.
+failure DTOs, version-isolated leaderboards, explicit `user`/`admin` account roles,
+an owner-safe current-user endpoint, registry-driven multi-challenge routing, and
+anonymous allowlisted challenge list/detail endpoints. One API process now owns
+one queue/outbox dispatcher per executable contract while each Worker remains
+bound to one selected challenge. The integration suite covers public catalog
+ordering and availability, `202 queued`, replay/conflict behavior, cross-owner
+`404`, preflight rejection, duplicate delivery, visibility recovery, retry
+success/exhaustion, safe platform failure, and Mock/Qwen identity separation. CI
+validates Redis behavior against a real Redis 7.4 service; local runs skip that
+one test when `REDIS_TEST_URL` is not configured.
 
 ## Phase 5: web application
 
@@ -237,6 +256,12 @@ paths; continue checking responsive/keyboard behavior and failure handling befor
 expanding scope. The isolated cookie/admin/Qwen backend chain has passed; production
 SMTP/HTTPS and browser-to-Qwen verification remain separate gates, not consequences
 of a passing Mock browser flow or TestClient run.
+The retained independent first slice in `web/` is a Chinese-first Next.js application with the
+anonymous challenge index and challenge detail routes. It validates API data
+before rendering, exposes no private evaluation fields, and includes loading,
+empty, service-failure, and not-found states. Component accessibility tests and
+visual checks cover desktop and mobile layouts. That catalog-only component does not
+replace the native workbench described above.
 
 ## Phase 6: deployment and fairness validation
 

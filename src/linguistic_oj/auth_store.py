@@ -6,9 +6,12 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-AUTH_SCHEMA_V3 = """
+ROLE_SCHEMA_V3 = """
 ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
     CHECK (role IN ('user', 'admin'));
+"""
+
+AUTH_TABLES_V3 = """
 CREATE TABLE auth_credentials (
     user_id TEXT PRIMARY KEY REFERENCES users(id),
     email TEXT NOT NULL UNIQUE,
@@ -38,6 +41,8 @@ CREATE TABLE auth_rate_limits (
 );
 CREATE INDEX idx_auth_rate_expiry ON auth_rate_limits(expires_at);
 """
+
+AUTH_SCHEMA_V3 = ROLE_SCHEMA_V3 + AUTH_TABLES_V3
 
 
 class AuthConflictError(ValueError):

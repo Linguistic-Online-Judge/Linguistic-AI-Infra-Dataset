@@ -307,6 +307,7 @@ def test_close_replay_conflict_outbox_history_results_and_restart(setup):
     assert closed.status_code == 200, closed.text
     assert closed.json()["admissions_closed"] is True
     assert closed.json()["challenge"]["accepting_submissions"] is False
+    assert closed.json()["challenge"]["submissions_open"] is False
     assert save(setup, 1).status_code == 200
     assert action(setup, "publish", 2).json()["admissions_closed"] is True
     sign_in(setup, "user")

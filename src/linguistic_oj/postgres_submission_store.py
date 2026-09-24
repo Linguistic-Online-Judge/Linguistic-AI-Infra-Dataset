@@ -33,6 +33,7 @@ from .submission_store import (
     SubmissionRecord,
     SubmissionStatus,
     UserRecord,
+    UserRole,
     _request_sha256,
     _timestamp,
 )
@@ -94,17 +95,31 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
                 if any(table is None for table in cursor.fetchone()):
                     raise RuntimeError("PostgreSQL submission schema is incomplete")
 
-    def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord:
+    def register_user(
+        self,
+        *,
+        auth_subject: str,
+        public_handle: str,
+        role: UserRole = UserRole.USER,
+    ) -> UserRecord:
         if not auth_subject or not public_handle or "@" in public_handle:
             raise ValueError("user subject and non-email public handle are required")
-        user = UserRecord(uuid.uuid4().hex, auth_subject, public_handle)
+        if not isinstance(role, UserRole):
+            raise TypeError("role must be a UserRole")
+        user = UserRecord(uuid.uuid4().hex, auth_subject, public_handle, role)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 created_at = _timestamp(self._database_now(cursor))
                 cursor.execute(
-                    "INSERT INTO users(id, auth_subject, public_handle, created_at) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (user.user_id, user.auth_subject, user.public_handle, created_at),
+                    "INSERT INTO users(id, auth_subject, public_handle, role, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (
+                        user.user_id,
+                        user.auth_subject,
+                        user.public_handle,
+                        user.role.value,
+                        created_at,
+                    ),
                 )
         return user
 
@@ -117,7 +132,7 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
                     (auth_subject,),
                 )
                 row = cursor.fetchone()
-        return None if row is None else UserRecord(*row)
+        return None if row is None else UserRecord(*row[:3], UserRole(row[3]))
 
     def create_submission(
         self,
@@ -334,7 +349,7 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
                 )
                 return cursor.fetchone() is not None
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_leases(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 now_text = _timestamp(self._database_now(cursor))
@@ -343,22 +358,26 @@ class PostgresSubmissionStore(AuthStoreMixin, AdminStoreMixin):
                     "lease_token = NULL, lease_expires_at = NULL, "
                     "failure_code = CASE WHEN deadline_at <= %s THEN 'JOB_DEADLINE' "
                     "ELSE 'WORKER_CRASH' END, failure_retryable = FALSE "
-                    "WHERE status = 'running' AND lease_expires_at <= %s "
-                    "AND evaluation_identity_sha256 = %s",
-                    (now_text, now_text, now_text, evaluation_identity_sha256),
+                    "WHERE status = 'running' AND lease_expires_at <= %s"
+                    + (" AND evaluation_identity_sha256 = %s"
+                       if evaluation_identity_sha256 is not None else ""),
+                    (now_text, now_text, now_text) + ((evaluation_identity_sha256,)
+                        if evaluation_identity_sha256 is not None else ()),
                 )
                 return cursor.rowcount
 
-    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 now_text = _timestamp(self._database_now(cursor))
                 cursor.execute(
                     "UPDATE submissions SET status = 'failed', completed_at = %s, "
                     "failure_code = 'JOB_DEADLINE', failure_retryable = FALSE "
-                    "WHERE status = 'queued' AND deadline_at <= %s "
-                    "AND evaluation_identity_sha256 = %s",
-                    (now_text, now_text, evaluation_identity_sha256),
+                    "WHERE status = 'queued' AND deadline_at <= %s"
+                    + (" AND evaluation_identity_sha256 = %s"
+                       if evaluation_identity_sha256 is not None else ""),
+                    (now_text, now_text) + ((evaluation_identity_sha256,)
+                        if evaluation_identity_sha256 is not None else ()),
                 )
                 return cursor.rowcount
 

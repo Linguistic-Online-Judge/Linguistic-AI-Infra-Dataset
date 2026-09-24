@@ -32,6 +32,31 @@ class ChallengeContractRegistry:
     public_challenges: Mapping[str, PublicChallenge]
     contracts: Mapping[str, EvaluationContract]
 
+    def __post_init__(self) -> None:
+        public_challenges = dict(self.public_challenges)
+        contracts = dict(self.contracts)
+        for challenge_id, public in public_challenges.items():
+            if not isinstance(public, PublicChallenge):
+                raise TypeError("registry public values must be PublicChallenge instances")
+            if challenge_id != public.challenge_id:
+                raise ValueError("public challenge registry key does not match challenge ID")
+            validate_public_challenge(public)
+        for challenge_id, contract in contracts.items():
+            if not isinstance(contract, EvaluationContract):
+                raise TypeError("registry contract values must be EvaluationContract instances")
+            if challenge_id != contract.challenge_id:
+                raise ValueError("evaluation contract registry key does not match challenge ID")
+            public = public_challenges.get(challenge_id)
+            if public is None:
+                raise ValueError("evaluation contract has no public challenge descriptor")
+            validate_contract_matches_public(contract, public)
+        object.__setattr__(
+            self,
+            "public_challenges",
+            MappingProxyType(public_challenges),
+        )
+        object.__setattr__(self, "contracts", MappingProxyType(contracts))
+
 
 def _project_path(root: Path, value: str, name: str) -> Path:
     if not value or value.strip() != value or "\\" in value:
@@ -58,7 +83,13 @@ def validate_contract_matches_public(
     contract: EvaluationContract,
     public: PublicChallenge,
 ) -> None:
+    """Reject a contract that describes a different public challenge."""
+
     validate_public_challenge(public)
+    if public.scorer_version is None or public.aggregation_version is None:
+        raise ValueError(
+            "an evaluation contract requires public scorer and aggregation versions"
+        )
     identity = contract.evaluation_identity
     expected = {
         "challenge_id": public.challenge_id,
@@ -98,9 +129,11 @@ def validate_contract_matches_public(
         "share_alike_requirements": contract.catalog.get("share_alike_requirements"),
         "underlying_text_rights": contract.catalog.get("underlying_text_rights"),
     }
-    if actual != expected:
+    mismatches = sorted(field for field in expected if actual[field] != expected[field])
+    if mismatches:
         raise ValueError(
-            f"evaluation contract does not match public challenge {public.challenge_id}"
+            "evaluation contract does not match public challenge "
+            f"{public.challenge_id}: {', '.join(mismatches)}"
         )
 
 
@@ -125,12 +158,18 @@ def load_challenge_contract_registry(
     public_challenges: dict[str, PublicChallenge] = {}
     contracts: dict[str, EvaluationContract] = {}
     evaluation_identities: set[str] = set()
+    public_paths: set[Path] = set()
+    contract_paths: set[Path] = set()
     for index, entry in enumerate(document.entries):
         public_path = _project_path(
             root,
             entry.public_descriptor_path,
             f"entries[{index}].public_descriptor_path",
         )
+        if public_path in public_paths:
+            raise ValueError(f"duplicate public descriptor path: {entry.public_descriptor_path}")
+        public_paths.add(public_path)
+
         public = PublicChallenge.model_validate_json(public_path.read_text(encoding="utf-8"))
         validate_public_challenge(public)
         if public.challenge_id in public_challenges:
@@ -144,6 +183,11 @@ def load_challenge_contract_registry(
             entry.evaluation_contract_path,
             f"entries[{index}].evaluation_contract_path",
         )
+        if contract_path in contract_paths:
+            raise ValueError(
+                f"duplicate evaluation contract path: {entry.evaluation_contract_path}"
+            )
+        contract_paths.add(contract_path)
         contract = EvaluationContract.from_path(contract_path)
         validate_contract_matches_public(contract, public)
         if contract.evaluation_identity_sha256 in evaluation_identities:
@@ -153,8 +197,6 @@ def load_challenge_contract_registry(
         evaluation_identities.add(contract.evaluation_identity_sha256)
         contracts[public.challenge_id] = contract
 
-    if not contracts:
-        raise ValueError("challenge contract registry must contain an executable contract")
     return ChallengeContractRegistry(
         public_challenges=MappingProxyType(public_challenges),
         contracts=MappingProxyType(contracts),

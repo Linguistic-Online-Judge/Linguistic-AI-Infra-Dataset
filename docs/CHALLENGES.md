@@ -86,6 +86,85 @@ representatives do not yet have contract-specific GPU evidence. Token-budget and
 five-task evidence are stored in `benchmarks/observations/`. See
 `docs/SOURCE_PROVENANCE.md` for restrictions and unresolved decisions.
 
+## Challenge registry validation
+
+The challenge registry is a small index of public challenge descriptions and
+their optional evaluation contracts. A registry document has this shape:
+
+```json
+{
+  "schema_version": "challenge-contract-registry-v1",
+  "entries": [
+    {
+      "public_descriptor_path": "challenges/public/example-v1.json",
+      "evaluation_contract_path": "config/example-evaluation-v1.json"
+    }
+  ]
+}
+```
+
+The Qwen API and Worker call `load_challenge_contract_registry()` during trusted
+startup, before accepting work. The loader performs all checks immediately:
+
+1. Every referenced path must be a relative POSIX path below the project root.
+2. Public descriptor paths and evaluation contract paths must not be repeated.
+3. Every public description must have a unique challenge ID and valid task,
+   metric, response-schema, version, status, and SHA-256 metadata.
+4. When an evaluation contract is present, its challenge ID, status, security
+   level, dataset and selection hashes, task, response schema, scorer version,
+   and aggregation version must match the public description.
+5. The returned maps are read-only, so later application code cannot replace a
+   validated entry by accident.
+
+An entry may set `evaluation_contract_path` to `null` when it is public catalog
+metadata only. Such an entry appears in `public_challenges` but not in
+`contracts`. The API returns `409 CHALLENGE_NOT_OPEN` for submission to that entry and
+`404` for an unknown challenge ID. A mismatch or malformed entry raises an
+exception; startup fails instead of serving a partly validated registry.
+
+The API creates one contract-routed outbox dispatcher and Redis Stream for each
+executable entry. All executable contracts must share the platform-wide request
+body, outstanding submission, running submission, and global queue limits. Each
+Worker selects one challenge ID at startup and remains bound to that public
+description, contract snapshot, private manifest, dataset, and queue. It never
+selects a contract from an untrusted job message.
+
+The registry does not read private manifests, selected sample IDs, gold answers,
+or datasets. Those remain separate server-side inputs. Registry tests create all
+descriptions and contracts in temporary directories and do not register held or
+production data.
+
+Versioned development registries are committed. Production deployment must supply the registry
+path explicitly after its entries have passed source-rights and activation
+review.
+
+## Public challenge catalog API
+
+The API exposes the validated public registry without authentication:
+
+- `GET /v1/challenges` returns public metadata sorted by language, task and challenge ID.
+- `GET /v1/challenges/{challenge_id}` returns the full public description and
+  returns `404` for an unknown challenge ID.
+
+List responses include the challenge ID, title, version, language,
+treebank, task, sample count, primary metric, security level, publication
+status, and `submissions_open`. Both list and detail also contain public secondary
+metrics, response/scorer/aggregation versions, and dataset/selection hashes.
+Both responses are copied field by field into dedicated response models; the
+API never serializes an evaluation contract directly.
+
+`submissions_open` reports whether this deployment has an executable contract
+that passes activation, runtime-health and admission-pause checks. It aliases
+`accepting_submissions` for the standalone catalog client. It is not an authentication decision:
+creating a submission still requires a registered user. Public-only entries
+remain visible with `submissions_open: false`. A development or test process
+that explicitly enables draft submissions reports an executable draft as open,
+matching submission preflight behavior.
+
+The catalog never includes private manifests, selected sample IDs, gold
+answers, private prompts, queue routes, or contract snapshots. Public provenance and
+model identity are intentionally exposed by the current catalog contract.
+
 ## Historical first challenge
 
 The initial development challenge is:
@@ -110,7 +189,8 @@ reviewed promotion manifest and startup gate bind rights approval, release
 identity, deployed contract hashes, and matching GPU evidence.
 
 `micro_f1` declares the metric this challenge uses, and the deterministic
-aggregation and offline runner implement it. The file remains a reproducible
+aggregation and offline runner implement it. Submission persistence and
+multi-challenge routing are implemented, but this challenge remains a reproducible
 development artifact rather than an active competition.
 
 Build it from the smaller per-language file:

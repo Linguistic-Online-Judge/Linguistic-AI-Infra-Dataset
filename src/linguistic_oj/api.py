@@ -1,4 +1,4 @@
-"""FastAPI boundary for the asynchronous Mock submission slice."""
+"""FastAPI boundary for asynchronous contract-routed submissions."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .admin_store import ChallengePausedError, TeachingContent, source_fingerprint
 from .challenge import PublicChallenge, validate_public_challenge
-from .challenge_registry import validate_contract_matches_public
+from .challenge_registry import ChallengeContractRegistry, validate_contract_matches_public
 from .mvp_contract import EvaluationContract
 from .runtime_availability import ProbedAvailability
 from .submission_jobs import OutboxDispatcher
@@ -42,6 +42,7 @@ from .submission_store import (
     SubmissionStatus,
     SubmissionStoreProtocol,
     UserRecord,
+    UserRole,
 )
 
 
@@ -139,6 +140,7 @@ class CurrentUserResponse(BaseModel):
 
     user_id: str
     public_handle: str
+    role: UserRole
 
 
 class GenerationSettingsResponse(BaseModel):
@@ -200,6 +202,7 @@ class ChallengeResponse(BaseModel):
     submission_enabled: bool
     runtime_available: bool
     accepting_submissions: bool
+    submissions_open: bool
     admissions_closed: bool = False
 
 
@@ -711,12 +714,12 @@ def _normalize_routes(
     )
     first = next(iter(contracts.values()))
     for selected_contract in contracts.values():
-        if any(
-            getattr(selected_contract, field) != getattr(first, field)
-            for field in common_fields
-        ):
+        mismatches = [field for field in common_fields
+                      if getattr(selected_contract, field) != getattr(first, field)]
+        if mismatches:
             raise ValueError(
-                "multi-challenge contracts have incompatible process-wide policies"
+                "multi-challenge contracts have incompatible process-wide policies: "
+                + ", ".join(mismatches)
             )
         if frozenset(selected_contract.owner_result_fields) != _OWNER_RESULT_FIELDS:
             raise ValueError("owner result fields are incompatible with the API contract")
@@ -793,6 +796,7 @@ def _challenge_response(
         submission_enabled=submission_enabled,
         runtime_available=runtime_available,
         accepting_submissions=submission_enabled and runtime_available and not admissions_closed,
+        submissions_open=submission_enabled and runtime_available and not admissions_closed,
         admissions_closed=admissions_closed,
     )
 
@@ -800,8 +804,10 @@ def _challenge_response(
 def create_app(
     *,
     store: SubmissionStoreProtocol,
-    dispatcher: OutboxDispatcher | Mapping[str, OutboxDispatcher],
-    contract: EvaluationContract | Mapping[str, EvaluationContract],
+    dispatcher: OutboxDispatcher | Mapping[str, OutboxDispatcher] | None = None,
+    contract: EvaluationContract | Mapping[str, EvaluationContract] | None = None,
+    registry: ChallengeContractRegistry | None = None,
+    dispatchers: Mapping[str, OutboxDispatcher] | None = None,
     authenticate: Authenticate,
     readiness_check: ReadinessCheck | None = None,
     public_challenges: Mapping[str, PublicChallenge] | None = None,
@@ -814,6 +820,17 @@ def create_app(
         raise ValueError("unsupported deployment environment")
     if environment == "production" and allow_draft_submissions:
         raise ValueError("draft submission override is forbidden in production")
+    if environment == "production" and readiness_check is None:
+        raise ValueError("production requires a readiness check")
+    if registry is not None:
+        if any(value is not None for value in (contract, dispatcher, public_challenges)):
+            raise ValueError('registry routing cannot be mixed with individual route arguments')
+        if not isinstance(registry, ChallengeContractRegistry) or dispatchers is None:
+            raise ValueError('registry routing requires a registry and dispatchers')
+        contract, dispatcher = registry.contracts, dispatchers
+        public_challenges = registry.public_challenges
+    elif dispatchers is not None:
+        raise ValueError('dispatchers requires registry')
     contracts, dispatchers = _normalize_routes(store, contract, dispatcher)
     catalog = _normalize_public_challenges(public_challenges, contracts)
     available_runtimes = _normalize_runtime_availability(contracts, runtime_availability)
@@ -926,6 +943,8 @@ def create_app(
             )
             selected_dispatcher.recover()
         except Exception:
+            if environment == 'production':
+                raise
             _OUTBOX_LOGGER.error("outbox_recovery_failed")
 
     @app.get("/health/live", include_in_schema=False)
@@ -1062,7 +1081,8 @@ def create_app(
 
     @app.get("/v1/users/me", response_model=CurrentUserResponse)
     def get_current_user(user: UserRecord = current_user_dependency) -> CurrentUserResponse:
-        return CurrentUserResponse(user_id=user.user_id, public_handle=user.public_handle)
+        return CurrentUserResponse(user_id=user.user_id, public_handle=user.public_handle,
+                                   role=UserRole(user.role))
 
     @app.get("/v1/submissions", response_model=OwnerSubmissionPageResponse)
     def get_submissions(

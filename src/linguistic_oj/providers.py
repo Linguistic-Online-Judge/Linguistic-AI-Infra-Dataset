@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from threading import Event, Lock, Thread
 from time import monotonic
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -31,59 +34,169 @@ HDT_XPOS_TAG_INVENTORY_VERSION = "de-hdt-xpos-tags-v1"
 HDT_XPOS_TAG_INVENTORY_SHA256 = (
     "1edae8cc60e60644fd70bd107832b9c317cf180b99f84bf499e080526ec1a073"
 )
-_XPOS_TAG_INVENTORIES = {
-    ("German", "HDT"): (
-        "$(",
-        "$,",
-        "$.",
-        "ADJA",
-        "ADJD",
-        "ADV",
-        "APPO",
-        "APPR",
-        "APZR",
-        "ART",
-        "CARD",
-        "FM",
-        "ITJ",
-        "KOKOM",
-        "KON",
-        "KOUI",
-        "KOUS",
-        "NE",
-        "NN",
-        "PDAT",
-        "PDS",
-        "PIAT",
-        "PIDAT",
-        "PIS",
-        "PPER",
-        "PPOSAT",
-        "PRELAT",
-        "PRELS",
-        "PRF",
-        "PROAV",
-        "PTKA",
-        "PTKNEG",
-        "PTKVZ",
-        "PTKZU",
-        "PWAT",
-        "PWAV",
-        "PWS",
-        "TRUNC",
-        "VAFIN",
-        "VAINF",
-        "VAPP",
-        "VMFIN",
-        "VMINF",
-        "VVFIN",
-        "VVIMP",
-        "VVINF",
-        "VVIZU",
-        "VVPP",
-        "XY",
-    )
-}
+_XPOS_TAG_INVENTORIES = MappingProxyType(
+    {
+        ("German", "HDT"): (
+            "$(",
+            "$,",
+            "$.",
+            "ADJA",
+            "ADJD",
+            "ADV",
+            "APPO",
+            "APPR",
+            "APZR",
+            "ART",
+            "CARD",
+            "FM",
+            "ITJ",
+            "KOKOM",
+            "KON",
+            "KOUI",
+            "KOUS",
+            "NE",
+            "NN",
+            "PDAT",
+            "PDS",
+            "PIAT",
+            "PIDAT",
+            "PIS",
+            "PPER",
+            "PPOSAT",
+            "PRELAT",
+            "PRELS",
+            "PRF",
+            "PROAV",
+            "PTKA",
+            "PTKNEG",
+            "PTKVZ",
+            "PTKZU",
+            "PWAT",
+            "PWAV",
+            "PWS",
+            "TRUNC",
+            "VAFIN",
+            "VAINF",
+            "VAPP",
+            "VMFIN",
+            "VMINF",
+            "VVFIN",
+            "VVIMP",
+            "VVINF",
+            "VVIZU",
+            "VVPP",
+            "XY",
+        )
+    }
+)
+_hdt_inventory_sha256 = hashlib.sha256(
+    json.dumps(
+        _XPOS_TAG_INVENTORIES[("German", "HDT")],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
+if _hdt_inventory_sha256 != HDT_XPOS_TAG_INVENTORY_SHA256:
+    raise RuntimeError("HDT XPOS inventory does not match its frozen identity")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _json_value_matches_schema(
+    value: object,
+    schema: dict[str, Any],
+    root_schema: dict[str, Any],
+) -> bool:
+    reference = schema.get("$ref")
+    if isinstance(reference, str):
+        if not reference.startswith("#/"):
+            return False
+        target: object = root_schema
+        for raw_part in reference[2:].split("/"):
+            part = raw_part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or part not in target:
+                return False
+            target = target[part]
+        return isinstance(target, dict) and _json_value_matches_schema(
+            value,
+            target,
+            root_schema,
+        )
+
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if type(value) is not dict:
+            return False
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            return False
+        if any(key not in value for key in required):
+            return False
+        if schema.get("additionalProperties") is False and any(
+            key not in properties for key in value
+        ):
+            return False
+        return all(
+            key not in value
+            or (
+                isinstance(property_schema, dict)
+                and _json_value_matches_schema(value[key], property_schema, root_schema)
+            )
+            for key, property_schema in properties.items()
+        )
+    if schema_type == "array":
+        if type(value) is not list:
+            return False
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        item_schema = schema.get("items")
+        return isinstance(item_schema, dict) and all(
+            _json_value_matches_schema(item, item_schema, root_schema) for item in value
+        )
+    if schema_type == "string":
+        if type(value) is not str:
+            return False
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        pattern = schema.get("pattern")
+        return not isinstance(pattern, str) or re.search(pattern, value) is not None
+    if schema_type == "integer":
+        if type(value) is int:
+            number = value
+        elif isinstance(value, Decimal) and value.is_finite() and value == value.to_integral():
+            number = value
+        else:
+            return False
+        minimum = schema.get("minimum")
+        exclusive_minimum = schema.get("exclusiveMinimum")
+        maximum = schema.get("maximum")
+        exclusive_maximum = schema.get("exclusiveMaximum")
+        return (
+            (not isinstance(minimum, (int, float)) or number >= minimum)
+            and (
+                not isinstance(exclusive_minimum, (int, float))
+                or number > exclusive_minimum
+            )
+            and (not isinstance(maximum, (int, float)) or number <= maximum)
+            and (
+                not isinstance(exclusive_maximum, (int, float))
+                or number < exclusive_maximum
+            )
+        )
+    return False
+
+
 _PINNED_REVISION = re.compile(r"[0-9a-f]{40}")
 _SAFE_FINISH_REASONS = frozenset(
     {
@@ -559,10 +672,7 @@ class OpenAICompatibleProvider:
                 )
             array_schema["minItems"] = expected_count
             array_schema["maxItems"] = expected_count
-        return {
-            "json": schema,
-            "whitespace_pattern": "",
-        }
+        return {"json": schema}
 
     def served_model_ids(self) -> frozenset[str]:
         """Read the OpenAI-compatible model list during trusted worker startup."""
@@ -706,6 +816,8 @@ class OpenAICompatibleProvider:
             ) from None
         if not isinstance(content, str):
             raise ProviderContractError("model service message content must be a string")
+        if self._structured_json:
+            self._validate_structured_content(request, content)
 
         raw_finish_reason = choice.get("finish_reason")
         finish_reason = (
@@ -733,6 +845,37 @@ class OpenAICompatibleProvider:
             finish_reason=finish_reason,
             prompt_token_count=prompt_token_count,
         )
+
+    @staticmethod
+    def _validate_structured_content(request: ModelRequest, content: str) -> None:
+        constraint = OpenAICompatibleProvider._structured_outputs(request)
+        pattern = constraint.get("regex")
+        if isinstance(pattern, str):
+            if re.fullmatch(pattern, content) is None:
+                raise ProviderContractError(
+                    "model service did not satisfy the structured output constraint"
+                )
+            return
+
+        try:
+            payload = json.loads(
+                content,
+                parse_float=Decimal,
+                parse_constant=_reject_json_constant,
+            )
+        except (json.JSONDecodeError, ValueError):
+            raise ProviderContractError(
+                "model service did not satisfy the structured output constraint"
+            ) from None
+        schema = constraint.get("json")
+        if not isinstance(schema, dict) or not _json_value_matches_schema(
+            payload,
+            schema,
+            schema,
+        ):
+            raise ProviderContractError(
+                "model service did not satisfy the structured output constraint"
+            )
 
     def _read_response_body(self, response: object) -> bytes:
         headers = getattr(response, "headers", None)

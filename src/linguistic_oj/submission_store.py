@@ -21,6 +21,7 @@ from .admin_store import (
     AdminStoreMixin,
     assert_admissions_open,
 )
+from .auth_schema_migration import complete_legacy_auth_schema
 from .auth_store import AUTH_SCHEMA_V3, AuthConflictError, AuthStoreMixin, AuthTransaction
 from .mvp_contract import EvaluationContract, canonical_json
 
@@ -34,6 +35,11 @@ class SubmissionStatus(StrEnum):
     REJECTED = "rejected"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+class UserRole(StrEnum):
+    USER = "user"
+    ADMIN = "admin"
 
 
 class IdempotencyConflictError(ValueError):
@@ -68,7 +74,7 @@ class UserRecord:
     user_id: str
     auth_subject: str
     public_handle: str
-    role: str = "user"
+    role: UserRole | str = UserRole.USER
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +172,13 @@ class SubmissionStoreProtocol(Protocol):
 
     def health_check(self) -> None: ...
 
-    def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord: ...
+    def register_user(
+        self,
+        *,
+        auth_subject: str,
+        public_handle: str,
+        role: UserRole = UserRole.USER,
+    ) -> UserRecord: ...
 
     def user_by_subject(self, auth_subject: str) -> UserRecord | None: ...
 
@@ -209,9 +221,9 @@ class SubmissionStoreProtocol(Protocol):
 
     def outstanding_contract_hashes(self) -> set[str]: ...
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int: ...
+    def expire_leases(self, *, evaluation_identity_sha256: str | None = None) -> int: ...
 
-    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int: ...
+    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str | None = None) -> int: ...
 
     def complete_success(
         self, claim: ClaimedSubmission, *, owner_result: dict[str, Any]
@@ -443,6 +455,7 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
                     ).fetchall()
                 )
                 _validate_migration_prefix(versions, _EXPECTED_SQLITE_SCHEMA_VERSIONS)
+            complete_legacy_auth_schema(connection.cursor(), versions, postgres=False)
             for version in _EXPECTED_SQLITE_SCHEMA_VERSIONS[len(versions) :]:
                 _execute_sqlite_migration(connection, _SQLITE_MIGRATIONS[version])
                 connection.execute(
@@ -485,21 +498,29 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
                 connection.rollback()
                 raise
 
-    def register_user(self, *, auth_subject: str, public_handle: str) -> UserRecord:
+    def register_user(
+        self,
+        *,
+        auth_subject: str,
+        public_handle: str,
+        role: UserRole = UserRole.USER,
+    ) -> UserRecord:
         if not auth_subject or not public_handle or "@" in public_handle:
             raise ValueError("user subject and non-email public handle are required")
+        if not isinstance(role, UserRole):
+            raise TypeError("role must be a UserRole")
         user_id = uuid.uuid4().hex
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
-                INSERT INTO users(id, auth_subject, public_handle, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO users(id, auth_subject, public_handle, role, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (user_id, auth_subject, public_handle, _timestamp(_utc_now())),
+                (user_id, auth_subject, public_handle, role.value, _timestamp(_utc_now())),
             )
             connection.commit()
-        return UserRecord(user_id, auth_subject, public_handle)
+        return UserRecord(user_id, auth_subject, public_handle, role)
 
     def user_by_subject(self, auth_subject: str) -> UserRecord | None:
         with self._connect() as connection:
@@ -509,7 +530,12 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
             ).fetchone()
         if row is None:
             return None
-        return UserRecord(row["id"], row["auth_subject"], row["public_handle"], row["role"])
+        return UserRecord(
+            row["id"],
+            row["auth_subject"],
+            row["public_handle"],
+            UserRole(row["role"]),
+        )
 
     def create_submission(
         self,
@@ -820,7 +846,7 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
                  now, now, claim.evaluation_identity_sha256, claim.contract_snapshot_sha256),
             ).fetchone() is not None
 
-    def expire_leases(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_leases(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -835,14 +861,15 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
                     END,
                     failure_retryable = 0
                 WHERE status = 'running' AND lease_expires_at <= ?
-                      AND evaluation_identity_sha256 = ?
-                """,
-                (now_text, now_text, now_text, evaluation_identity_sha256),
+                """ + (" AND evaluation_identity_sha256 = ?"
+                       if evaluation_identity_sha256 is not None else ""),
+                (now_text, now_text, now_text) + ((evaluation_identity_sha256,)
+                                                if evaluation_identity_sha256 is not None else ()),
             )
             connection.commit()
         return updated.rowcount
 
-    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str) -> int:
+    def expire_queued_deadlines(self, *, evaluation_identity_sha256: str | None = None) -> int:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now_text = _timestamp(_utc_now())
@@ -852,9 +879,10 @@ class SubmissionStore(AuthStoreMixin, AdminStoreMixin):
                 SET status = 'failed', completed_at = ?, failure_code = 'JOB_DEADLINE',
                     failure_retryable = 0
                 WHERE status = 'queued' AND deadline_at <= ?
-                      AND evaluation_identity_sha256 = ?
-                """,
-                (now_text, now_text, evaluation_identity_sha256),
+                """ + (" AND evaluation_identity_sha256 = ?"
+                       if evaluation_identity_sha256 is not None else ""),
+                (now_text, now_text) + ((evaluation_identity_sha256,)
+                                      if evaluation_identity_sha256 is not None else ()),
             )
             connection.commit()
         return updated.rowcount

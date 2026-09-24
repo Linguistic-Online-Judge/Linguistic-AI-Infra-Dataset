@@ -306,6 +306,8 @@ def validate_public_challenge(public: PublicChallenge) -> None:
         ):
             raise ValueError("public source-file fingerprints are invalid")
         source_paths.add(source.path)
+    if public.sample_count <= 0:
+        raise ValueError("public sample count must be positive")
     if public.challenge_id != make_challenge_id(
         public.language,
         public.treebank,

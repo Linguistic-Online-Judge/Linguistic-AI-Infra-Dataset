@@ -19,6 +19,7 @@ from .auth import install_auth_routes
 from .auth_config import build_auth_service
 from .challenge import PublicChallenge
 from .challenge_registry import (
+    ChallengeContractRegistry,
     load_challenge_contract_registry,
     validate_contract_matches_public,
 )
@@ -43,6 +44,10 @@ class QwenApiRuntime:
     public_challenges: Mapping[str, PublicChallenge]
     runtime_availability: Mapping[str, bool]
     store: SubmissionStoreProtocol
+
+    @property
+    def registry(self) -> ChallengeContractRegistry:
+        return ChallengeContractRegistry(self.public_challenges, self.contracts)
 
     def _only(self, values: Mapping[str, object], name: str):
         if len(values) != 1:
@@ -117,6 +122,7 @@ def _load_runtime_registry(
 def build_qwen_api(
     *,
     root: Path,
+    challenge_registry_path: Path | None = None,
     database_path: Path | None = None,
     postgres_database_url: str | None = None,
     redis_url: str,
@@ -137,6 +143,10 @@ def build_qwen_api(
         raise ValueError("configure exactly one of auth_config_file or authenticate")
     if environment == "production" and auth_config_file is None:
         raise ValueError("production Qwen API requires auth_config_file; callbacks are forbidden")
+    if challenge_registry_path is not None:
+        if registry_path is not None:
+            raise ValueError('registry_path and challenge_registry_path are mutually exclusive')
+        registry_path = challenge_registry_path
     contracts, public_challenges = _load_runtime_registry(
         root,
         registry_path=registry_path,
@@ -224,7 +234,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         "--root",
         type=Path,
         required=True,
-        help="deployment root containing config/mvp_evaluation_v2.json",
+        help="deployment root containing registry-referenced files",
     )
     storage = parser.add_mutually_exclusive_group(required=True)
     storage.add_argument("--database", type=Path, help="SQLite database path")
@@ -235,7 +245,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     redis.add_argument("--redis-url-file", type=Path)
     routing = parser.add_mutually_exclusive_group()
     routing.add_argument(
-        "--registry",
+        "--registry", "--challenge-registry",
         type=Path,
         help="challenge contract registry; defaults to config/challenge_contract_registry_v1.json",
     )
@@ -298,19 +308,23 @@ def _load_authenticate(reference: str) -> Authenticate:
     return cast(Authenticate, callback)
 
 
+def _configure_safe_request_logging() -> None:
+    logger = logging.getLogger("linguistic_oj.http")
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         import uvicorn
     except ImportError as error:
         raise RuntimeError("install the api extra to run the Qwen API") from error
-    logger = logging.getLogger('linguistic_oj.http')
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter('%(message)s'))
-    logger.handlers.clear()
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
+    _configure_safe_request_logging()
     runtime = build_qwen_api(
         root=args.root,
         database_path=args.database,

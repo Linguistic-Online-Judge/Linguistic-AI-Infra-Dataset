@@ -35,12 +35,26 @@ supervised restart recovery, monitoring, and off-host backup retention are in pl
 
 ## Health endpoints
 
+### Schema compatibility after main integration
+
+Both SQLite and PostgreSQL remain at schema v4. The two historical v3 variants are
+recognized before applying v4: the earlier main branch added only `users.role`,
+while the workbench branch also added the four authentication tables. The known
+role-only v3 is completed transactionally without changing users, roles, prompts,
+submissions, outbox rows or results. Existing accounts receive no inferred passwords
+or credential bindings; production startup still requires trusted enrollment for
+unbound accounts. Partial authentication tables, a malformed role column, or a v4
+database missing authentication tables are rejected instead of silently repaired.
+Migration failure rolls back both auth completion and subsequent v4 changes.
+
+### Endpoint behavior
+
 The API exposes unauthenticated, body-free operational endpoints:
 
 - `GET /health/live` returns `200 {"status":"live"}` whenever the API process
   can serve requests.
 - `GET /health/ready` returns `200 {"status":"ready"}` only when the API can
-  query its submission store and ping its configured Redis queue. PostgreSQL
+  query its submission store and check Redis version/EVAL capability on every queue. PostgreSQL
   readiness also verifies the expected migration version and required tables.
   With the current auth configuration it additionally checks bound accounts and
   certificate-verified SMTP connectivity/authentication. It returns a generic
@@ -66,13 +80,26 @@ and dependency error messages are excluded.
 
 - Run Redis 7.4 or later with ACL authentication, AOF persistence, a bounded
   `maxmemory` policy that never evicts queue keys, backups, and monitoring.
+- Pass authenticated Redis URLs through `--redis-url-file` (for example, a
+  systemd credential under `/run/credentials`) rather than process arguments.
+  Non-loopback Redis connections must use `rediss://`.
 - Use PostgreSQL for API and Worker persistence. SQLite remains unsupported for
-  a multi-process or restart-tolerant deployment.
+  a multi-process or restart-tolerant deployment. Pass authenticated URLs through
+  `--postgres-database-url-file`; non-loopback connections must set `sslmode` to
+  `require`, `verify-ca`, or `verify-full`.
 - Keep dataset manifests, gold data, tokenizer snapshots, and vLLM launch evidence
   on server-owned volumes that are unreadable by web users and tenants.
 - Provide a protected authentication configuration through `--auth-config-file`.
   Production `qwen_api` forbids `--authenticate` callbacks, including static smoke
   callbacks. See the startup requirements below.
+- Keep the challenge registry deployment-owned. Never replace a contract snapshot
+  under an existing challenge ID. Assign any changed contract a new versioned
+  challenge ID, keep the previous entry and Worker running, and remove them only
+  after their outbox and queue have drained.
+- The API cannot run old and new contracts with different platform-wide admission
+  limits at the same time. A change to one of those shared limits requires a
+  maintenance window: stop new submissions, drain every old outbox and queue,
+  verify the drain, then start the replacement registry and Workers.
 - Run API, Worker, and vLLM under a supervisor that restarts failed processes and
   directs stdout/stderr to access-controlled retention.
 

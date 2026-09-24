@@ -5,12 +5,19 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
+import linguistic_oj.postgres_migrations as postgres_migrations
 from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
+from linguistic_oj.postgres_migrations import migrate_postgres
 from linguistic_oj.postgres_submission_store import PostgresSubmissionStore
-from linguistic_oj.submission_store import SubmissionQuotaError, SubmissionStatus
+from linguistic_oj.submission_store import (
+    SubmissionQuotaError,
+    SubmissionStatus,
+    UserRole,
+)
 
 POSTGRES_TEST_DATABASE_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL")
 ROOT = Path(__file__).parents[1]
@@ -60,6 +67,100 @@ def test_health_check_accepts_current_schema() -> None:
     assert POSTGRES_TEST_DATABASE_URL is not None
 
     PostgresSubmissionStore(POSTGRES_TEST_DATABASE_URL).health_check()
+
+
+def test_postgres_store_persists_user_and_admin_roles() -> None:
+    assert POSTGRES_TEST_DATABASE_URL is not None
+    store = PostgresSubmissionStore(POSTGRES_TEST_DATABASE_URL)
+    suffix = uuid.uuid4().hex
+
+    user = store.register_user(
+        auth_subject=f"postgres-role-user-{suffix}",
+        public_handle=f"role-user-{suffix}",
+    )
+    admin = store.register_user(
+        auth_subject=f"postgres-role-admin-{suffix}",
+        public_handle=f"role-admin-{suffix}",
+        role=UserRole.ADMIN,
+    )
+
+    assert user.role is UserRole.USER
+    assert admin.role is UserRole.ADMIN
+    assert store.user_by_subject(user.auth_subject) == user
+    assert store.user_by_subject(admin.auth_subject) == admin
+
+
+@pytest.mark.parametrize("legacy_role", [None, "user", "admin"])
+def test_existing_postgres_store_upgrades_without_changing_roles(legacy_role) -> None:
+    assert POSTGRES_TEST_DATABASE_URL is not None
+    import psycopg
+    from psycopg import sql
+
+    database_name = f"role_upgrade_{uuid.uuid4().hex}"
+    parsed_url = urlsplit(POSTGRES_TEST_DATABASE_URL)
+    isolated_url = urlunsplit(
+        (
+            parsed_url.scheme,
+            parsed_url.netloc,
+            f"/{database_name}",
+            parsed_url.query,
+            parsed_url.fragment,
+        )
+    )
+    try:
+        with psycopg.connect(POSTGRES_TEST_DATABASE_URL, autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
+                )
+        with psycopg.connect(isolated_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(postgres_migrations._SCHEMA_V1)
+                cursor.execute(postgres_migrations._SCHEMA_V2)
+                cursor.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) "
+                    "VALUES (1, 'v1'), (2, 'v2')"
+                )
+                cursor.execute(
+                    "INSERT INTO users(id, auth_subject, public_handle, created_at) "
+                    "VALUES ('old-user', 'old-subject', 'old-handle', '2026-09-02')"
+                )
+                if legacy_role is not None:
+                    from linguistic_oj.auth_store import ROLE_SCHEMA_V3
+
+                    cursor.execute(ROLE_SCHEMA_V3)
+                    cursor.execute("UPDATE users SET role = %s", (legacy_role,))
+                    cursor.execute("INSERT INTO schema_migrations VALUES (3, 'role-only')")
+
+        migrate_postgres(isolated_url, applied_at="v3-test")
+
+        store = PostgresSubmissionStore(isolated_url)
+        store.auth_health_check()
+        migrate_postgres(isolated_url, applied_at="repeat")
+        upgraded = store.user_by_subject("old-subject")
+        assert upgraded is not None and upgraded.role == (legacy_role or "user")
+        with pytest.raises(RuntimeError, match="unbound legacy users"):
+            store.auth_require_bound_accounts()
+        with psycopg.connect(isolated_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT version FROM schema_migrations ORDER BY version")
+                assert tuple(row[0] for row in cursor.fetchall()) == (1, 2, 3, 4)
+                cursor.execute("SELECT count(*) FROM auth_credentials")
+                assert cursor.fetchone()[0] == 0
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with psycopg.connect(isolated_url) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE users SET role = 'owner' WHERE id = 'old-user'"
+                    )
+    finally:
+        with psycopg.connect(POSTGRES_TEST_DATABASE_URL, autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
+                        sql.Identifier(database_name)
+                    )
+                )
 
 
 def test_idempotent_replay_returns_the_original_typed_submission() -> None:
@@ -394,12 +495,7 @@ def test_postgres_structured_quota_and_queued_deadline_sweep() -> None:
             "WHERE id = %s",
             (created.submission.submission_id,),
         )
-    assert (
-        store.expire_queued_deadlines(
-            evaluation_identity_sha256=contract.evaluation_identity_sha256
-        )
-        == 1
-    )
+    assert store.expire_queued_deadlines() == 1
     result = store.owner_result(created.submission.submission_id, user.user_id)
     assert result is not None and result.failure is not None
     assert result.failure["code"] == "JOB_DEADLINE"

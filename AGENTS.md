@@ -22,6 +22,13 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Main integration is authorized (2026-09-24): merge origin/main b69d3ff into the
+  integration branch, preserve both histories and useful changes, run Python/web/service
+  checks, then merge PR32. No school redeployment or branch deletion is part of this task.
+  The independent Next.js read-only catalog in top-level web/ is retained alongside the
+  deployed native workbench. Both old role-only v3 and full-auth v3 migrate transactionally
+  to v4; never infer credentials for old users or repair a partial schema silently.
+
 - Workbench cutover is now COMPLETED at artifacts/request-workbench-rollout-20260924-v3.
   Live source is that directory/source, release5adb185 (bundle
   327906edea4fb950e5cca349942946d9c83f39b0d147c4a9234e4e7751a302bc), model8000/app8090,
@@ -601,8 +608,9 @@ present planned work or skipped checks as completed results.
 
 - The frontend is plain HTML, CSS, and JavaScript in
   `src/linguistic_oj/web`, served by FastAPI at `/` and `/assets/*`.
-- Do not assume a top-level Next.js `web/` application or npm startup commands
-  exist. Inspect the current files before giving runnable instructions.
+- The separate top-level Next.js `web/` application is a read-only public catalog.
+  Its server-side API URL targets the application (local Mock port8080), not model8000.
+  It does not replace the deployed native workbench. Read web/AGENTS.md before editing it.
 - `linguistic_oj.local_dev` and `scripts/start_local_dev.ps1` now start the real
   web/API stack with SQLite, in-memory queues, and a Mock worker. From the project
   root, run `& .\scripts\start_local_dev.ps1`; the canonical browser address is

@@ -380,7 +380,8 @@ def test_check_revalidates_saved_draft_bounds_and_publish_is_atomic(prepared, mo
     assert state.published_json is None
 
 
-def test_pg_v3_to_v4_preserves_old_rows_and_is_repeatable(pg_v3, tmp_path, monkeypatch):
+@pytest.mark.parametrize("role_only", [False, True])
+def test_pg_v3_to_v4_preserves_old_rows_and_is_repeatable(pg_v3, tmp_path, monkeypatch, role_only):
     store, url = pg_v3
     store.auth_provision_account("old@example.test", "old-hash", "old", "admin", None)
     old = store.auth_account("old@example.test")
@@ -405,6 +406,11 @@ def test_pg_v3_to_v4_preserves_old_rows_and_is_repeatable(pg_v3, tmp_path, monke
         "results",
     )
     with store._connect() as connection:
+        if role_only:
+            connection.execute(
+                "DROP TABLE auth_sessions, auth_action_tokens, auth_credentials, auth_rate_limits"
+            )
+            tables = ("users", "submissions", "submission_outbox", "results")
         connection.execute(
             "INSERT INTO results VALUES (%s, %s, '{}', 1, 1, 1, 0, 'old')",
             (created.submission.submission_id, contract.evaluation_identity_sha256),
@@ -415,6 +421,10 @@ def test_pg_v3_to_v4_preserves_old_rows_and_is_repeatable(pg_v3, tmp_path, monke
     migrate_postgres(url, applied_at="v4")
     migrate_postgres(url, applied_at="v4-repeat")
     store.auth_health_check()
+    if role_only:
+        with pytest.raises(RuntimeError, match="unbound legacy users"):
+            store.auth_require_bound_accounts()
+        assert store.auth_account("old@example.test") is None
     with store._connect() as connection:
         for table, rows in before.items():
             assert connection.execute(f"SELECT * FROM {table}").fetchall() == rows
@@ -436,3 +446,42 @@ def test_pg_v3_to_v4_preserves_old_rows_and_is_repeatable(pg_v3, tmp_path, monke
         store.create_submission(
             user=user, contract=contract, idempotency_key="old", student_prompt="Different prompt"
         )
+
+
+@pytest.mark.parametrize("failure", ["partial-auth", "missing-role", "missing-auth-v4", "rollback"])
+def test_pg_legacy_auth_rejects_damage_and_rolls_back(pg_v3, monkeypatch, failure):
+    import linguistic_oj.postgres_migrations as migrations
+
+    store, url = pg_v3
+    with store._connect() as connection:
+        connection.execute(
+            "DROP TABLE auth_sessions, auth_action_tokens, auth_credentials, auth_rate_limits"
+        )
+        if failure == "partial-auth":
+            connection.execute("CREATE TABLE auth_credentials (user_id TEXT)")
+        elif failure == "missing-role":
+            connection.execute("ALTER TABLE users DROP COLUMN role")
+        elif failure == "missing-auth-v4":
+            connection.execute("INSERT INTO schema_migrations VALUES (4, 'broken')")
+        before = connection.execute(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() ORDER BY table_name, ordinal_position"
+        ).fetchall()
+        versions = connection.execute("SELECT * FROM schema_migrations ORDER BY version").fetchall()
+    if failure == "rollback":
+        import psycopg
+
+        monkeypatch.setitem(migrations._POSTGRES_MIGRATIONS, 4, "CREATE TABLE invalid syntax")
+        expected_error = psycopg.errors.SyntaxError
+    else:
+        expected_error = RuntimeError
+    with pytest.raises(expected_error):
+        migrate_postgres(url, applied_at="must-rollback")
+    with store._connect() as connection:
+        assert connection.execute(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() ORDER BY table_name, ordinal_position"
+        ).fetchall() == before
+        assert connection.execute(
+            "SELECT * FROM schema_migrations ORDER BY version"
+        ).fetchall() == versions

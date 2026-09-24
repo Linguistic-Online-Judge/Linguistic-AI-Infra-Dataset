@@ -7,8 +7,8 @@
 仍通过SSH转发访问；正式公网地址、HTTPS和真实邮件尚未完成部署。**
 公开GitHub仓库用于代码协作，不等于公开网站已经上线。
 
-本说明对应截至2026-09-13的开发版本：**18种语言、74项目录、70个可执行配置**。
-当前完整工程整理在整合分支`integration/public-release-prep-20260913`，尚未合并到`main`。
+本说明对应截至2026-09-24的开发版本：**18种语言、74项目录、70个可执行配置**。
+仓库同时保留完整原生工作台和独立的Next.js只读题目目录，运行入口见下文。
 自动检查以对应提交的实际结果为准；推送代码不代表学校服务或公网部署已更新。
 
 ## 当前能做什么
@@ -22,7 +22,8 @@
 | 教学管理 | 已有任务的草稿、发布和新提交开关，含版本冲突与权限检查 |
 | 评测后端 | FastAPI、PostgreSQL、Redis任务队列及固定Qwen Worker |
 | 本地开发 | SQLite、内存队列、五项手写模拟任务，可独立于学校模型运行 |
-| 数据保护 | 当前实例备份、隔离恢复已验证；最新本机备份副本仍待完成续传 |
+| 数据保护 | 当前请求模式备份、隔离恢复和最新本机副本已验证 |
+| 独立公开目录 | `web/`保留Next.js目录/详情浏览组件，与原生工作台分别运行和验证 |
 | 自动检查 | Python、页面契约、浏览器、数据库及构件检查已配置，运行证据见文档 |
 | 公网发布 | 已确认目标；域名/入口、HTTPS、真实邮件、来源开放条件和运行容量待落实 |
 
@@ -174,6 +175,37 @@ git lfs pull
 以及实际安装构件后的启动和模拟评测验收。
 [查看该次自动检查](https://github.com/Linguistic-Online-Judge/Linguistic-AI-Infra-Dataset/actions/runs/34760180305)。
 这证明该代码基线可在独立环境运行，不代表公网已经上线或模型输出质量达标。
+
+## 运行公开题目网页
+
+这是`main`原有的独立只读目录组件；学校当前使用的完整工作台在
+`src/linguistic_oj/web/`。请将`web/.env.local`中的`LINGUISTIC_OJ_API_URL`指向应用接口
+（本机模拟站为`http://127.0.0.1:8080`），不要指向学校8000模型端口。
+
+网页需要 Node.js 24.15 或更高版本。先启动配置好题目登记表的 API，然后在
+`web/` 目录安装依赖并启动开发服务器：
+
+```powershell
+Set-Location web
+npm ci
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+浏览器访问 `http://localhost:3000/challenges`。`LINGUISTIC_OJ_API_URL`
+只供 Next.js 服务端读取，不会作为公开环境变量发送到浏览器。
+
+提交前运行完整前端检查：
+
+```powershell
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+网页的视觉方向、信息架构、文案规则和无障碍要求见
+[`docs/WEB_DESIGN.md`](docs/WEB_DESIGN.md)。
 
 ## 运行一次 Mock 评测
 
@@ -329,10 +361,13 @@ src/linguistic_oj/evaluation.py   单样本确定性评分
 src/linguistic_oj/aggregation.py  挑战级指标汇总
 src/linguistic_oj/runner.py       离线端到端评测流程
 src/linguistic_oj/mvp_contract.py 读取和验证冻结评测合同
+src/linguistic_oj/challenge_registry.py 启动前验证题目登记表与评测合同
 src/linguistic_oj/submission_store.py SQLite 提交、outbox、结果和排行榜
 src/linguistic_oj/submission_jobs.py 进程内队列、outbox dispatcher 和 Mock Worker
 src/linguistic_oj/redis_job_queue.py Redis Streams 队列和 visibility recovery
 src/linguistic_oj/qwen_runtime.py   固定 tokenizer 预检和 Qwen 运行时身份核验
+src/linguistic_oj/qwen_api.py      多题目 API、数据库与独立 Redis 队列装配
+src/linguistic_oj/qwen_worker.py   按登记表题目标识启动单合同 Qwen Worker
 src/linguistic_oj/api.py          FastAPI 提交、状态、结果和排行榜接口
 src/linguistic_oj/auth*.py        账户、会话、邮件与同源权限检查
 src/linguistic_oj/admin*.py       教学内容、修订审计与提交开关
@@ -344,13 +379,14 @@ scripts/build_v1_challenge_catalog.py 生成 18 语言代表性 draft challenge
 scripts/build_foundation_catalog.py  分词/依存基础任务扩充
 scripts/build_xpos_catalog.py        专用词性任务扩充
 scripts/qwen_dev_ops.py              当前开发实例备份、恢复与诊断
+web/                              Next.js 公开题目目录与详情网页
 tests/                            自动化测试
 .github/workflows/                 GitHub 自动检查配置
 ```
 
 ## 当前下一步
 
-1. 整理完整源码版本，审核与GitHub `main`的差异，再提交/推送并运行持续集成。
+1. 固定通过完整检查的发布版本，保留独立的服务器部署与回滚记录。
 2. 落实学校公网域名、HTTPS入口、应用转发方式和真实邮件通道。
 3. 为正式服务准备生产账户配置与数据，开发共享账号和测试收件箱不进入公网实例。
 4. 验证可公开开放的任务来源、运行容量、长任务排队、服务恢复及发布回退。

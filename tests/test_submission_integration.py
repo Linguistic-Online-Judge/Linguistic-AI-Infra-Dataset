@@ -19,6 +19,7 @@ import linguistic_oj.submission_jobs as submission_jobs_module
 import linguistic_oj.submission_store as submission_store_module
 from linguistic_oj.api import Principal, RequestBodyLimitMiddleware, create_app
 from linguistic_oj.challenge import ChallengeArtifacts, build_challenge
+from linguistic_oj.challenge_registry import ChallengeContractRegistry
 from linguistic_oj.mvp_contract import EvaluationContract, canonical_sha256
 from linguistic_oj.providers import (
     DeterministicMockProvider,
@@ -40,17 +41,22 @@ from linguistic_oj.submission_jobs import (
     QwenSubmissionWorker,
     SubmissionWorker,
 )
-from linguistic_oj.submission_store import SubmissionStore
+from linguistic_oj.submission_store import SubmissionStore, UserRole
 
 ROOT = Path(__file__).parents[1]
 
 
-def _sample(sample_id: str, text: str) -> dict[str, object]:
+def _sample(
+    sample_id: str,
+    text: str,
+    *,
+    treebank: str = "Tiny",
+) -> dict[str, object]:
     tokens = list(text)
     return {
         "id": sample_id,
         "language": "Test",
-        "treebank": "Tiny",
+        "treebank": treebank,
         "text": text,
         "answers": {
             "segmentation": tokens,
@@ -65,9 +71,14 @@ def _artifacts(
     *,
     task: str = "upos",
     version: str = "v1",
+    treebank: str = "Tiny",
+    dataset_name: str = "dataset.jsonl",
 ) -> ChallengeArtifacts:
-    dataset_path = tmp_path / "dataset.jsonl"
-    samples = [_sample("sample-b", "CD"), _sample("sample-a", "AB")]
+    dataset_path = tmp_path / dataset_name
+    samples = [
+        _sample("sample-b", "CD", treebank=treebank),
+        _sample("sample-a", "AB", treebank=treebank),
+    ]
     dataset_path.write_text(
         "".join(f"{json.dumps(sample, ensure_ascii=False)}\n" for sample in samples),
         encoding="utf-8",
@@ -75,7 +86,7 @@ def _artifacts(
     return build_challenge(
         dataset_path,
         language="Test",
-        treebank="Tiny",
+        treebank=treebank,
         task=task,
         count=2,
         seed=2026,
@@ -233,6 +244,31 @@ def test_blocked_claim_gate_leaves_queued_submission_untouched(tmp_path, monkeyp
             sid = created.json()['submission_id']
             assert client.get(f'/v1/submissions/{sid}',
                               headers=headers).json()['status'] == 'queued'
+
+
+def _create_test_app(
+    *,
+    store: SubmissionStore,
+    dispatcher: OutboxDispatcher,
+    contract: EvaluationContract,
+    artifacts: ChallengeArtifacts,
+    readiness_check=None,
+    allow_draft_submissions: bool = False,
+    environment: str = "test",
+):
+    registry = ChallengeContractRegistry(
+        public_challenges={artifacts.public.challenge_id: artifacts.public},
+        contracts={contract.challenge_id: contract},
+    )
+    return create_app(
+        store=store,
+        registry=registry,
+        dispatchers={contract.challenge_id: dispatcher},
+        authenticate=_authenticate,
+        readiness_check=readiness_check,
+        allow_draft_submissions=allow_draft_submissions,
+        environment=environment,
+    )
 
 
 class _RecordingMockProvider(DeterministicMockProvider):
@@ -586,11 +622,11 @@ def _components(tmp_path: Path, artifacts: ChallengeArtifacts, contract: Evaluat
         artifacts=artifacts,
         provider=provider,
     )
-    app = create_app(
+    app = _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         allow_draft_submissions=True,
         environment="test",
     )
@@ -629,11 +665,11 @@ def _qwen_components(
         tokenizer_snapshot_path=tokenizer_snapshot_path,
         launch_evidence_path=launch_evidence_path,
     )
-    app = create_app(
+    app = _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         allow_draft_submissions=True,
         environment="test",
     )
@@ -652,6 +688,445 @@ def _cursor(value: dict[str, object]) -> str:
     return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
+def test_anonymous_challenge_catalog_is_sorted_and_allowlisted(tmp_path: Path) -> None:
+    executable = _artifacts(
+        tmp_path,
+        treebank="Zeta",
+        dataset_name="zeta.jsonl",
+    )
+    public_only = _artifacts(
+        tmp_path,
+        treebank="Alpha",
+        dataset_name="alpha.jsonl",
+    )
+    public_only_description = public_only.public.model_copy(
+        update={"scorer_version": None, "aggregation_version": None}
+    )
+    contract = _mock_contract(executable)
+    store = SubmissionStore(tmp_path / "catalog.db")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    registry = ChallengeContractRegistry(
+        public_challenges={
+            executable.public.challenge_id: executable.public,
+            public_only_description.challenge_id: public_only_description,
+        },
+        contracts={contract.challenge_id: contract},
+    )
+    app = create_app(
+        store=store,
+        registry=registry,
+        dispatchers={contract.challenge_id: OutboxDispatcher(store, queue, contract)},
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/v1/challenges")
+        detail = client.get(f"/v1/challenges/{executable.public.challenge_id}")
+        public_only_detail = client.get(
+            f"/v1/challenges/{public_only_description.challenge_id}"
+        )
+        missing = client.get("/v1/challenges/test-missing-upos-v1")
+        unauthenticated_submission = client.post(
+            "/v1/submissions",
+            json={
+                "challenge_id": executable.public.challenge_id,
+                "student_prompt": "Prompt.",
+            },
+        )
+
+    assert response.status_code == 200
+    catalog = response.json()
+    assert [item["challenge_id"] for item in catalog] == sorted(
+        [executable.public.challenge_id, public_only_description.challenge_id]
+    )
+    summary_fields = {
+        "aggregation_version", "dataset_sha256", "response_schema_version",
+        "scorer_version", "secondary_metrics", "selection_sha256",
+        "annotation_license", "attribution_requirements", "source_release", "source_commit",
+        "source_file_sha256s", "share_alike_requirements", "underlying_text_rights",
+        "benchmark_limitations", "evaluation_identity_sha256", "model_identity",
+        "student_prompt_utf8_bytes", "submission_enabled", "runtime_available",
+        "accepting_submissions", "admissions_closed",
+        "challenge_id",
+        "language",
+        "primary_metric",
+        "sample_count",
+        "security_level",
+        "status",
+        "submissions_open",
+        "task",
+        "title",
+        "treebank",
+        "version",
+    }
+    assert all(set(item) == summary_fields for item in catalog)
+    availability = {item["challenge_id"]: item["submissions_open"] for item in catalog}
+    assert availability == {
+        executable.public.challenge_id: True,
+        public_only_description.challenge_id: False,
+    }
+    _assert_no_private_fields(catalog)
+
+    assert detail.status_code == 200
+    assert set(detail.json()) == summary_fields
+    assert detail.json()["dataset_sha256"] == executable.public.dataset_sha256
+    assert detail.json()["selection_sha256"] == executable.public.selection_sha256
+    _assert_no_private_fields(detail.json())
+    assert public_only_detail.status_code == 200
+    assert set(public_only_detail.json()) == set(detail.json())
+    assert public_only_detail.json()["scorer_version"] is None
+    assert public_only_detail.json()["aggregation_version"] is None
+    assert public_only_detail.json()["submissions_open"] is False
+    _assert_no_private_fields(public_only_detail.json())
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "CHALLENGE_NOT_FOUND"
+    assert unauthenticated_submission.status_code == 401
+    assert unauthenticated_submission.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+
+
+def test_catalog_reports_draft_closed_without_override(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract = _mock_contract(artifacts)
+    store = SubmissionStore(tmp_path / "closed-catalog.db")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    app = create_app(
+        store=store,
+        registry=ChallengeContractRegistry(
+            public_challenges={artifacts.public.challenge_id: artifacts.public},
+            contracts={contract.challenge_id: contract},
+        ),
+        dispatchers={contract.challenge_id: OutboxDispatcher(store, queue, contract)},
+        authenticate=_authenticate,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        response = client.get(f"/v1/challenges/{contract.challenge_id}")
+
+    assert response.status_code == 200
+    assert response.json()["submissions_open"] is False
+
+
+def test_one_api_routes_two_challenges_to_isolated_workers(tmp_path: Path) -> None:
+    first_artifacts = _artifacts(tmp_path, dataset_name="first.jsonl")
+    second_artifacts = _artifacts(
+        tmp_path,
+        treebank="Other",
+        dataset_name="second.jsonl",
+    )
+    first_contract = _mock_contract(first_artifacts)
+    second_contract = _mock_contract(second_artifacts)
+    store = SubmissionStore(tmp_path / "multi-submissions.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+    first_queue = InMemoryJobQueue(first_contract.contract_snapshot_sha256)
+    second_queue = InMemoryJobQueue(second_contract.contract_snapshot_sha256)
+    dispatchers = {
+        first_contract.challenge_id: OutboxDispatcher(store, first_queue, first_contract),
+        second_contract.challenge_id: OutboxDispatcher(store, second_queue, second_contract),
+    }
+    registry = ChallengeContractRegistry(
+        public_challenges={
+            first_artifacts.public.challenge_id: first_artifacts.public,
+            second_artifacts.public.challenge_id: second_artifacts.public,
+        },
+        contracts={
+            first_contract.challenge_id: first_contract,
+            second_contract.challenge_id: second_contract,
+        },
+    )
+    first_worker = SubmissionWorker(
+        store=store,
+        queue=first_queue,
+        contract=first_contract,
+        artifacts=first_artifacts,
+        provider=DeterministicMockProvider(),
+    )
+    second_worker = SubmissionWorker(
+        store=store,
+        queue=second_queue,
+        contract=second_contract,
+        artifacts=second_artifacts,
+        provider=DeterministicMockProvider(),
+    )
+    app = create_app(
+        store=store,
+        registry=registry,
+        dispatchers=dispatchers,
+        authenticate=_authenticate,
+        allow_draft_submissions=True,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "multi-first"),
+            json={
+                "challenge_id": first_contract.challenge_id,
+                "student_prompt": "First prompt.",
+            },
+        )
+        assert first.status_code == 202
+        assert len(first_queue) == 1
+        assert len(second_queue) == 0
+
+        second = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "multi-second"),
+            json={
+                "challenge_id": second_contract.challenge_id,
+                "student_prompt": "Second prompt.",
+            },
+        )
+        assert second.status_code == 202
+        assert len(first_queue) == 1
+        assert len(second_queue) == 1
+
+        assert first_worker.run_once() is True
+        assert second_worker.run_once() is True
+        first_status = client.get(
+            f"/v1/submissions/{first.json()['submission_id']}",
+            headers=_headers("subject-alice"),
+        )
+        second_status = client.get(
+            f"/v1/submissions/{second.json()['submission_id']}",
+            headers=_headers("subject-alice"),
+        )
+
+    assert first_status.json()["challenge_id"] == first_contract.challenge_id
+    assert second_status.json()["challenge_id"] == second_contract.challenge_id
+    assert first_status.json()["status"] == "succeeded"
+    assert second_status.json()["status"] == "succeeded"
+
+
+def test_unknown_and_public_only_challenges_cannot_create_submissions(tmp_path: Path) -> None:
+    executable = _artifacts(tmp_path, dataset_name="executable.jsonl")
+    public_only = _artifacts(
+        tmp_path,
+        treebank="Catalog Only",
+        dataset_name="catalog-only.jsonl",
+    )
+    contract = _mock_contract(executable)
+    store = SubmissionStore(tmp_path / "catalog-submissions.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    registry = ChallengeContractRegistry(
+        public_challenges={
+            executable.public.challenge_id: executable.public,
+            public_only.public.challenge_id: public_only.public,
+        },
+        contracts={contract.challenge_id: contract},
+    )
+    app = create_app(
+        store=store,
+        registry=registry,
+        dispatchers={contract.challenge_id: OutboxDispatcher(store, queue, contract)},
+        authenticate=_authenticate,
+        environment="test",
+    )
+
+    with TestClient(app) as client:
+        unknown = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "unknown"),
+            json={"challenge_id": "unknown-v1", "student_prompt": "Prompt."},
+        )
+        unavailable = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "public-only"),
+            json={
+                "challenge_id": public_only.public.challenge_id,
+                "student_prompt": "Prompt.",
+            },
+        )
+
+    assert unknown.status_code == 404
+    assert unavailable.status_code == 409
+    assert unavailable.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
+    assert len(queue) == 0
+
+
+def test_active_reviewed_challenge_can_accept_production_submission(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract_mapping = json.loads(_mock_contract(artifacts).snapshot_json)
+    contract_mapping["catalog"].update(
+        {
+            "attribution_requirements": "recorded",
+            "share_alike_requirements": "reviewed",
+            "source_file_sha256s": [
+                {"path": "synthetic/source.jsonl", "sha256": "a" * 64}
+            ],
+            "source_release": "synthetic-release-v1",
+            "status": "active",
+            "underlying_text_rights": "reviewed",
+        }
+    )
+    contract = EvaluationContract.from_mapping(contract_mapping)
+    assert contract.external_activation_ready is True
+    active_public = type(artifacts.public).model_validate_json(json.dumps({
+        **artifacts.public.model_dump(), **contract_mapping["catalog"],
+    }))
+    store = SubmissionStore(tmp_path / "active-submissions.db")
+    store.register_user(auth_subject="subject-alice", public_handle="alice")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    registry = ChallengeContractRegistry(
+        public_challenges={active_public.challenge_id: active_public},
+        contracts={contract.challenge_id: contract},
+    )
+    app = create_app(
+        store=store,
+        registry=registry,
+        dispatchers={
+            contract.challenge_id: OutboxDispatcher(store, queue, contract),
+        },
+        authenticate=_authenticate,
+        readiness_check=lambda: None,
+        environment="production",
+    )
+
+    with TestClient(app) as client:
+        detail = client.get(f"/v1/challenges/{contract.challenge_id}")
+        response = client.post(
+            "/v1/submissions",
+            headers=_headers("subject-alice", "active-reviewed"),
+            json={"challenge_id": contract.challenge_id, "student_prompt": "Prompt."},
+        )
+
+    assert detail.status_code == 200
+    assert detail.json()["submissions_open"] is True
+    assert response.status_code == 202
+    assert len(queue) == 1
+
+
+def test_api_requires_a_dispatcher_for_every_executable_challenge(tmp_path: Path) -> None:
+    first_artifacts = _artifacts(tmp_path, dataset_name="first.jsonl")
+    second_artifacts = _artifacts(
+        tmp_path,
+        treebank="Other",
+        dataset_name="second.jsonl",
+    )
+    first_contract = _mock_contract(first_artifacts)
+    second_contract = _mock_contract(second_artifacts)
+    store = SubmissionStore(tmp_path / "missing-dispatcher.db")
+    first_queue = InMemoryJobQueue(first_contract.contract_snapshot_sha256)
+    registry = ChallengeContractRegistry(
+        public_challenges={
+            first_artifacts.public.challenge_id: first_artifacts.public,
+            second_artifacts.public.challenge_id: second_artifacts.public,
+        },
+        contracts={
+            first_contract.challenge_id: first_contract,
+            second_contract.challenge_id: second_contract,
+        },
+    )
+
+    with pytest.raises(ValueError, match="contracts and dispatchers"):
+        create_app(
+            store=store,
+            registry=registry,
+            dispatchers={
+                first_contract.challenge_id: OutboxDispatcher(
+                    store,
+                    first_queue,
+                    first_contract,
+                )
+            },
+            authenticate=_authenticate,
+            allow_draft_submissions=True,
+            environment="test",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "api_request_body_bytes",
+        "global_queue_depth",
+        "max_outstanding_submissions_per_user",
+        "max_running_submissions_per_user",
+    ],
+)
+def test_api_requires_shared_platform_admission_limits(tmp_path: Path, field: str) -> None:
+    first_artifacts = _artifacts(tmp_path, dataset_name="first.jsonl")
+    second_artifacts = _artifacts(
+        tmp_path,
+        treebank="Other",
+        dataset_name="second.jsonl",
+    )
+    first_contract = _mock_contract(first_artifacts)
+    second_mapping = json.loads(_mock_contract(second_artifacts).snapshot_json)
+    second_mapping["limits"][field] += 1
+    second_contract = EvaluationContract.from_mapping(second_mapping)
+    store = SubmissionStore(tmp_path / f"limit-{field}.db")
+    first_queue = InMemoryJobQueue(first_contract.contract_snapshot_sha256)
+    second_queue = InMemoryJobQueue(second_contract.contract_snapshot_sha256)
+    registry = ChallengeContractRegistry(
+        public_challenges={
+            first_artifacts.public.challenge_id: first_artifacts.public,
+            second_artifacts.public.challenge_id: second_artifacts.public,
+        },
+        contracts={
+            first_contract.challenge_id: first_contract,
+            second_contract.challenge_id: second_contract,
+        },
+    )
+
+    with pytest.raises(ValueError, match=field):
+        create_app(
+            store=store,
+            registry=registry,
+            dispatchers={
+                first_contract.challenge_id: OutboxDispatcher(
+                    store,
+                    first_queue,
+                    first_contract,
+                ),
+                second_contract.challenge_id: OutboxDispatcher(
+                    store,
+                    second_queue,
+                    second_contract,
+                ),
+            },
+            authenticate=_authenticate,
+            allow_draft_submissions=True,
+            environment="test",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "error"),
+    [
+        ("owner_result_fields", "owner result fields"),
+        ("owner_failure_fields", "owner failure fields"),
+        ("public_leaderboard_fields", "leaderboard fields"),
+    ],
+)
+def test_api_rejects_incompatible_feedback_fields(
+    tmp_path: Path,
+    field: str,
+    error: str,
+) -> None:
+    artifacts = _artifacts(tmp_path)
+    contract_mapping = json.loads(_mock_contract(artifacts).snapshot_json)
+    contract_mapping["feedback"][field] = []
+    contract = EvaluationContract.from_mapping(contract_mapping)
+    store = SubmissionStore(tmp_path / f"feedback-{field}.db")
+    queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
+    dispatcher = OutboxDispatcher(store, queue, contract)
+
+    with pytest.raises(ValueError, match=error):
+        _create_test_app(
+            store=store,
+            dispatcher=dispatcher,
+            contract=contract,
+            artifacts=artifacts,
+            allow_draft_submissions=True,
+            environment="test",
+        )
+
+
 def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path, caplog) -> None:
     artifacts = _artifacts(tmp_path)
     contract = _mock_contract(artifacts)
@@ -660,11 +1135,11 @@ def test_health_routes_are_safe_and_request_logs_are_allowlisted(tmp_path: Path,
     def unavailable_dependency() -> None:
         raise RuntimeError("redis password must not be exposed")
 
-    app = create_app(
+    app = _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         readiness_check=unavailable_dependency,
         allow_draft_submissions=True,
         environment="test",
@@ -802,6 +1277,7 @@ def test_unavailable_challenge_runtime_is_visible_and_rejected_before_persistenc
     assert challenge["submission_enabled"] is True
     assert challenge["runtime_available"] is False
     assert challenge["accepting_submissions"] is False
+    assert challenge["submissions_open"] is False
     assert challenge["student_prompt_utf8_bytes"] == contract.student_prompt_utf8_bytes
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "CHALLENGE_RUNTIME_UNAVAILABLE"
@@ -988,6 +1464,7 @@ def test_live_runtime_probe_gates_admission_but_keeps_existing_results_readable(
         catalog = client.get('/v1/challenges').json()
         assert catalog[0]['runtime_available'] is False
         assert catalog[0]['accepting_submissions'] is False
+        assert catalog[0]['submissions_open'] is False
         blocked = client.post('/v1/submissions', json=payload,
                               headers=_headers('subject-alice', 'during-outage'))
         assert blocked.status_code == 503
@@ -1133,6 +1610,7 @@ def test_multi_challenge_api_routes_jobs_and_results_by_contract(tmp_path: Path)
     assert all(item["submission_enabled"] for item in catalog)
     assert all(item["runtime_available"] for item in catalog)
     assert all(item["accepting_submissions"] for item in catalog)
+    assert all(item["submissions_open"] for item in catalog)
     assert all(
         len(store.leaderboard(contract.evaluation_identity_sha256)) == 1
         for contract in contracts.values()
@@ -1151,6 +1629,18 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
     }
 
     with TestClient(app) as client:
+        current_user = client.get(
+            "/v1/users/me",
+            headers=_headers("subject-alice"),
+        )
+        assert current_user.status_code == 200
+        assert current_user.json() == {
+            "user_id": store.user_by_subject("subject-alice").user_id,
+            "public_handle": "alice",
+            "role": UserRole.USER.value,
+        }
+        _assert_no_private_fields(current_user.json())
+
         created = client.post(
             "/v1/submissions",
             headers=_headers("subject-alice", "submission-1"),
@@ -1272,11 +1762,11 @@ def test_mock_submission_runs_asynchronously_and_isolates_leaderboards(
             artifacts=artifacts,
             provider=DeterministicMockProvider(),
         )
-        second_app = create_app(
+        second_app = _create_test_app(
             store=store,
             dispatcher=second_dispatcher,
             contract=second_contract,
-            authenticate=_authenticate,
+            artifacts=artifacts,
             allow_draft_submissions=True,
             environment="test",
         )
@@ -1419,20 +1909,28 @@ def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path
     store, _, dispatcher, _, _, _ = _components(tmp_path, artifacts, contract)
 
     with pytest.raises(ValueError, match="forbidden in production"):
-        create_app(
+        _create_test_app(
             store=store,
             dispatcher=dispatcher,
             contract=contract,
-            authenticate=_authenticate,
+            artifacts=artifacts,
             allow_draft_submissions=True,
             environment="production",
         )
+    with pytest.raises(ValueError, match="requires a readiness check"):
+        _create_test_app(
+            store=store,
+            dispatcher=dispatcher,
+            contract=contract,
+            artifacts=artifacts,
+            environment="production",
+        )
 
-    closed_app = create_app(
+    closed_app = _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         environment="test",
     )
     with TestClient(closed_app) as client:
@@ -1444,11 +1942,11 @@ def test_api_fails_closed_for_drafts_and_rejects_oversized_bodies(tmp_path: Path
         assert closed.status_code == 409
         assert closed.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
 
-    open_app = create_app(
+    open_app = _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         allow_draft_submissions=True,
         environment="test",
     )
@@ -1492,11 +1990,11 @@ def test_platform_failure_returns_only_the_safe_failure_contract(tmp_path: Path)
         artifacts=artifacts,
         provider=_ExplodingMockProvider(),
     )
-    app = create_app(
+    app = _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         allow_draft_submissions=True,
         environment="test",
     )
@@ -1826,6 +2324,7 @@ def test_temporarily_unclaimable_job_is_requeued_behind_other_work(
             retryable=False,
         )
         assert queue.ack(first_delivery) is True
+        now[0] += 1
         assert worker.run_once() is True
         assert len(queue) == 0
 
@@ -1879,6 +2378,7 @@ def test_duplicate_running_submission_waits_for_visibility(
         )
         assert queue.ack(first_delivery) is True
 
+        now[0] += 1  # Retry-later backoff must elapse before the terminal duplicate is read.
         assert worker.run_once() is False
         assert queue.receive() is None
 
@@ -1973,11 +2473,11 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
         assert response.json()["error"]["code"] == "CHALLENGE_NOT_OPEN"
 
     with pytest.raises(ValueError, match="deployment environment"):
-        create_app(
+        _create_test_app(
             store=store,
             dispatcher=dispatcher,
             contract=contract,
-            authenticate=_authenticate,
+            artifacts=artifacts,
             environment="prod",
         )
 
@@ -1988,11 +2488,11 @@ def test_invalid_activation_and_hybrid_mock_identity_fail_closed(tmp_path: Path)
     )
     hybrid_contract = EvaluationContract.from_mapping(hybrid_mapping)
     with pytest.raises(ValueError, match="dispatcher does not match"):
-        create_app(
+        _create_test_app(
             store=store,
             dispatcher=dispatcher,
             contract=hybrid_contract,
-            authenticate=_authenticate,
+            artifacts=artifacts,
             allow_draft_submissions=True,
             environment="test",
         )
@@ -2071,11 +2571,11 @@ def test_unpublished_outbox_job_is_dispatched_when_api_starts(tmp_path: Path) ->
     queue = InMemoryJobQueue(contract.contract_snapshot_sha256)
     dispatcher = OutboxDispatcher(store, queue, contract)
 
-    create_app(
+    _create_test_app(
         store=store,
         dispatcher=dispatcher,
         contract=contract,
-        authenticate=_authenticate,
+        artifacts=artifacts,
         allow_draft_submissions=True,
         environment="test",
     )
@@ -2192,7 +2692,7 @@ def test_idle_worker_throttles_lease_sweeps(
     sweep_calls = 0
     expire_leases = store.expire_leases
 
-    def count_sweep(*, evaluation_identity_sha256: str) -> int:
+    def count_sweep(*, evaluation_identity_sha256: str | None = None) -> int:
         nonlocal sweep_calls
         sweep_calls += 1
         return expire_leases(
@@ -2294,7 +2794,7 @@ def test_external_activation_requires_safe_complete_provenance(
     assert EvaluationContract.from_mapping(ready).external_activation_ready is False
 
 
-def test_lease_expiration_is_fenced_and_scoped_by_identity(
+def test_lease_expiration_is_fenced_and_globally_swept(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2319,7 +2819,7 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
             created.submission.submission_id,
             evaluation_identity_sha256=contract.evaluation_identity_sha256,
             contract_snapshot_sha256=contract.contract_snapshot_sha256,
-            lease_seconds=30,
+            lease_seconds=30 if index == 1 else 300,
             max_attempts=contract.max_attempts,
             max_running_per_user=10,
         )
@@ -2333,9 +2833,7 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
         code="PROVIDER_TIMEOUT",
         retryable=True,
     ) is False
-    assert store.expire_leases(
-        evaluation_identity_sha256=contracts[0].evaluation_identity_sha256
-    ) == 1
+    assert store.expire_leases() == 1
     first = store.owner_result(claims[0].submission_id, user.user_id)
     second = store.owner_result(claims[1].submission_id, user.user_id)
     assert first is not None and first.failure is not None
@@ -2355,6 +2853,37 @@ def test_lease_expiration_is_fenced_and_scoped_by_identity(
         assert expired is not None and expired.failure is not None
         assert expired.failure["code"] == "JOB_DEADLINE"
         assert expired.failure["retryable"] is False
+
+
+def test_queued_deadline_sweep_crosses_identity_partitions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [datetime(2026, 8, 30, tzinfo=UTC)]
+    monkeypatch.setattr(submission_store_module, "_utc_now", lambda: now[0])
+    artifacts = _artifacts(tmp_path)
+    contracts = [
+        _mock_contract(artifacts, contract_version=f"mock-evaluation-v{version}")
+        for version in (1, 2)
+    ]
+    store = SubmissionStore(tmp_path / "submissions.db")
+    user = store.register_user(auth_subject="subject-alice", public_handle="alice")
+    submission_ids = []
+    for index, contract in enumerate(contracts, start=1):
+        created = store.create_submission(
+            user=user,
+            idempotency_key=f"queued-deadline-{index}",
+            student_prompt="Return JSON.",
+            contract=contract,
+        )
+        submission_ids.append(created.submission.submission_id)
+
+    now[0] += timedelta(seconds=301)
+    assert store.expire_queued_deadlines() == 2
+    for submission_id in submission_ids:
+        expired = store.owner_result(submission_id, user.user_id)
+        assert expired is not None and expired.failure is not None
+        assert expired.failure["code"] == "JOB_DEADLINE"
 
 
 def test_terminal_timestamp_is_sampled_after_sqlite_write_lock(
@@ -2410,6 +2939,4 @@ def test_terminal_timestamp_is_sampled_after_sqlite_write_lock(
 
     assert thread.is_alive() is False
     assert result == [False]
-    assert store.expire_leases(
-        evaluation_identity_sha256=contract.evaluation_identity_sha256
-    ) == 1
+    assert store.expire_leases() == 1

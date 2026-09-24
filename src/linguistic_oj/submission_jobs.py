@@ -50,6 +50,7 @@ from .submission_store import (
 _CLAIM_PROCESSING_BUDGET_SECONDS = 5.0
 _VISIBILITY_SAFETY_SECONDS = 5.0
 _LEASE_SWEEP_INTERVAL_SECONDS = 5.0
+_RETRY_LATER_BACKOFF_SECONDS = 1.0
 QWEN_QUEUE_VISIBILITY_BUFFER_SECONDS = int(
     SQLITE_LOCK_TIMEOUT_SECONDS + _CLAIM_PROCESSING_BUDGET_SECONDS + _VISIBILITY_SAFETY_SECONDS
 )
@@ -209,6 +210,7 @@ class OutboxDispatcher:
         """Rebuild queued deliveries and publish durable outbox work at startup."""
 
         with self._dispatch_lock:
+            self._store.expire_queued_deadlines()
             recovered = self.recover_published_queued()
             return recovered + self.dispatch_pending()
 
@@ -320,6 +322,7 @@ class _SubmissionWorkerCore:
             raise TypeError("selection_cache must be a VerifiedSelectionCache")
         self._selection_cache = selection_cache
         self._claim_guard = claim_guard
+        self._next_receive_at = 0.0
 
     def run_once(self) -> bool:
         if (
@@ -338,15 +341,19 @@ class _SubmissionWorkerCore:
         return self._evaluate_claim(delivery, claim)
 
     def _receive_and_claim(self):
+        # Serial polling backs off after busy work. Request executors call the attempt
+        # primitive directly and own their bounded scans/backoff, so another user's
+        # delivery on this route remains eligible in the same admission round.
+        if monotonic() < self._next_receive_at:
+            return None
         return self._receive_and_claim_attempt()[1]
 
     def _receive_and_claim_attempt(self):
         """Return observed message identity as well as a claim, without losing empty/busy detail."""
         now = monotonic()
         if now >= self._next_lease_sweep_at:
-            self._store.expire_leases(
-                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-            )
+            self._store.expire_leases()
+            self._store.expire_queued_deadlines()
             self._next_lease_sweep_at = now + _LEASE_SWEEP_INTERVAL_SECONDS
         delivery = self._queue.receive()
         if delivery is None:
@@ -371,6 +378,7 @@ class _SubmissionWorkerCore:
         if claim_attempt.claim is None:
             if claim_attempt.retry_later:
                 self._queue.nack(delivery)
+                self._next_receive_at = monotonic() + _RETRY_LATER_BACKOFF_SECONDS
             else:
                 self._queue.ack(delivery)
             return message.submission_id, None
@@ -399,9 +407,7 @@ class _SubmissionWorkerCore:
             )
         except (TokenLimitExceeded, QwenTokenLimitExceeded):
             if not self._store.complete_rejected(claim):
-                self._store.expire_leases(
-                    evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-                )
+                self._store.expire_leases()
             self._queue.ack(delivery)
             return True
         except JobDeadlineExceeded:
@@ -490,9 +496,7 @@ class _SubmissionWorkerCore:
             retryable=retryable,
         )
         if not completed:
-            self._store.expire_leases(
-                evaluation_identity_sha256=self._contract.evaluation_identity_sha256
-            )
+            self._store.expire_leases()
         return completed
 
     def _request_retry_allowed(self, termination_confirmed: bool) -> bool:

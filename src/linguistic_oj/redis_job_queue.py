@@ -8,13 +8,14 @@ import re
 import socket
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from redis import Redis
 from redis.exceptions import ResponseError
 
-from .connection_config import validate_redis_connection_url
+from .connection_config import resolve_connection_url, validate_redis_connection_url
 from .submission_jobs import JobDelivery, JobMessage
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -117,6 +118,17 @@ return new_id
 
 class RedisQueueMessageError(RuntimeError):
     """Raised when a Redis Stream entry violates the queue message contract."""
+
+
+def resolve_redis_url(
+    *,
+    inline_url: str | None,
+    credential_file: Path | None,
+    allow_inline_credentials: bool,
+) -> str:
+    """Compatibility entry point using shared protected-file and target validation."""
+    return resolve_connection_url('redis', inline_url=inline_url,
+        credential_file=credential_file, production=not allow_inline_credentials)
 
 
 class RedisJobQueue:

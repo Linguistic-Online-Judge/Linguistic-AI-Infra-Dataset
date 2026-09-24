@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .admin_store import ADMIN_SCHEMA_V4
+from .auth_schema_migration import complete_legacy_auth_schema
 from .auth_store import AUTH_SCHEMA_V3
-from .connection_config import validate_postgres_connection_url
+from .connection_config import resolve_connection_url, validate_postgres_connection_url
 
 POSTGRES_SCHEMA_VERSION = 4
 POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
@@ -103,6 +106,17 @@ def validate_postgres_url(database_url: str) -> str:
     return validate_postgres_connection_url(database_url)
 
 
+def resolve_postgres_url(
+    *,
+    inline_url: str | None,
+    credential_file: Path | None,
+    allow_inline_credentials: bool,
+) -> str:
+    """Compatibility entry point, using the shared protected-file/target validation."""
+    return resolve_connection_url('postgres', inline_url=inline_url,
+        credential_file=credential_file, production=not allow_inline_credentials)
+
+
 def migrate_postgres(database_url: str, *, applied_at: str) -> None:
     """Apply every missing schema migration before accepting application traffic."""
 
@@ -129,6 +143,7 @@ def migrate_postgres(database_url: str, *, applied_at: str) -> None:
                     raise RuntimeError(f"unsupported PostgreSQL schema versions: {versions}")
             else:
                 versions = ()
+            complete_legacy_auth_schema(cursor, versions, postgres=True)
             for version in _EXPECTED_SCHEMA_VERSIONS[len(versions) :]:
                 cursor.execute(_POSTGRES_MIGRATIONS[version])
                 cursor.execute(
