@@ -1,5 +1,8 @@
 # 32槽位开发站接入与切换准备
 
+后续实际切换已经完成，当前运行状态、真实网页验收和备份证据见
+[32槽位开发站部署结果](REQUEST_WORKBENCH_DEPLOYMENT.md)。本文保留源码接入阶段记录。
+
 ## 当前完成范围
 
 开发站现在有显式的请求执行入口：`linguistic_oj.qwen_development --execution-profile FILE`。

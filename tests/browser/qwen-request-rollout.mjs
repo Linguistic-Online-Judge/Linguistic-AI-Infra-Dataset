@@ -12,7 +12,7 @@ const argument = (key, fallback) => {
 };
 const directory = resolve(argument('--directory', 'runtime/browser-tests/request-rollout-20260924-v1'));
 const phase = argument('--phase', 'accept');
-assert.ok(['accept', 'readback'].includes(phase));
+assert.ok(['prepare', 'accept', 'readback'].includes(phase));
 const base = phase === 'accept' ? 'http://127.0.0.1:18090' : 'http://127.0.0.1:8090';
 mkdirSync(directory, { recursive: true });
 const accounts = JSON.parse(readFileSync(resolve(directory, 'accounts.private.json'), 'utf8'));
@@ -23,12 +23,24 @@ const report = existsSync(reportFile) ? JSON.parse(readFileSync(reportFile, 'utf
   started_at: new Date().toISOString(), submission_posts: 0, rows: {},
   real_model_request_budget: 250, independent_benchmark: false,
 };
+const harnessSha = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
+if (report.browser_harness_sha256) assert.equal(report.browser_harness_sha256, harnessSha);
+report.browser_harness_sha256 = harnessSha;
 const save = () => {
   writeFileSync(reportFile + '.tmp', JSON.stringify(report, null, 2), { mode: 0o600 });
   renameSync(reportFile + '.tmp', reportFile);
 };
 const browsers = [];
 const prepared = [];
+let stopping = false;
+const abortTimer = setInterval(() => {
+  if (!stopping && existsSync(resolve(directory, 'abort.request'))) {
+    stopping = true;
+    report.passed = false; report.failure = 'Operator controller stopped acceptance'; save();
+    void Promise.allSettled(browsers.map(browser => browser.close())).finally(() => process.exit(1));
+  }
+}, 1000);
+abortTimer.unref();
 try {
   for (const [label, account] of Object.entries(accounts)) {
     const browser = await startBrowser(resolve(directory, label + '-' + phase));
@@ -51,11 +63,11 @@ try {
     await browser.navigate(base + '/');
     await browser.wait("state.authMode==='cookie' && state.development?.evaluation_mode==='qwen' && state.challenges.length===74", 'new real workbench', 60000);
     const catalog = await browser.evaluate('state.challenges');
-    assert.equal(await browser.evaluate('state.development.executable_challenges'), 70);
+    assert.equal(catalog.filter(item => item.submission_enabled).length, 70);
     assert.equal(new Set(catalog.filter(c => c.task === 'upos' && c.submission_enabled).map(c => c.language)).size, 18);
     const task = catalog.find(c => c.challenge_id === account.challenge_id);
     assert.ok(task && task.task === label);
-    if (phase === 'accept') assert.ok(task.accepting_submissions);
+    if (phase !== 'readback') assert.ok(task.accepting_submissions);
     let row = report.rows[label];
     if (!row?.registered) {
       await browser.evaluate("openAuthDialog('register')");
@@ -95,6 +107,7 @@ try {
       await browser.wait(`state.view==='practice' && state.selectedChallengeId===${JSON.stringify(account.challenge_id)} && teachingState.status==='ready'`);
       await browser.click(label === 'xpos' ? '#template-few' : '#template-zero');
       const prompt = await browser.evaluate("elements['student-prompt'].value");
+      if (row.prompt) assert.equal(prompt, row.prompt, 'template changed between preparation and acceptance');
       row.prompt_sha256 = createHash('sha256').update(prompt).digest('hex');
       row.prompt = prompt;
       row.identity = task.evaluation_identity_sha256;
@@ -102,6 +115,7 @@ try {
     }
     prepared.push({ browser, label, row, enable: () => { allowedPost = true; } });
   }
+  if (phase !== 'prepare') {
   await Promise.all(prepared.map(async ({ browser, label, row, enable }) => {
     if (phase === 'accept' && !row.submission_id) {
       row.attempted = true; row.started_at = new Date().toISOString(); save();
@@ -144,12 +158,18 @@ try {
   assert.ok(!report.unexpected_submission_blocked);
   report.passed = true;
   if (phase === 'readback') report.production_readback_passed = true;
+  } else {
+    assert.equal(report.submission_posts, 0);
+    assert.ok(!report.unexpected_submission_blocked);
+    report.prepared_without_submission = true;
+  }
   delete report.failure;
 } catch (error) {
   report.passed = false; report.failure = String(error.message);
   process.exitCode = 1;
   for (const browser of browsers) await browser.screenshot('failure').catch(() => {});
 } finally {
+  clearInterval(abortTimer);
   report.updated_at = new Date().toISOString(); save();
   for (const browser of browsers) await browser.close();
 }

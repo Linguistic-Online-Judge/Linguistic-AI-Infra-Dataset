@@ -22,6 +22,27 @@ present planned work or skipped checks as completed results.
 
 ## Current Delivery Scope
 
+- Workbench cutover is now COMPLETED at artifacts/request-workbench-rollout-20260924-v3.
+  Live source is that directory/source, release5adb185 (bundle
+  327906edea4fb950e5cca349942946d9c83f39b0d147c4a9234e4e7751a302bc), model8000/app8090,
+  32 global request slots/4 active jobs. User units linguistic-oj-qwen-model.service and
+  linguistic-oj-request-development.service are active+enabled, Linger=yes. Observed
+  model2215803/app2217305; rediscover identities before operations. No batch invariance,
+  precision/kernel/scoring change or public exposure. Temporary relay/8001/18090 closed.
+  Real-browser five tasks/full50 each/250 calls passed functional execution, then8090
+  readback/owner isolation/leaderboard/mobile with no new submission. Original74 grades
+  and stable business rows preserved; added5 dedicated acceptance users/grades =>13 users/
+  79 results, no outstanding work or pending ledger. Low validity/accuracy retained:
+  seg50/50 score.324528; UPOS45/50 .536667; XPOS14/50 .076042; dep48/50 .170833;
+  transliteration18/50 .219672. Not quality equivalence/all-task/classroom qualification.
+  Before/after v2 backups20260924T035013Z-a96c18ea /20260924T035747Z-9379dd2f passed real
+  isolated restore and offhost verification, all11 tables/owner data, clean ledger.
+  Ops wrapper now uses new release qwen_dev_ops; old wrapper/env retained privately.
+  See docs/REQUEST_WORKBENCH_DEPLOYMENT.md. v1 lock handoff and v2 harness-field failures
+  were rolled back with0 model calls; preserve those records. v3 reused the same-bound
+  clean ledger, never deleted/reinitialized. This completed authorization does not permit
+  another unannounced model/service change. Remaining rollout is public-service preparation.
+
 - Owner authorized NEW private-workbench cutover (2026-09-24):30–45min maintenance,
   current-instance backup/isolated restore,32 request slots/4 active jobs, five real-browser
   full50 evaluations (250 model POSTs maximum), retain new version on pass and configure

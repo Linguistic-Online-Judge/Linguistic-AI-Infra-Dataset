@@ -6,21 +6,27 @@
 
 ```sh
 operations/bin/qwen-development status
-operations/bin/qwen-development backup
+systemctl --user stop linguistic-oj-request-development.service
+operations/bin/qwen-development backup-request --request-backup-settings artifacts/request-workbench-rollout-20260924-v3/request-backup-settings.json
 operations/bin/qwen-development verify-restore --backup-dir <本工具输出的备份目录>
+systemctl --user start linguistic-oj-request-development.service
 ```
 
-实现源码：`scripts/qwen_dev_ops.py`、`scripts/qwen_dev_ops_launcher.py`。
-服务器副本在`operations/bin/`；启动配置为权限600的
-`operations/config/qwen-development.json`，样例为
-`config/qwen_development_operations.example.json`。
-应用升级时应同步此配置的源码路径；配置不含数据库口令。
+当前`operations/bin/qwen-development`包装脚本已指向
+`artifacts/request-workbench-rollout-20260924-v3/source/scripts/qwen_dev_ops.py`及匹配模块。
+请求模式必须使用v2备份，应用需先排空并停止，模型不必为备份而重启。发生未知请求
+或完整性错误时应先按恢复证据处理，不能盲目执行最后一条启动命令。
+旧启动器`qwen_dev_ops_launcher.py`及`operations/config/qwen-development.json`作为历史
+部署材料保留，不应据其旧源码路径判断当前运行版本。
 
 工具读取当前私有`state/instance.json`，核对实例格式、数据库所有者与归属注释；
 仅操作该实例的`loj_dev18_`数据库。旧`backup-services`等脚本继续只代表旧实例，
 当前8090以本页命令为准。
 
 ## 备份内容
+
+当前v2还保存运行档案、请求账本及全部恢复审计，支持保留未确认请求的阻断状态。
+详情及校验命令见[请求模式备份与恢复](REQUEST_BACKUP_RESTORE.md)。原串行v1备份仍可验证。
 
 - 使用PostgreSQL导出的同一事务快照生成数据库备份和11张表的内容摘要。
 - 源码及公开配置归档，逐文件核对原发布清单。
@@ -45,6 +51,10 @@ operations/bin/qwen-development verify-restore --backup-dir <本工具输出的�
 空表恢复通过不能声称已完成非空教学数据的全部恢复场景。
 
 ## 2026-09-12实测记录
+
+后续实际32槽位切换的备份与恢复已完成：`20260924T035747Z-9379dd2f`包含79条记录、
+13份凭据，全部11张表和请求状态核对通过，Windows离机副本也已验证；详见
+[部署结果](REQUEST_WORKBENCH_DEPLOYMENT.md)。下面保留早期恢复点的历史记录。
 
 最新XPOS版本备份为`20260913T084818Z-8a6421c3`，68条记录、7份凭据的隔离恢复通过，
 详见`XPOS_TASK_EXPANSION.md`。下述备份为此前恢复点。
